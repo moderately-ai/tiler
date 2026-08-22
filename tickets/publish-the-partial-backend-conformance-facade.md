@@ -40,3 +40,14 @@ The complete suite, which `publish-the-backend-provider-conformance-suite` still
 ## Closes when
 
 Tom has accepted the exact published surface with its typed unsupported population, a third-party author can reach the accepted seams through it, no row the subject cannot establish reads as success, and each refusal has been watched firing.
+
+
+## Correction — 2026-08-22, by `worker-conformance` at base `b6248f91`: the Non-goals paragraph names two carriers that have already landed
+
+The Non-goals above read, verbatim and preserved here so the repair shrinks no grep count: *"Claiming rows 4, 6, or 11 complete — those wait on their own carriers under triggers 2 and 3."* **Both carriers are `done` at this base**, so triggers 2 and 3 have fired and those rows no longer wait on anything.
+
+Verified in source rather than from ticket status. `package-selected-physical-implementation-provenance-in-artifact-identity` landed the selected-physical run through the artifact encode, decode, budget, and builder paths, and exposed it publicly: `pub fn selected_physical_implementations` exists on both `VariantRef` (`crates/tiler-artifact/src/program/model.rs`) and `DecodedVariant` (`crates/tiler-artifact/src/program/codec/view.rs`), so an author can read selected-physical provenance out of decoded bytes today. `carry-required-compilation-selection-identity-on-compile-profile-contexts` landed on 2026-08-19 with a full identity cascade, including the new owned domain `tiler.metal-aot.compilation-selection.v1` and `FACT_SOURCE_PROVENANCE_SCHEMA_VERSION` 3 → 4.
+
+Left standing rather than edited in place, because the paragraph is a true record of what was believed when this ticket was filed. A worker reading the Non-goals as current would truthfully-but-wrongly exclude three rows that are now claimable, which is the failure the exclusion existed to prevent, inverted.
+
+**This ticket's own premise is also now in question**, and that is for the reopened decision to answer rather than for this note. The re-derived packet on `decide-the-backend-provider-conformance-harness-public-surface` recommends publishing no facade at all, on the evidence that the fixture merge `829bd1f0` changed no production crate source and that `grep -rn 'tiler_conformance' crates/tiler-conformance/tests/` returns 0 — an external author already reaches every accepted seam with no facade. If Tom accepts that, this carrier closes rather than building. Do not start it before that decision resolves, which the Required work above already says.
