@@ -200,6 +200,16 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 - Presentation order: before item 25 (p1 on the deliver-chain critical path; item 25 is p2).
 - RESOLVED — accepted 2026-08-19 in the live coordination session: **Option A, the complete-subject fold** (kernel-program v12→v13 total shape-environment fold; unconditional per-axis sourced interface entry with major manifest + artifact-domain step; numbers rederived at the implementation base), exactly as reviewed at `1bd8aa7c`. Provenance recorded on the ticket, which now proceeds as its own implementation carrier: released to `todo`, `needs-tom` removed, and slotted into the solo identity-migration queue behind the running contraction replacement and previously queued migrations.
 
+### Item 24 implementation note — one clause read narrowly, 2026-08-19, coordinator-verified
+
+The accepted packet's decode-side clause reads: *"a root axis's interface symbol must agree with the binding the environment roots there"*. The carrier implemented it **as written**, i.e. presupposing the axis carries a symbol, rather than as the stronger *"every rooted axis must be symbolic"*.
+
+**Why the stronger reading was rejected, with evidence.** It contradicts an already-accepted decision. The `S`/`C`/`T` runtime carriers root at **fixed** axes, which artifact `v17` pins as representable via `invocation_bindings_do_not_enter_artifact_identity` (`crates/tiler-artifact/src/program/retained.rs`). The carrier implemented the strong reading as a subject perturbation and it produced five failures of the form `RootedAxisDisagreement { key: "input", axis: 0, rooted: "forged/0::S", declared: "2" }` — and `declared: "2"` is a literal, i.e. exactly the fixed-axis root v17 admits. Two accepted decisions cannot contradict each other; the reading that preserves both is the correct one.
+
+A negative control was added for the admitted case: `a_literal_on_a_rooted_axis_is_admitted` (`crates/tiler-artifact/src/program/codec/tests/forged_models.rs`).
+
+**Coordinator judgement: this is a reading, not a departure, so it did not go back to Tom as a fresh decision.** Recorded here rather than buried in a worker report so it is visible and cheap to reverse — if Tom reads the clause the strong way, the consequence is that `v17`'s fixed-axis rooting must also be revisited, and that is the conversation to have, not a quiet re-implementation.
+
 ## 25. Host-evidence-to-profile composition model — ACCEPTED 2026-08-19 (model 2b, components 1–6)
 
 - Ticket: `decide-the-host-evidence-to-profile-composition-model` (`p2`, `awaiting-decision`); option-independent prerequisite `define-host-applicability-for-profiles-whose-rows-span-environments` (deferred, trigger-logged) filed.
