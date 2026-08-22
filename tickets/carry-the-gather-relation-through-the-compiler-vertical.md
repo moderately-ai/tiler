@@ -1,7 +1,7 @@
 ---
 id: carry-the-gather-relation-through-the-compiler-vertical
 title: Carry the gather relation through the compiler vertical
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-the-selected-data-dependent-index-representation]
 related: [decide-the-data-dependent-index-representation-public-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, gather, identity, normalized-output]
-claimed_from: todo
-assignee: worker-gathervert
-lease_expires_at: 1787438923
 ---
 ## User-visible outcome
 
@@ -28,6 +25,8 @@ Split out 2026-08-22 by the coordinator. The gather lane landed the schedule voc
 **Fact — `NormalizedOutput` is `pub(crate)` with five variants and roughly twenty exhaustive matches**, each of which needs a real gather answer rather than a stub; `spell_output` would have to build a gather region. Reported by the delivering lane; **re-derive the count at your base and say which unit you report.**
 
 **Fact — nothing named `PendingInvocation*` exists anywhere in the tree.** The invocation-validation vocabulary is to be created, not extended. Re-verify by searching the tree rather than a named path — `AGENTS.md` records that a file-path citation fails as false absence after a module split because the named file usually still exists.
+
+**Correction — 2026-08-22: the Fact below is wrong in the dangerous direction, and following it would have made the suite assert something false.** I wrote that three absence-recording sites "must flip together". Verified by the delivering lane and re-checked by the coordinator at `6f3c2594`: **only one of the three moved.** `UNPLANNED_OPERATIONS` in `crates/tiler-compiler/src/policy.rs` and `gather_is_absent_from_the_governed_fusion_roles` in `crates/tiler-compiler/src/fusion_legality.rs` both remain **true** — the packet adds no fusion role and no target claims the family — and were deliberately left standing. Flipping them would have asserted the opposite of the tree. A **fourth** site my Fact never named did move: `a_governed_gather_refuses_at_dispatch_before_arithmetic_recognition`. So the instruction was wrong in both directions at once: it named sites that should not move and omitted one that should.
 
 **Fact — three sites record gather's absence and must flip together.** The delivering lane named them and noted the earlier remainder listed none of them: `UNPLANNED_OPERATIONS` in `crates/tiler-compiler/src/policy.rs`, `gather_is_absent_from_the_governed_fusion_roles`, and `gather_is_absent_from_the_real_request_recognition_operation_set`. **A change that flips the capability without flipping these leaves two tests asserting the opposite of the tree.**
 
