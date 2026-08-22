@@ -19,8 +19,9 @@
 //! the retained fixtures each exercise a different seam, so nothing shows the
 //! same subject surviving a second author. This suite is the second author.
 //! It states the two subjects, exercises both against a backend that shares no
-//! code, no payload format, no execution model, and no numerical claim with
-//! any backend already in the tree, and — because a subject only two agreeing
+//! code, no payload format, and no execution model with any backend already in
+//! the tree — its numerical declarations converge with the other scalar host's,
+//! for the reason given below — and, because a subject only two agreeing
 //! fixtures ever passed would prove only that they agree — watches each subject
 //! refuse a backend that tries to certify itself.
 //!
@@ -46,7 +47,10 @@
 //!
 //! Neither subject needs an optional responsibility field, a whole-backend
 //! provider trait, a parsed diagnostic, or a callback that can manufacture
-//! success — the four defects the decision's candidate D1 was eliminated for.
+//! success — the four defects Trigger 1 requires the extraction to avoid.
+//! Candidate D1 was not eliminated for those; the decision records it as
+//! eliminated *"solely by the missing neutral subject/second independent
+//! fixture"*, which is the thing this suite supplies.
 //!
 //! ## What makes this independently authored rather than a rename
 //!
@@ -59,7 +63,7 @@
 //! | control flow | none carried; the image describes entries, not bodies | predication is one optional guard ordinal on the store plan |
 //! | evaluation | none; the image is never executed | demand-driven, one forward pass, dead nodes never evaluated |
 //! | framing | big-endian | little-endian |
-//! | entry symbol | derived per family from the target triple | positional, carrying no identity, and reaching no digest crate |
+//! | entry symbol | a governed digest over the canonical identity and the family triple | positional, carrying no identity, and reaching no digest crate |
 //! | execution host | none | a worker thread the adapter owns, acquired before the commit |
 //! | numerics | scalar host, subnormals preserved | the same, and *therefore* this workload carries subnormals |
 //! | delivery positions | two families under one profile | one, and the profile declares one triple |
@@ -79,10 +83,10 @@
 //! file whose basename an existing file already carries silently turns every
 //! citation written against that basename ambiguous — and the checker then
 //! stops checking them. This suite's first `oracle.rs` did exactly that to
-//! `crates/tiler-reference/src/oracle.rs`, and ten live citations across four
+//! `crates/tiler-reference/src/oracle.rs`, and ten live citations across seven
 //! research documents failed the gate on it. The four files a directory-based
-//! integration test may name freely are therefore named for this backend and
-//! checked against `git ls-files` for uniqueness; `main.rs` is Cargo's and is
+//! integration test may name freely are therefore named for this backend or its
+//! workload and checked against `git ls-files` for uniqueness; `main.rs` is Cargo's and is
 //! already a suffix twenty-seven tracked files carry.
 //!
 //! ## What this suite does not claim
@@ -137,6 +141,13 @@ enum Subject {
 impl Subject {
     const ALL: [Self; std::mem::variant_count::<Self>()] = [Self::Structural, Self::Execution];
 }
+
+/// This file's own source, read at compile time.
+///
+/// [`SUBJECT_COVERAGE`] names its cases as strings, and a renamed case would
+/// leave a row naming nothing while the census still reported full coverage.
+/// Reading the source back is what makes the row's claim checkable.
+const THIS_SOURCE: &str = include_str!("main.rs");
 
 /// Which case exercises each subject soundly, and which perturbs it.
 ///
@@ -725,6 +736,14 @@ fn both_subjects_are_exercised_and_each_is_perturbed() {
             !row.1.is_empty() && !row.2.is_empty(),
             "{subject:?} needs both a sound case and a perturbation",
         );
+        for named in [row.1, row.2] {
+            assert!(
+                THIS_SOURCE.contains(&format!("fn {named}()")),
+                "{subject:?}'s coverage row names `{named}`, and this file declares no such \
+                 case; a census that names a case which has been renamed away reports coverage \
+                 it does not have",
+            );
+        }
     }
     eprintln!("subject census: {SUBJECT_COVERAGE:?}");
 }

@@ -63,9 +63,9 @@ Publishing the conformance suite — that is `publish-the-backend-provider-confo
 
 ## Outcome — 2026-08-22
 
-**The fixture is `crates/tiler-conformance/tests/independent_backend/`**, a Cargo integration-test target of 3,329 lines (`wc -l` after `cargo fmt`) in five files: `main.rs` (730, the cases and the subject census), `nodefold.rs` (745, the declared target profile, the translator, and the assembly), `nodefold_graph.rs` (582, the executable representation and its decoder), `nodefold_adapter.rs` (1,144, the runtime adapter, its worker host, and the route), and `workload.rs` (128, the program and the reference evaluation). It adds no public item, no manifest entry, and no `Cargo.lock` edge; `tiler-conformance` already depends on every crate the vertical crosses. Twelve tests, all device-free.
+**The fixture is `crates/tiler-conformance/tests/independent_backend/`**, a Cargo integration-test target of 3,348 lines (`wc -l` after `cargo fmt`) in five files: `main.rs` (749, the cases and the subject census), `nodefold.rs` (745, the declared target profile, the translator, and the assembly), `nodefold_graph.rs` (582, the executable representation and its decoder), `nodefold_adapter.rs` (1,144, the runtime adapter, its worker host, and the route), and `workload.rs` (128, the program and the reference evaluation). It adds no public item, no manifest entry, and no `Cargo.lock` edge; `tiler-conformance` already depends on every crate the vertical crosses. Twelve tests, all device-free.
 
-**One self-inflicted regression, caught by the gate and repaired rather than worked around.** The four non-`main` files were first named `backend.rs`, `graph.rs`, `adapter.rs`, and `oracle.rs`. `make citations` resolves a pinned citation by unique path suffix, so the new `oracle.rs` turned `crates/tiler-reference/src/oracle.rs` into a two-way match and **ten** live citations across four research documents stopped being checkable: `check-citations: 10 citation(s) do not resolve against this tree.` The repair is the rename above — every file a directory-based integration test may name freely now carries a basename `git ls-files` shows no other tracked file ends with, and `main.rs` is Cargo's and was already a suffix twenty-seven tracked files carry. Nothing under `docs/` and nothing in `check-citations.sh` was edited; the ledger was not widened to absorb an ambiguity this work created. Worth recording separately: the shell reported this failure as success. `make full > log 2>&1; echo "EXIT=$?"; tail log` exits with `tail`'s status, so the compound command returned 0 while the log said `make: *** [citations] Error 1`. The log line is the verdict, exactly as AGENTS.md warns.
+**One self-inflicted regression, caught by the gate and repaired rather than worked around.** The four non-`main` files were first named `backend.rs`, `graph.rs`, `adapter.rs`, and `oracle.rs`. `make citations` resolves a pinned citation by unique path suffix, so the new `oracle.rs` turned `crates/tiler-reference/src/oracle.rs` into a two-way match and **ten** live citations across seven research documents stopped being checkable: `check-citations: 10 citation(s) do not resolve against this tree.` The repair is the rename above — every file a directory-based integration test may name freely now carries a basename `git ls-files` shows no other tracked file ends with, and `main.rs` is Cargo's and was already a suffix twenty-seven tracked files carry. Nothing under `docs/` and nothing in `check-citations.sh` was edited; the ledger was not widened to absorb an ambiguity this work created. Worth recording separately: the shell reported this failure as success. `make full > log 2>&1; echo "EXIT=$?"; tail log` exits with `tail`'s status, so the compound command returned 0 while the log said `make: *** [citations] Error 1`. The log line is the verdict, exactly as AGENTS.md warns.
 
 ### The two subjects it shares with the portfolio
 
@@ -83,7 +83,7 @@ Every row below is a place the seam left a choice, and each is checkable in the 
 | control flow | none carried; the image describes entries, not bodies | predication is one optional guard ordinal on the store plan |
 | evaluation | none; the image is never executed | demand-driven, one forward pass, dead nodes never evaluated |
 | framing | big-endian | little-endian |
-| entry symbol | derived per family from the target triple | positional, carrying no identity, reaching no digest crate |
+| entry symbol | a governed digest over the canonical identity and the family triple | positional, carrying no identity, reaching no digest crate |
 | execution host | none | a worker thread the adapter owns, acquired before the commit |
 | delivery positions | two families under one profile | one, and the profile declares one triple |
 
@@ -93,26 +93,26 @@ Three structural differences are worth naming because they produce validation ob
 
 ### The perturbations, each with its quoted failure
 
-Every one perturbs the **subject** — the backend, the adapter, or the declared mapping — and leaves the assertions untouched. The first four are standing cases that assert the refusal; each was additionally applied to the *sound* path and watched turning the suite red, which is the demonstration that the suite can say no. The three red transcripts below were re-captured against the final tree after every case, every rename, and `cargo fmt` had landed, so their line numbers resolve at this commit; the durable anchors are the test names, and a later reader should re-locate by those rather than by the number.
+Every one perturbs the **subject** — the backend, the adapter, or the declared mapping — and leaves the assertions untouched. The first four are standing cases that assert the refusal; each was additionally applied to the *sound* path and watched turning the suite red, which is the demonstration that the suite can say no. The three red transcripts below were re-captured against the final tree after every case, every rename, every prose correction, and `cargo fmt` had landed, so their line numbers resolve at this commit; the durable anchors are the test names, and a later reader should re-locate by those rather than by the number.
 
 1. **A self-certifying adapter** (`Evaluation::Certify`): reaches the routing commit, receives the storage, reports its terminal use, and folds nothing. Everything the adapter itself could be asked about is green. Applied to the sound path, `the_routed_result_agrees_with_the_reference_oracle` fails:
 
    ```text
-   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:544:40:
+   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:555:40:
    the routed result disagrees: element 0 is 0x00000000 and tiler-reference requires 0x3fc00000
    ```
 
 2. **A producer-minted entry key** (`EntryPerturbation::ForgedEntryKey`): the backend states an entry identity instead of transporting the one the stage kernel decided. Applied to the sound path, `the_assembled_artifact_carries_facts_this_backend_never_supplied` fails:
 
    ```text
-   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:249:52:
+   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:260:52:
    the assembled envelope decodes: Invalid { detail: "UnmappedBackendEntry { payload: 0 }" }
    ```
 
 3. **An adapter that returns before terminal use** (`Lifetime::ReturnBeforeTerminalUse`): submits the entry, does not await the worker's completion, and returns. Applied to the sound path:
 
    ```text
-   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:533:6:
+   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:544:6:
    this caller required the execution host and this host supplied it: "the committed route failed: nodefold.dispatch: 1 entr(y/ies) were submitted and 0 terminal use(s) were witnessed; the routed storage is still outstanding"
    ```
 
@@ -139,12 +139,17 @@ Every one perturbs the **subject** — the backend, the adapter, or the declared
 
 ### Populations sized from the type, not by hand
 
-- `Subject::ALL` is sized by `std::mem::variant_count`, so a third subject added without a coverage row is an array-length error at the declaration.
+- `Subject::ALL` is sized by `std::mem::variant_count`, so a third subject added without a coverage row is an array-length error at the declaration. The coverage rows name their cases as **strings**, which checks nothing on its own, so the census reads this file's own source back through `include_str!` and requires each row to name a case the file declares. Perturbed by renaming one row's string, that check says:
+
+  ```text
+  panicked at crates/tiler-conformance/tests/independent_backend/main.rs:740:13:
+  Structural's coverage row names `a_backend_minted_entry_key_is_rejected`, and this file declares no such case; a census that names a case which has been renamed away reports coverage it does not have
+  ```
 - `every_named_graph_refusal_is_reachable_from_bytes` reaches **all twelve** members of `GraphRefusal` from constructed byte runs and asserts the count of distinct discriminants equals `std::mem::variant_count::<GraphRefusal>()`. A refusal added to the vocabulary and left unreached fails there. Census printed by the run: `ForeignDomain, UnsupportedSchema { major: 10, minor: 0 }, Truncated, TrailingBytes, UnknownNodeTag(255), MalformedSymbol, ForwardReference { node: 1, operand: 9 }, OperandTypeDisagreement { node: 3, required: F32, found: Index }, UndeclaredStoreBuffer(9), UndeclaredLoadBuffer(9), EmptySignature, StoreThroughReadBuffer(0)`.
 
 ### What the trigger now has, and the gap that remains
 
-The evidence the owning decision names as **sufficient on its own** to reopen candidate D1 — *"one second independently authored fixture that shares exact structural and execution subjects with the portfolio without those defects"* — now exists in the gate. Two gaps are named rather than implied.
+The evidence the owning decision names as **sufficient on its own** to reopen candidate D1 — *"one second independently authored fixture that shares exact structural and execution subjects with the portfolio without those defects"* — now exists in the gate. *Those defects* are the three the preceding sentence in that record names — an extraction that would *"group independently selected responsibilities, publish Metal-specific machinery, or trust caller-supplied success"* — and this backend avoids each: it claims four responsibility rows separately and groups none, it links no Metal type and carries no Metal-shaped fixture, and its verdict comes from the oracle rather than from any success the adapter reports. Two gaps are named rather than implied.
 
 - **The execution subject's in-gate counterpart is still one fixture.** `crates/tiler-build/tests/custom_backend` shares only the *structural* subject, and it cannot share the execution one: `crates/tiler-build`'s manifest has no `tiler-runtime` and no `tiler-reference` edge, so no test target there can route a plan or reach the oracle. The other fixture asserting the execution subject is the retained portfolio spike, which `spikes/` places outside the workspace `members` and therefore outside `make full`. Two independently authored fixtures do assert the execution subject; only one of them gates.
 - **No extraction was performed, and none was authorized.** Trigger 1 speaks of a *bounded extraction*; what exists here is the same subject expressed twice, independently, with no shared code. Building the shared expression is the reopened decision's own work, and this ticket's Non-goals exclude it. Whether the trigger has fired is the coordinator's and Tom's call: `publish-the-backend-provider-conformance-suite`'s `## Trigger check log` and `decide-the-backend-provider-conformance-harness-public-surface` were **not** edited here.
