@@ -1,7 +1,7 @@
 ---
 id: carry-the-gather-relation-through-the-compiler-vertical
 title: Carry the gather relation through the compiler vertical
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-selected-data-dependent-index-representation]
 related: [decide-the-data-dependent-index-representation-public-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/decisions, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, gather, identity, normalized-output]
+claimed_from: todo
+assignee: worker-gathervert
+lease_expires_at: 1787438923
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: join-the-scheduled-region-into-the-contraction-witness
 title: Join the scheduled region into the contraction witness
-status: todo
+status: in-progress
 priority: p1
 dependencies: [derive-staged-combine-structure-from-program-scope]
 related: [accept-the-exact-composed-reference-session-and-event-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [ir, scheduling, conformance, witness]
+claimed_from: todo
+assignee: worker-witnessjoin
+lease_expires_at: 1787438923
 ---
 ## User-visible outcome
 

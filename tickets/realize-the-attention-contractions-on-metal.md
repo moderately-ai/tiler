@@ -1,7 +1,7 @@
 ---
 id: realize-the-attention-contractions-on-metal
 title: Realize the attention score and value contractions on Metal
-status: todo
+status: done
 priority: p1
 dependencies: [admit-the-attention-contraction-structures, realize-the-tiled-contraction-schedule-and-its-metal-emission, reclassify-language-model-work-as-a-conformance-track]
 related: [design-attention-program-vertical, plan-the-materialized-attention-decomposition, admit-reassociated-contraction-schedule-alternatives, scope-causal-structure-aware-attention-schedules, implement-parallel-reduction-strategies]
