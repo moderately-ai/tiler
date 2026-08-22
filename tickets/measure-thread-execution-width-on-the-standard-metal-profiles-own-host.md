@@ -1,7 +1,7 @@
 ---
 id: measure-thread-execution-width-on-the-standard-metal-profiles-own-host
 title: Measure threadExecutionWidth on the standard Metal profile's own host
-status: deferred
+status: in-progress
 priority: p3
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile, measure-metal-thread-execution-width-across-prepared-pipelines, correct-the-metal-profile-authority-ledgers-stale-identity-pins]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, metal, subgroup, target-profiles, evidence, needs-tom]
+claimed_from: todo
+assignee: worker-width
+lease_expires_at: 1787424719
 ---
 ## User-visible outcome
 
@@ -31,6 +34,12 @@ Freeze a **new** protocol first — same matrix, flags, repetitions, custody, an
 ## Closes when
 
 The standard profile either carries a `Realized` subgroup row backed by a retained measurement on its own execution row, or a recorded decision retires the question.
+
+## Released from deferred — 2026-08-22, acting on this ticket's own fired trigger
+
+The trigger log below already records `2026-08-19 — **fired, on the decision rather than on the host**`, and states the ticket stayed `deferred` only because "ticket state changes belong to the coordinator, not to the sweep that repaired the premise." **That coordinator action is this note.** Verified at `fd7706e0`: ADR 0113 carries `decision_status: "accepted"` and its `pre-registered beneficiary, stated value, measured validity` clause resolves, superseding both branches this ticket waited between.
+
+**HOST DRIFT — correct the protocol before pre-registering anything.** This ticket records the host build as `26A5406e`. `sw_vers -buildVersion` now prints **`26A5416b`** — verified by the coordinator. The frozen protocol must pre-name `26A5416b`, not the recorded build, and the measurement is valid for that row only. This is host drift, **not** an authorized environment change: do not install, downgrade, or alter any toolchain or OS component — AGENTS.md reserves that to Tom.
 
 ## Trigger check log
 
