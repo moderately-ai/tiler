@@ -35,7 +35,8 @@ use tiler_ir::schedule::{
     PointwiseF32Expression, PointwiseF32ExpressionBuilder, ReductionTopology, RegionId,
     RegionProgram, ScalarProgram, ScheduledRegionBuilder, SubnormalFreedom, SubnormalMode,
     SyncPointId, SynchronizationPlacement, SynchronizationPoint, TailPolicy, TensorRole,
-    ValueDomainProvenance, VerifiedScheduledRegion, element_count, workgroup_tree_tile,
+    ValueDomainProvenance, VerifiedScheduledRegion, admit_predicated_cooperative_contraction,
+    blocked_operand_tile, element_count, workgroup_tree_tile,
 };
 use tiler_ir::semantic::{CANONICAL_BF16_ARITHMETIC_NAN_BITS, RMS_NORM_F32_REFERENCE_EPS_BITS};
 use tiler_ir::semantic::{
@@ -869,6 +870,68 @@ fn contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduled
         })
         .unwrap();
     builder.build().unwrap()
+}
+
+/// The L3 `tiled` realization: a blocked workgroup staging two operand tiles.
+///
+/// Deliberately built by replacing only the *schedule* of the direct fixture, so
+/// the two kernels compute the same contraction from the same accesses, proofs,
+/// and strict realization and differ in nothing but how the operands reach the
+/// fold. `numerical` forbids reassociation, which is the point: this schedule
+/// tiles the memory and leaves the contributor sequence alone, so a strict
+/// contract admits it.
+///
+/// The tail is `Predicated` because that is the retained population's shape —
+/// two of the six profile cells have `M` below the block — and because it is the
+/// arm that carries `GuardedLoad`, whose translation this backend owns.
+fn tiled_contraction_region(id: RegionId, m: u64, n: u64, k: u64) -> VerifiedScheduledRegion {
+    const BLOCK: u64 = 16;
+    let mut region = contraction_region(id, m, n, k).region().clone();
+    let admitted = admit_predicated_cooperative_contraction(
+        &Shape::from_dims([m, n]),
+        &Shape::from_dims([BLOCK, BLOCK]),
+        &Shape::from_dims([k]),
+        &Shape::from_dims([BLOCK]),
+    )
+    .expect("the measured 16-wide tile divides the contracted extent");
+    let threads = u32::try_from(BLOCK * BLOCK).expect("a 16x16 block is 256 threads");
+    region.schedule = KernelSchedule {
+        binding: admitted.binding,
+        work_items: admitted.work_items,
+        threads_per_workgroup: threads,
+        tail: TailPolicy::Predicated,
+        output_owner: OwnershipWitnessId::new(0),
+        reduction: ReductionTopology::CooperativeContraction {
+            tile: blocked_operand_tile(BLOCK, admitted.rounds)
+                .expect("a 16-wide operand tile is statable"),
+            contracted_shape: Shape::from_dims([k]),
+            contracted_tile: admitted.contracted_tile,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: false,
+            permits_permutation: false,
+        },
+        launch: LaunchPlan {
+            grid_threads: admitted.grid_threads,
+            threads_per_workgroup: threads,
+            zero_work_skips_dispatch: true,
+        },
+    };
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the strict tiled contraction verifies")
+}
+
+/// The multi-round tiled contraction this backend emits.
+///
+/// `K = 32` over a 16-wide tile is two rounds, which is the smallest shape that
+/// exercises the round loop, the round boundary, and the rewrite of both staged
+/// allocations. `M = 10` is one of the two retained profile cells whose output
+/// block is partial, so the guarded operand loads and the predicated owning
+/// store are exercised rather than described.
+pub(crate) fn tiled_contraction_kernel() -> VerifiedKernel {
+    lower_scheduled_region(&tiled_contraction_region(RegionId::new(11), 10, 32, 32))
+        .expect("the tiled contraction lowers")
 }
 
 pub(crate) fn contraction_kernel() -> VerifiedKernel {
@@ -1815,6 +1878,26 @@ fn contraction_unit() -> MetalTranslationUnit {
 ///
 /// [Finding 16 of the Apple numerical-behaviour record]: ../../docs/research/apple-targets/numerical-behaviour.md
 fn refuse_fused_accumulation(source: &str) {
+    let arithmetic = refuse_fused_accumulation_shape(source);
+    assert_eq!(
+        operator_lines(&arithmetic, " * "),
+        2,
+        "one product for the seed and one inside the fold:\n{source}"
+    );
+    assert_eq!(
+        operator_lines(&arithmetic, " + "),
+        1,
+        "one accumulation, inside the fold:\n{source}"
+    );
+}
+
+/// The part of the fusion subject that is a property of *any* strict fixture.
+///
+/// Split out rather than duplicated because the exact operator counts are the
+/// one part that is specific to a body's shape, and a second fixture copying the
+/// spellings list would let the two drift. Returns the arithmetic statements so
+/// the caller can count them.
+fn refuse_fused_accumulation_shape(source: &str) -> Vec<&str> {
     for forbidden in FUSED_ACCUMULATION_SPELLINGS {
         assert!(
             !source.contains(forbidden),
@@ -1840,22 +1923,14 @@ fn refuse_fused_accumulation(source: &str) {
             "one statement carries both operators, so the pair is fusable:\n{line}"
         );
     }
-    assert_eq!(
-        arithmetic
-            .iter()
-            .filter(|line| line.contains(" * "))
-            .count(),
-        2,
-        "one product for the seed and one inside the fold:\n{source}"
-    );
-    assert_eq!(
-        arithmetic
-            .iter()
-            .filter(|line| line.contains(" + "))
-            .count(),
-        1,
-        "one accumulation, inside the fold:\n{source}"
-    );
+    arithmetic
+}
+
+fn operator_lines(arithmetic: &[&str], operator: &str) -> usize {
+    arithmetic
+        .iter()
+        .filter(|line| line.contains(operator))
+        .count()
 }
 
 /// The seed subject: the fold starts at the first product, never at `+0.0`.
@@ -4190,4 +4265,150 @@ fn an_empty_extrema_domain_is_refused_where_an_empty_sum_commits_its_identity() 
         builder.build().is_err(),
         "an identity-less fold over an empty reduced domain has no value to commit"
     );
+}
+
+/// Emits the tiled cooperative contraction fixture and returns its unit.
+fn tiled_contraction_unit() -> MetalTranslationUnit {
+    let kernel = tiled_contraction_kernel();
+    emit_translation_unit(&[&kernel], &target()).expect("the tiled contraction fixture emits")
+}
+
+#[test]
+fn tiled_cooperative_contraction_matches_its_golden_source() {
+    assert_golden(
+        "contraction_tiled_cooperative.metal",
+        include_str!("../goldens/contraction_tiled_cooperative.metal"),
+        &emit_one(&tiled_contraction_kernel()),
+    );
+}
+
+/// The tiled body carries no fused multiply-add on its accumulation path.
+///
+/// The sibling of [`the_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path`]
+/// at the realization that made the question urgent: the L3 probe measured
+/// `simdgroup_multiply_accumulate` fusing under the governed `-ffp-contract=off`
+/// while the four scalar kernels stayed separately rounded, so what holds the
+/// line for a *tiled* GEMM shape — the one an emitter is most tempted to lower
+/// to a matrix instruction — is the emitted text and not the flag.
+///
+/// The counts are this body's: three products, one per fold, and two
+/// accumulations, one per fold. Round zero is peeled and folds `[1, 16)` after
+/// seeding from its first product; the round loop folds `[0, 16)` into the
+/// accumulator it carries in.
+#[test]
+fn the_tiled_contraction_kernel_emits_no_fused_multiply_add_on_its_accumulation_path() {
+    let unit = tiled_contraction_unit();
+    let arithmetic = refuse_fused_accumulation_shape(unit.source());
+    assert_eq!(
+        operator_lines(&arithmetic, " * "),
+        3,
+        "one product seeds the peeled round and one sits in each of the two folds:\n{}",
+        unit.source()
+    );
+    assert_eq!(
+        operator_lines(&arithmetic, " + "),
+        2,
+        "one accumulation per fold and none between them — a round loop that \
+         combined a per-round subtotal would emit a third:\n{}",
+        unit.source()
+    );
+    assert!(
+        unit.numerical_requirements()
+            .contains(&MetalNumericalRequirement::NoFloatingPointContraction),
+        "the strict contract records `-ffp-contract=off` beside the emitted text"
+    );
+}
+
+/// The accumulator crosses the round boundary instead of meeting a subtotal.
+///
+/// The emitted counterpart of the kernel-IR relation: `acc + (p0 + … + p15)` and
+/// `((acc + p0) + …) + p15` combine the same contributors in the same order and
+/// differ only in grouping, so they are different binary32 values and only the
+/// second is the declared contributor sequence. In the emitted text the two are
+/// told apart by *where* the fold starts. The peeled round has no accumulator to
+/// continue, so it seeds from its first product and folds `[1, 16)`; every later
+/// round continues that accumulator, so it folds `[0, 16)` and adds nothing of
+/// its own afterwards. A subtotal form would fold `[1, 16)` twice and carry a
+/// third addition at the round loop's own level.
+#[test]
+fn the_tiled_contraction_kernel_carries_its_accumulator_across_the_round_loop() {
+    let unit = tiled_contraction_unit();
+    let source = unit.source();
+    for expected in [
+        "// serial loop over [1, 16)",
+        "// serial loop over [1, 2)",
+        "// serial loop over [0, 16)",
+    ] {
+        assert!(source.contains(expected), "missing {expected}:\n{source}");
+    }
+    let carried = source
+        .split_once("// serial loop over [0, 16)")
+        .expect("the round loop folds its tile")
+        .1;
+    let accumulations = carried
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("float ") && line.contains(" + "))
+        .count();
+    assert_eq!(
+        accumulations, 1,
+        "everything after the carried fold opens is that fold's own single \
+         accumulation; a second is the per-round subtotal this schedule must \
+         not compute:\n{carried}"
+    );
+}
+
+/// Every guarded operand load is a conditional whose false arm reads nothing.
+///
+/// The accepted `GuardedLoad` contract is that a false predicate performs *no*
+/// memory access, and the MSL construct that delivers it is the conditional
+/// operator — exactly one of whose arms is evaluated. A select, a mask multiply,
+/// or an unconditional load followed by a fix-up would each read the element
+/// first, which on this body's two partial-block cells is a read past the end of
+/// the operand. Both guards are asserted, and asserted as *different* predicates:
+/// the left load is authorized by the row's activity and the right by the
+/// column's, so a body that used one predicate for both would lose the operand
+/// data its active peers need.
+#[test]
+fn the_tiled_contraction_guards_each_operand_load_by_its_own_predicate() {
+    let unit = tiled_contraction_unit();
+    let source = unit.source();
+    let guarded: Vec<&str> = source
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("bounds witness") && line.contains(" ? "))
+        .collect();
+    assert_eq!(
+        guarded.len(),
+        4,
+        "two operands guarded in each of the peeled round and the round loop:\n{source}"
+    );
+    let predicates: BTreeSet<&str> = guarded
+        .iter()
+        .map(|line| {
+            line.split_once(" = ")
+                .expect("a guarded load binds a local")
+                .1
+                .split_once(" ? ")
+                .expect("a guarded load is a conditional")
+                .0
+        })
+        .collect();
+    assert_eq!(
+        predicates.len(),
+        2,
+        "the row guard and the column guard are different predicates: {predicates:?}"
+    );
+    assert!(
+        !source.contains("select("),
+        "a select would read the element it is meant to skip:\n{source}"
+    );
+    // The staged stores stay unconditional so every participant initializes its
+    // slots and reaches every barrier, and no barrier may sit under a guard.
+    for line in source.lines().map(str::trim) {
+        assert!(
+            !(line.contains("threadgroup_barrier") && line.contains(" ? ")),
+            "a barrier under a predicate is divergent:\n{line}"
+        );
+    }
 }

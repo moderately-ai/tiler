@@ -1466,9 +1466,25 @@ pub enum ReductionTopology {
         accumulation: ArithmeticType,
         /// Whether the contract permits reassociation.
         ///
-        /// Tiling the contracted space regroups the declared contributor
-        /// sequence, so the verifier admits this topology only when this is
-        /// true.
+        /// Recorded and cross-checked against the region's declared
+        /// realization, and deliberately not consulted to admit the topology —
+        /// exactly the relation [`Self::Contraction`] states. Tiling the
+        /// contracted space is a change of *memory* schedule: each invocation
+        /// owns one output position and folds that output's contributors in
+        /// ascending contracted order straight through the round loop, so the
+        /// fold is the declared contributor sequence and this strategy consumes
+        /// nothing.
+        ///
+        /// Earlier wording here said the tiling "regroups the declared
+        /// contributor sequence, so the verifier admits this topology only when
+        /// this is true". That was false of the realization this topology names
+        /// and is withdrawn: it would have refused, under every strict contract,
+        /// the one tiled realization measured byte-identical to the direct fold.
+        /// A per-round subtotal combined after the fact *is* a regrouping, but
+        /// it is a different realization with its own reserved vocabulary —
+        /// `CooperativeContractionSplit`, holding reduction-topology tag `0x36`
+        /// — and giving one topology both meanings is what the separation exists
+        /// to prevent.
         permits_reassociation: bool,
         /// Whether the contract permits contributor permutation.
         permits_permutation: bool,

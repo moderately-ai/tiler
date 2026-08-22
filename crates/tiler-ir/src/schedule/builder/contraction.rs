@@ -342,11 +342,24 @@ fn verify_cooperative_contraction(
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     };
     let numerical = numerical_program(region)?.1;
+    // Both permissions are recorded and cross-checked against the region's
+    // declared realization, and neither is *consulted* to admit the topology —
+    // the relation [`ReductionTopology::Contraction`] already states, for the
+    // same reason. Tiling the contracted space changes which memory a
+    // contributor is read from and nothing about the order contributors are
+    // combined in: one invocation owns one output position and folds that
+    // output's contributors in ascending contracted order across the whole round
+    // loop, so the fold *is* the declared contributor sequence. Requiring
+    // reassociation would refuse the strict realization the first-contraction
+    // record attributes uniquely to `strict_fold+ftz`. A topology that genuinely
+    // regroups the sequence into per-round subtotals is a different realization
+    // with its own reserved vocabulary — `CooperativeContractionSplit`, which
+    // holds reduction-topology tag `0x36` — and the carried accumulator in
+    // `emit_cooperative_contraction` is what keeps this one out of that class.
     if contracted_shape != scheduled_contracted
         || order != scheduled_order
         || *permits_reassociation != numerical.permits_reassociation()
         || *permits_permutation != numerical.permits_permutation()
-        || !*permits_reassociation
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
