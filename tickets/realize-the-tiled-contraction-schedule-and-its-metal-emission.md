@@ -68,3 +68,93 @@ A contraction of the profile's projection structure compiles through the ordinar
 
 - 2026-08-04 — **not fired.** The activation trigger is [`admit-a-cooperative-tile-over-shared-operands`](admit-a-cooperative-tile-over-shared-operands.md) reaching `done`; it is still `deferred`, and this sweep found its own trigger only half fired — its dependency landed but the two public boundaries it needs are Tom's and unaccepted. Recheck: that ticket's status and its trigger-check log.
 - 2026-08-09 — **not fired.** The two-dimensional staging dependency is `done`, but `admit-a-cooperative-tile-over-shared-operands` is now correctly `awaiting-decision`: the second cooperative relation and its ownership-proof kind remain Tom's public-boundary decision. This implementation stays deferred behind that answer rather than appearing runnable merely because the lower dependency landed.
+
+## Source-first Fact audit — 2026-08-22, exact base `489cc3553965ef87d053cc15a11279a9e00b4ab4`
+
+Every Fact re-read in the file it names at this base. The body above was written before the two cooperative-contraction dependencies landed on 2026-08-13, and most of what it lists as remaining is now present — but the two things that *were* built were built against a numerical claim that the measurement refutes, which is the substance of this lane.
+
+| # | Fact as stated | Verdict | Evidence |
+| --- | --- | --- | --- |
+| 1 | A contraction "cannot carry a cooperative topology at all"; a new `ReductionTopology` variant "is what admits it" | **False** | `ReductionTopology::CooperativeContraction` exists and is accepted (`crates/tiler-ir/src/schedule/model.rs "const TAG_REDUCTION_COOPERATIVE_CONTRACTION: u8 = 0x37;"`). `verify_intrinsic` admits it beside `ExecutionBinding::BlockedWorkgroup` and `TailPolicy::Predicated`, and `verify_contraction` dispatches to `verify_cooperative_contraction`. **No new variant and no new tag are required by this ticket.** |
+| 2 | The new variant takes appended tag `0x36` | **False**, as the release note already warned | `0x36` is reserved for `CooperativeContractionSplit` (`crates/tiler-ir/src/schedule/model.rs "reserved for the accepted"`), owned by [`admit-reassociated-contraction-schedule-alternatives`](admit-reassociated-contraction-schedule-alternatives.md). `0x37` and `0x38` are taken. See *The tag question, answered* below. |
+| 3 | The guarded output tail "must state and verify that relation before this ticket can claim all six correctness cells" | **Verified, and satisfied** | `TailPolicy::Predicated`, `GuardedLoad`, `admit_predicated_cooperative_contraction`, and the role-checked guards all landed under [`admit-guarded-output-tails-for-cooperative-contraction`](admit-guarded-output-tails-for-cooperative-contraction.md). The `M = 1` and `M = 10` population is representable. |
+| 4 | `single_workgroup_tree_region` is the precedent for a typed `…Unavailable` decline the frontier records as a declined strategy | **Verified** | `crates/tiler-compiler/src/physical.rs "pub(crate) const SINGLE_WORKGROUP_TREE_STRATEGY"`, its `WorkgroupTreeUnavailable`, and `DeclinedStrategy` / `StrategyDeclineCause` in `frontier.rs`. Nothing in `tiler-compiler` references `CooperativeContraction`, `BlockedWorkgroup`, `TailPolicy::Predicated`, or `admit_exact_cooperative_contraction` — the alternative genuinely does not exist. |
+| 5 | The `K ≡ 0 (mod 16)` precondition must be a typed refusal, never a pad | **Verified, and satisfied at the schedule layer** | `CooperativeContractionAdmission::ContractedTileNotDivisible`, returned by `crates/tiler-ir/src/schedule/blocked.rs "pub fn admit_predicated_cooperative_contraction"` and its exact sibling. Neither ever returns a direct `Contraction` schedule. |
+| 6 | `cooperative_plan`'s `let ([staging], [produce, consume]) = …` "admits one allocation and one visibility edge"; two allocations are "an emission widening with no identity consequence" | **Imprecise — the citation is right, the conclusion drawn from it was aimed at the wrong function** | That destructuring is still at `crates/tiler-ir/src/kernel/lower.rs "let ([staging], [produce, consume])"`, but it belongs to `cooperative_plan`, the *reduction* tile's planner, which this schedule never reaches. The contraction has its own `cooperative_contraction_plan`, which already destructures `let ([left, right], [produce, consume])`. Two allocations were not the missing piece. |
+| 7 | "one round boundary [discharges] both anti-dependencies" | **Verified as a schedule fact, false as a lowering fact** | `discharges_anti` reads no `staging` field, so one point does discharge both. But `cooperative_contraction_plan` matched a *single* anti-dependency edge and returned `CooperativeLoweringShape` for any other count, so every multi-round two-allocation tile — i.e. every tiled contraction with `K > 16` — was refused. Fixed here. |
+| 8 | The multi-round two-allocation Metal body "is still this ticket's" | **Verified** | `tiler-metal` referenced none of `GuardedLoad`, `BlockedWorkgroup`, `TailPolicy::Predicated`, or `CooperativeContraction`; `emit_operation`'s wildcard returned `MetalEmitError::UnrecognizedOperation` for `GuardedLoad`. |
+| 9 | The tiled schedule "consumes no numerical permission" and is bit-identical to `direct` | **Verified against the retained measurement, and contradicted by the landed code** | `workload.tsv` in the retained correctness results carries `bit-identical-to-strict-fold` for `tiled` at all six cells with `result_sha256` equal to `direct`'s at every one. See *The numerical defect* below for what the code did instead. |
+| 10 | "Landed Metal goldens for cooperative work are single-round (`cooperative_workgroup_reduction.metal`)" | **Verified** | And so were the *kernel-IR* fixtures: every `cooperative_contraction_region` call passed `contracted = 16` against a 16-wide tile, so `rounds == 1` at every one. The multi-round contraction path had no test at all. |
+
+## The numerical defect this lane found, and fixed
+
+**Fact — the landed cooperative contraction was a contiguous K-split, not the tiled realization.** `emit_cooperative_contraction` folded each round's sixteen products into a subtotal of their own and then added that subtotal to the accumulator: `acc + (p0 + … + p15)`. The reference kernel does the opposite — `spikes/scheduling/metal_contraction_vertical/kernels.metal` carries one `accumulator` straight through its `k0` loop and never restarts it, which is `((acc + p0) + …) + p15`. The two combine the same contributors in the same order and differ only in grouping, so they are different binary32 values, and only the second is the declared contributor sequence.
+
+**Fact — the schedule verifier asserted the same false consumption.** `verify_cooperative_contraction` refused the topology outright unless `permits_reassociation`, which made the one realization L3 attributes uniquely to `strict_fold+ftz` inadmissible under every strict contract — precisely what the *Numerical legality, already settled* section above forbids. That gate postdates the belief this ticket's own 2026-08-10 correction withdrew, and two accepted ADRs had recorded it as implementation status.
+
+**Inference — the regrouped form already has its own vocabulary, which is the independent derivation.** `CooperativeContractionSplit` holds reduction-topology tag `0x36` under [`decide-the-fixed-strided-contributor-membership-vocabulary`](decide-the-fixed-strided-contributor-membership-vocabulary.md) and is delivered by [`admit-reassociated-contraction-schedule-alternatives`](admit-reassociated-contraction-schedule-alternatives.md). A `CooperativeContraction` that regroups is that topology under the wrong tag, giving one identity two numerical meanings. Nothing in the accepted surface — the variant's field list, its tag, `admit_exact_cooperative_contraction`, `prove_blocked_bijection` — changes here; what is withdrawn is a verifier rule and the prose asserting a consumption the strategy does not have.
+
+## The tag question, answered
+
+**No tag is consumed by this ticket.** The variant this ticket asked for already exists at `0x37`. Were one needed, the next genuinely free reduction-topology tag is **`0x39`**: `0x31`–`0x35` are `None`, `Serial`, `MultiPass`, `Contraction`, `CooperativeWorkgroup`; `0x36` is reserved-and-unwritten for `CooperativeContractionSplit`; `0x37` and `0x38` are the operand-sharing and live contractions. Derived by reading the reduction-topology frame's own run in `crates/tiler-ir/src/schedule/model.rs`, not by a global scan — tag spaces there are per-frame, which that file documents at anchor `overlap deliberately`.
+
+## Landed — 2026-08-22
+
+Commit `4f08e06b`, gated with `make check` green (`citations`, `fmt`, `build`, `lint`, `test`) on the merged tree.
+
+- **`crates/tiler-ir/src/kernel/lower.rs`** — the round loop carries one accumulator into the tile fold instead of combining a subtotal after it (`"a subtotal of their own"`), reproducing the reference kernel statement for statement; and the anti-dependency resolution takes the same shape the visibility edges already used, so a repeating two-allocation tile lowers instead of being refused as `CooperativeLoweringShape`.
+- **`crates/tiler-ir/src/schedule/builder/contraction.rs`** — both permissions stay recorded and cross-checked and neither is consulted to admit (`"recorded and cross-checked against the region"`), which is the relation `ReductionTopology::Contraction` already carried. A strict contract now admits the tiled schedule; a reassociating one still does.
+- **`crates/tiler-ir/src/schedule/cooperative.rs`** — `blocked_operand_tile(block, rounds)`, the sibling of `workgroup_tree_tile` for this topology, **labelled draft public boundary**: the one tile shape three layers construct, written once. Its correctness is pinned by construction — the kernel fixtures' hand-built literal was replaced by a call to it and every schedule- and kernel-identity assertion still passes byte for byte.
+- **`crates/tiler-metal/src/emit.rs`** — the `GuardedLoad` arm, spelled as a conditional operator so the subscript is unreachable on the false path. A select or mask-multiply spelling would read the element it exists to skip, which on this body's partial blocks is a read past the end of the operand.
+- **`crates/tiler-metal/goldens/contraction_tiled_cooperative.metal`** — the first golden composing two threadgroup allocations, a round loop, a barrier inside a loop body, guarded operand loads, and a nested predicated store. Registered in the compile harness, and **compiled and linked by the qualified Apple toolchain**, not only byte-compared.
+
+### Identity values recomputed on this tree
+
+Every value below was read off this tree, never copied from a document.
+
+| Subject | Before | After |
+| --- | --- | --- |
+| Schedule identity domain | `tiler.schedule.v7` | unchanged — no encoder byte moved |
+| `STRICT_F32_REGION_IDENTITY_HEX` | pinned | unchanged, asserted |
+| `ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX` | pinned | unchanged, asserted |
+| `ABSENT_SUBGROUP_KERNEL_IDENTITY_HEX`, both live-row-major pins | pinned | unchanged, asserted |
+| Every landed Metal golden | pinned | unchanged; one golden added |
+| Cooperative-contraction kernel identity | never pinned | still unpinned; its bytes move with the fold change, and no retained program's bytes move with it because no plan, artifact, or pin reached this topology |
+
+**No unchanged program's bytes moved.** The fold change alters only the *kernel* body of a topology whose lowering was refused before `admit-guarded-output-tails-for-cooperative-contraction` and which no assembled plan reaches, so it has no artifact or manifest consequence. `tiler.kernel-program`, `tiler.artifact-program`, and the manifest pair are untouched.
+
+### Perturbations, with the failure text each produced
+
+Each perturbs the subject and leaves the assertion alone.
+
+| Guard | Perturbation | What it said |
+| --- | --- | --- |
+| `the_tiled_contraction_carries_one_accumulator_across_its_rounds` | round loop restored to `acc + fold_tile(None)` | `the round loop combines 1 subtotal(s) of its own; a carried accumulator performs every addition inside the tile fold` / `left: 1  right: 0` |
+| the same test's second property | carried fold started at `1`, dropping each round's first contributor | `every contributor of the round enters the carried accumulator, including the first …` / `left: (1, 16)  right: (0, 16)` |
+| `a_multi_round_operand_tile_discharges_both_anti_dependencies` | anti-dependency match restored to a single edge | `the multi-round operand tile lowers: Verification(CooperativeLoweringShape)` |
+| `a_strict_contract_admits_the_tiled_contraction` | `\|\| !*permits_reassociation` restored | `ScheduledRegionBuildError { … diagnostics: [NumericalOrAccessRefinement] }` |
+| `every_golden_compiles_and_links_when_a_toolchain_resolves` | `?` doubled in the new golden's guarded load | `golden contraction_tiled_cooperative.metal must compile: offline metal failed … error: expected expression` — which is what shows the Apple compiler actually reaches this fixture rather than the harness self-skipping |
+| `make citations` | the ADR status notes left unrepaired | `check-citations: 2 citation(s) do not resolve against this tree.` naming ADR 0012 and ADR 0014 |
+
+The last row is the one worth keeping: the citation gate, not a reviewer, is what caught that removing the verifier rule falsified a claim two accepted records carried.
+
+### Scope added, and why
+
+`contracts/decisions`, added with `tkt set --add-scope`. Removing the unconditional reassociation requirement falsified a sentence in the **implementation-status** sections of [ADR 0012](../docs/decisions/0012-physical-reduction-topology.md) and [ADR 0014](../docs/decisions/0014-reassociation-vs-permutation.md), both of which pinned the retired anchor and both of which say of themselves that they are status records adding no decision. Neither record's *decision* moves: ADR 0014's rule is that a topology proves **its own** regrouping behaviour against the contract, and the correction restores exactly that rule rather than revising it. Both notes now carry a dated status correction naming this ticket. **The coordinator should re-read those two diffs against the `contracts/decisions` lane before merging** — that scope is also declared by `accept-the-live-extent-artifact-envelope-row`, whose diff was empty when checked here, and an empty diff proves nothing.
+
+## Remainder — enumerated, not attempted
+
+**The compiler alternative is not landed, and it is deliberately stopped rather than rushed.** Everything below the schedule and backend layers is in place: a strict tiled contraction verifies, lowers, and emits. What is missing is the offer — `tiler-compiler` still names none of this topology, so no `compile` call can select it, and the *User-visible outcome*'s "compiles through the ordinary entry point as a retained alternative beside `direct`" is unmet.
+
+It stops here because its first prerequisite is a decision, not an implementation:
+
+1. **The tile width has no authority.** `single_workgroup_tree_region` refuses to offer the tree unless the target profile declares a closed width policy, and says why: *"Silence is not a default"* (`crates/tiler-compiler/src/physical.rs "Silence is"`). A tiled contraction alternative that hard-coded the measured 16 would do exactly what that precedent forbids. Either the target profile grows a contraction-tile-width policy row — a target-profile public boundary, Tom's — or a named measured constant is accepted with the same standing as `MEASURED_TREE_PARTICIPANT_CAP`. This is one concrete question and it is the gate.
+2. **The topology has no work/span derivation.** `work_span` covers `None`, `Serial`, `Contraction`, `MultiPass`, and `CooperativeWorkgroup`, and declines everything else through `crates/tiler-compiler/src/measured_cost.rs "_ => None,"`. A tiled plan offered without an arm there declines to state a total and never reaches measured comparison — it would be offered and never chosen, which looks like an absent alternative. The derivation itself is short (the tile changes the memory schedule, so work is `work_items × contracted` and depth is `contracted`, exactly `Contraction`'s), but it is cost surface and this ticket's Non-goals exclude a cost model, so it needs its own home.
+3. **`verify_region_output_binding` pins the contraction to `RegionId::new(0)`.** A sibling alternative with its own region id is refused at binding unless that arm is widened, the way `verify_multi_pass_subject_binding` and `verify_workgroup_tree_subject_binding` already are.
+4. **Which block shape.** The lowering admits square tiles only (`crates/tiler-ir/src/kernel/lower.rs "Square tiles only"`), so `B_m = B_n = T_k`; a request whose output is smaller than the block in both extents launches a 256-thread workgroup for one useful column.
+
+**Also remaining, and separable:** the six-cell bit comparison. `crates/tiler-compiler/src/governed/contraction_conformance.rs` already pins `direct`'s host result against the retained `result_sha256` at the cells it reaches, and the retained record carries `tiled`'s digest as *equal to `direct`'s at all six*. What no host can supply is the third link — that the emitted body computes that fold — because there is no KIR interpreter in the workspace. **Measurement boundary: a host comparison is not a dispatched one.** What this lane supplies instead is structural and stated as such: the emitted fold is the ascending left fold, asserted at both the kernel-IR and the MSL layer and perturbation-proved at each. [`integrate-the-contraction-vertical-into-the-runtime`](integrate-the-contraction-vertical-into-the-runtime.md) owns the device.
+
+### Unsupported cases, unchanged by this lane
+
+Non-square tiles, non-`f32` elements, contracted rank above one, output rank other than two, a contracted extent not divisible by the tile width (typed refusal, never padded), and any tile whose participants do not equal the workgroup's threads. All were already refused by name and still are.
