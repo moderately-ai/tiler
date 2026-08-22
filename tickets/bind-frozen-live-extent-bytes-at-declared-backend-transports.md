@@ -3,7 +3,7 @@ id: bind-frozen-live-extent-bytes-at-declared-backend-transports
 title: Bind frozen live-extent bytes at declared backend transports
 status: todo
 priority: p0
-dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes, accept-the-live-extent-artifact-envelope-row]
+dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes, accept-the-live-extent-artifact-envelope-row, re-prove-the-live-extent-operand-association-at-decode]
 related: [prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
 scopes: [implementation/artifact, implementation/runtime, implementation/metal, implementation/metal-aot, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]

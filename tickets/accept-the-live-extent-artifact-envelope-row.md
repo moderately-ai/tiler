@@ -1,7 +1,7 @@
 ---
 id: accept-the-live-extent-artifact-envelope-row
 title: Accept the live-extent artifact envelope row
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes]
 related: [carry-live-extent-operands-through-the-artifact-envelope, bind-frozen-live-extent-bytes-at-declared-backend-transports]
@@ -9,9 +9,6 @@ scopes: [contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary]
-claimed_from: todo
-assignee: worker-envelope
-lease_expires_at: 1787425502
 ---
 ## User-visible outcome
 
@@ -235,3 +232,15 @@ Neither dominates. A pays nothing now and risks freezing an accessor for a const
 - **Not measured:** the wrong-result consequence in Finding 2 is derived by reading `bind_extent_parameters`, `evaluate_retained_shape_relations`, and the Metal `eN` binding path. No forged artifact was executed on a device, because no backend binds the transport yet — that is the p0's own work. The *validation* gap itself is not an inference: it is two green tests that contradict each other.
 - **Not audited:** `spikes/` is outside the workspace and was not read. The packaging landing already records that three spikes call the retired `DecodedInput::shape()`.
 - **Contradicting the dispatch brief:** the brief named three live lanes; there are four, and `admit-the-selected-data-dependent-index-representation` holds `contracts/decisions`, which this ticket also declares exclusively. No `docs/decisions/` file was touched, so nothing collided.
+
+## Coordinator disposition — 2026-08-22, merged at `7a00a927`
+
+Packet merged; ticket parked `awaiting-decision` on Question 1, which AGENTS.md reserves to Tom ("A tested public boundary remains a labelled draft until Tom accepts its exact included and excluded surface"). **Release trigger:** Tom answers A or B. Questions 2 and 3 are recorded as recommended-and-unopposed; they need no answer.
+
+**Findings 2 and 3 verified first-hand by the coordinator at `cdafe1d2`, not relayed.** Finding 2: `grep -rn` for the four `ExtentOperand*` association arms places `ForeignSymbol`, `UnsourcedSymbol`, and `SourceMismatch` in `program/error.rs`, `program/builder.rs`, and `program/tests/` only — never under `codec/`; only `ExtentOperandStaticAxis` has a codec counterpart. `live_extent_row()` names key `input` axis 1; the codec test sets `envelope.inputs[0].extents[1]` to `forged_symbol("T")`; `forged_retained_environment` binds `T` to `BindingSource::Static(Extent::new(2))` (`codec/tests/forged_models.rs`, anchor `BindingSource::Static(Extent::new(2))`); and `check_extent_operand_association` refuses `BindingSource::Static(_)` with `ExtentOperandUnsourcedSymbol`. Re-run here: `2 tests run: 2 passed, 344 skipped`. Finding 3: `bind_extent_parameters` reads only `operand.key()` and `operand.axis()`, so `DecodedExtentOperand::value_type()` has no consumer, and `extent_operands()` resolves to exactly two lines, both in `crates/tiler-runtime/src/load.rs`.
+
+One imprecision in the delivery report, corrected here rather than propagated: the report said the forged binding is "exactly what `a_live_operand_on_a_symbol_without_an_input_source_refuses` pins". That test's example roots the symbol at a `BindingSource::TargetProperty`, not a `Static`. Both land in the same match arm and yield the same `ExtentOperandUnsourcedSymbol`, so the finding is unaffected — but the cited test is a sibling of the forged case, not the same case.
+
+**Graph edge applied:** `bind-frozen-live-extent-bytes-at-declared-backend-transports` now depends on [`re-prove-the-live-extent-operand-association-at-decode`](re-prove-the-live-extent-operand-association-at-decode.md).
+
+**Coordinator error, recorded.** The brief said three lanes were live and dropped this ticket's own Scheduling note that `admit-the-selected-data-dependent-index-representation` holds `contracts/decisions`. Both tickets declare that scope exclusively and both were `in-progress`; the worker caught it. No collision occurred — the delivered diff touches `docs/artifact-abi.md` and two ticket files, so `contracts/decisions` was never entered — but the dispatch was unsafe as briefed, and the check that would have caught it (`tkt why` pairwise against every live claim, not just the ready set) was not run.
