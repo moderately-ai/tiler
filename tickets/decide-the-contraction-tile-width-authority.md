@@ -1,7 +1,7 @@
 ---
 id: decide-the-contraction-tile-width-authority
 title: Decide the contraction tile-width authority
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, offer-the-tiled-contraction-alternative-in-physical-planning]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, target-profiles, scheduling]
-claimed_from: todo
-assignee: worker-tilewidth
-lease_expires_at: 1787428751
 ---
 ## User-visible outcome
 
@@ -146,3 +143,17 @@ Implementing the alternative — that is [`offer-the-tiled-contraction-alternati
 ## Closes when
 
 Tom has accepted one authority for the tile width with provenance recorded, or has redirected the question, and the implementation ticket can name the accepted source without inventing one.
+
+## Coordinator disposition — 2026-08-22, merged at `f2c974a8`, closed `done`
+
+**No question goes to Tom, because one option dominates and AGENTS.md says take it rather than manufacture a choice.** The answer is: decline to declare any tile-width authority now, break the false dependency so the width-independent compiler work can land, calibrate under a beneficiary-named protocol, then apply the precedent carrier.
+
+**The ticket's own Inference was false, and I wrote it.** I framed the choice as *either* a target-profile row carrying a width *or* a named measured constant. The landed precedent is **both at once**, and I verified this at source at `f2c974a8`: `crates/tiler-compiler/src/target/rows.rs` declares `pub enum WorkgroupTreeWidthPolicy` with the single variant `MeasuredNearestCap256V1` and a stable governed key — a rule, not a number — while `crates/tiler-compiler/src/physical.rs` documents `MEASURED_TREE_PARTICIPANT_CAP` at anchor `A numeric row is not required`. The profile names *which rule*; the repository owns *which number*. A profile row carrying a `u64` width is not the precedent — it was explicitly declined by it. Had the implementation lane inherited my dichotomy it would have built the declined shape.
+
+**The evidence cannot support a width, and cannot be repaired to.** `spikes/scheduling/metal_contraction_vertical/kernels.metal` declares `constant uint TILE = 16;` — one compile-time constant with every other reference derived from it. **No width other than 16 has ever been executed**; the spike swept realization families, not widths. Verified by the coordinator. Worse, the record measures the tiled kernel *losing* — 523.5 µs against `direct`'s 251.4 at one workload, 2.28x at another — and attributes it to a square block wasting fifteen of sixteen rows at M = 1. And ADR 0113 component 3(a) admits a measured row into a family-keyed profile only when the producing protocol named that exact profile key as beneficiary before the run; this one named four realization families and no profile key, which the ADR states is unrepairable.
+
+**The dependency ran backwards.** `work_span` in `crates/tiler-compiler/src/measured_cost.rs` has no `CooperativeContraction` arm, so no tile width can be compared against another until the cost model can score the topology at all. [`offer-the-tiled-contraction-alternative-in-physical-planning`](offer-the-tiled-contraction-alternative-in-physical-planning.md) has been narrowed to the three width-independent repairs and its edge to this ticket removed; it is dispatchable now.
+
+**Deferred question, moved to where it actually arises.** Whether adding a *new policy family* to a target profile falls inside Tom's 2026-08-11 delegation is unresolved. The lane's judgement was that ADR 0075 hits no always-ask category, but it flagged that as its own inference rather than a recorded rule. That question is recorded on [`carry-the-contraction-tile-width-policy-as-a-target-profile-row`](carry-the-contraction-tile-width-policy-as-a-target-profile-row.md), which is the ticket that would land the public surface — not here, where nothing public is proposed.
+
+**Follow-ups filed:** [`calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol`](calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol.md), [`carry-the-contraction-tile-width-policy-as-a-target-profile-row`](carry-the-contraction-tile-width-policy-as-a-target-profile-row.md), [`offer-the-tiled-contraction-alternative-once-a-width-authority-exists`](offer-the-tiled-contraction-alternative-once-a-width-authority-exists.md), and [`reconsider-the-square-tiles-only-lowering-restriction`](reconsider-the-square-tiles-only-lowering-restriction.md).

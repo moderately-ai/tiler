@@ -3,7 +3,7 @@ id: offer-the-tiled-contraction-alternative-in-physical-planning
 title: Offer the tiled contraction alternative in physical planning
 status: todo
 priority: p1
-dependencies: [decide-the-contraction-tile-width-authority]
+dependencies: []
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, integrate-the-contraction-vertical-into-the-runtime]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
@@ -12,7 +12,13 @@ tags: [compiler, scheduling, cost-model, contraction]
 ---
 ## User-visible outcome
 
-A caller whose request reaches a strict `f32` tensor contraction is offered the tiled cooperative alternative alongside the direct fold, and the cost model can actually choose it — so the realization the schedule, lowering, and Metal emission already support is reachable through planning rather than only through a hand-built region.
+The cost model can score a cooperative contraction at all, and the output-binding check reaches past one region — the two things that must be true before any tiled alternative can be compared against the direct fold.
+
+## Narrowed 2026-08-22, and the dependency I gave it was backwards
+
+I filed this ticket depending on [`decide-the-contraction-tile-width-authority`](decide-the-contraction-tile-width-authority.md). **That edge was wrong and has been removed.** The tile-width packet showed the ordering runs the other way: `work_span` has no `CooperativeContraction` arm, so *no tile width can be compared against another until the cost model can score the topology at all*. A width granted today would select a plan that still could not be chosen.
+
+So this ticket now owns only the three **width-independent** repairs below and is dispatchable immediately. The width-dependent offer moved to [`offer-the-tiled-contraction-alternative-once-a-width-authority-exists`](offer-the-tiled-contraction-alternative-once-a-width-authority-exists.md), which depends on the authority. Do **not** offer a tiled alternative here.
 
 ## Why this exists
 
@@ -24,15 +30,14 @@ Filed 2026-08-22 by the coordinator as the enumerated remainder of `realize-the-
 
 **Fact — output binding verification is pinned to one region.** `crates/tiler-compiler/src/physical.rs` uses `RegionId::new(0)` at several sites; the tiled lane reports `verify_region_output_binding` must widen past it. Re-derive this rather than trusting the count.
 
-**Blocked on a decision, not on effort.** The tile width has no authority — see [`decide-the-contraction-tile-width-authority`](decide-the-contraction-tile-width-authority.md). Do not hard-code the measured 16 to make progress; the same precedent that refuses a defaulted tree width refuses that.
+**Not blocked.** Nothing below needs a tile width. If you find yourself wanting one, you have strayed into the successor ticket — stop and say so.
 
 ## Required work
 
 - Re-audit all three Facts at your own base and report a per-Fact verdict; re-derive each population rather than trusting the counts, and say which unit you report.
 - Add the `CooperativeContraction` arm to `work_span` and **remove the wildcard**, so a future topology is a build error at this site rather than a silent `None`.
 - Widen `verify_region_output_binding` past the single region, with the widened case tested.
-- Offer the tiled alternative from the accepted width authority, never from a literal.
-- Perturb each new behaviour separately, subject not assertion, with quoted failure text. Include one negative control that the direct fold is still offered and still chosen where it should be.
+- Perturb each new behaviour separately, subject not assertion, with quoted failure text. Include one negative control that the direct fold is still scored and still chosen where it should be.
 
 ## Non-goals
 
@@ -40,4 +45,4 @@ Dispatching on a device — [`integrate-the-contraction-vertical-into-the-runtim
 
 ## Closes when
 
-A strict contraction request is offered both alternatives, the cost model scores both, the wildcard arm is gone, the widened output-binding check is tested, each new behaviour has been watched failing on its own subject, and the workspace gate is green.
+The cost model scores a cooperative contraction, the wildcard arm is gone, the widened output-binding check is tested, each new behaviour has been watched failing on its own subject, and the workspace gate is green.

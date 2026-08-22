@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-frontier-provider-and-outcome-budgets
 title: Calibrate the physical-frontier provider and raw-outcome budgets
-status: in-progress
+status: done
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, measure-request-wide-physical-frontier-budgets-on-the-idle-m3-pro, decide-how-explain-capacity-bounds-active-physical-provider-populations, decide-the-truthful-public-class-for-complete-explain-capacity-refusals, implement-the-truthful-explain-capacity-budget-refusal, prove-the-truthful-explain-capacity-budget-refusal-boundary]
 related: [replace-provider-offer-with-a-host-bounded-frontier-sink]
@@ -9,9 +9,6 @@ scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets, contracts/navigation]
 paths: []
 tags: [optimizer, budgets, measurement, host-performance]
-claimed_from: todo
-assignee: worker-calibrate
-lease_expires_at: 1787428751
 ---
 ## User-visible outcome
 
@@ -206,3 +203,11 @@ The accepted two-specialist population is therefore `304 + 2 × 272 = 848` at th
 **FIRED — provider count belongs to a different preflight authority.** This ticket's User-visible outcome promises a calibrated *provider-count* limit as well as a raw-outcome limit, but only the raw-outcome axis has an accepted value. The 32 in the superseded single-target table was never carried through the decision gate, which enumerates raw-outcome powers only, and the 2026-08-18 acceptance names only request-scoped 1,024. The re-audit confirms the two axes have different enforcement points: a raw-outcome bound is a per-request `DeterministicBudgets` field, while a provider-count bound could only refuse at the installation seam, `InstalledPhysicalProviders::installed`, which runs before compile and today has no count branch at all. That is precisely this ticket's second stop condition. The provider-count axis should be split into its own ticket against the installation-seam authority rather than encoded here; this ticket should close on the raw-outcome axis only, with its outcome narrowed to match.
 
 **Not fired, but the record must stay explicit — one count over a 34:1 cost spread.** Request-scoped 1,024 remains valid as a *cardinality* ceiling and is not a uniform work unit, which the retained outcome already states. The quantified consequence should not be lost: with admitted proposals costing roughly 34× named declines, the composition at a fixed 1,024 outcomes ranges from all-decline to all-proposal, so the ceiling bounds host time only to within roughly a sixfold range. The retained 177 ms / 531 MB figure is the cost of one specific 848-outcome composition — 144 proposals and 704 declines — and must never be restated as the cost the 1,024 bound guarantees. Stated that way the single count does not mislead; restated as a host-time bound it would.
+
+## Coordinator disposition — 2026-08-22, merged at `8f798eaf`, closed `done` on the raw-outcome axis
+
+**This ticket's stop condition fired and the worker stopped rather than pushing through, which was right.** The outcome promised a calibrated *provider-count* limit as well as a raw-outcome limit, but only the raw-outcome axis has an accepted value. The `32` came from the superseded single-target table and never passed a decision gate; the 2026-08-18 acceptance names only the request-scoped raw-outcome value. The two axes have different enforcement points — a raw-outcome bound is a per-request `DeterministicBudgets` field, while a provider-count bound could only refuse at `InstalledPhysicalProviders::installed`, which runs *before* compile and has no count branch. **The outcome is narrowed to the raw-outcome axis**; the provider-count axis is [`calibrate-the-physical-provider-count-at-the-installation-seam`](calibrate-the-physical-provider-count-at-the-installation-seam.md).
+
+**Two premises of the coordinator's brief were false, and the worker contradicted both correctly.** I briefed that the timing run was what remained and that the harness needed constructing. Neither: this ticket already records at anchor `is also complete and needs no rerun` that the idle-M3 measurement is done, and the harness exists as a spike plus a crate-private pinned test. The worker validated the harness instead of rebuilding it, and ran cardinality only — labelled as making no wall-clock or RSS claim — on a loaded coordination host. Verified by the coordinator at `f2c974a8`.
+
+**Third instance today of one failure mode, and it is worth naming.** Two of this ticket's citations named `crates/tiler-compiler/src/request.rs` and `.../target.rs`. **Both files still exist**, so grepping them for the moved constants returns 0 — which reads as *the constant was removed* rather than *the module was split*. `MAX_TARGET_PROFILES_PER_REQUEST` now lives in `target/request.rs` and is re-exported from `target.rs`; verified by the coordinator. This is the same false-absence direction as anchor rot, and the branch audit hit it too when a path-for-path check claimed 91 lines of `request.rs` were missing from `main` while they sat in `request/tests.rs`. **Compare content tree-wide, not per-path, after any module split.**
