@@ -539,6 +539,17 @@ impl IndexRegionBuilder {
     /// builder boundary exactly: a sourced boundary must never be reported as a
     /// shape disagreement derived from an environment this surface refuses to
     /// consult.
+    ///
+    /// **The domain obligation is one predicate, not two readings of one
+    /// field.** This arrives at the committed `domain` — the ascending-ordinal
+    /// collection of a `BTreeSet` — while `gather_read` sees the caller's
+    /// slice, so the two ends disagree about order for the same region whenever
+    /// a caller declared its result dimensions in any order but ascending.
+    /// [`gather_domain_carries_result_extents`] is therefore called from both
+    /// sides rather than spelled twice: it compares extents as a multiset, the
+    /// strongest statement a set at rest can support. Writing the comparison
+    /// here instead would restore a rule that answers differently at each end,
+    /// which is what made the "every obligation" claim above false.
     fn verify_gather_access(
         &self,
         access_index: u32,
@@ -611,7 +622,11 @@ impl IndexRegionBuilder {
             refuse(GatherAccessRule::DomainShape);
             return;
         };
-        if declared_shape != derived {
+        // The same predicate the authoring path applies, rather than a second
+        // spelling of it: this reads the committed sorted run while
+        // `gather_read` reads the caller's slice, so two spellings of one
+        // comparison are two chances to disagree about one region.
+        if !gather_domain_carries_result_extents(&declared_shape, &derived) {
             refuse(GatherAccessRule::DomainShape);
             return;
         }
@@ -1606,6 +1621,18 @@ pub(super) enum PartitionVerdict {
 /// so no admitted region can make an arm fire — which is the design, and also
 /// why the arms need a test that corrupts the draft directly. Without one,
 /// "nothing ran" and "every rule holds" are the same green.
+///
+/// That claim rests on the two sides sharing a predicate wherever they read a
+/// field from opposite ends, and it is **not** self-evidently true: the domain
+/// obligation is one such field, and an order-sensitive comparison over it
+/// admits a region here that `verify` then refuses. It is also not checked by
+/// anything in this module, because every gather below
+/// is built by `admitted_gather`, which declares its result dimensions in
+/// ascending order and so cannot separate a caller's order from an ordinal one.
+/// `every_declaration_order_of_one_gather_is_admitted_by_both_validators`, in
+/// `tests/index_gather.rs`, is what holds the claim; a reader repairing an arm
+/// here should treat this paragraph as a pointer to that test rather than as
+/// evidence on its own.
 ///
 /// Each case perturbs exactly one field of the committed [`AccessData`], so a
 /// reddening perturbation names which rule is load-bearing.
