@@ -1058,6 +1058,7 @@ fn body_shaping_vocabulary_is_closed(
             LogicalAccess::LiveRowMajorSource { .. } => "live-row-major-source",
             LogicalAccess::LiveRowMajor => "live-row-major",
             LogicalAccess::PartitionedCopySource => "partitioned-copy-source",
+            LogicalAccess::GatherSource { .. } => "gather-source",
         },
         match topology {
             ReductionTopology::None => "none",

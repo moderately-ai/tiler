@@ -231,7 +231,131 @@ pub enum ScheduledRegionDiagnostic {
         /// The violated source-relation rule.
         rule: LiveRowMajorSourceRule,
     },
+    /// A gather source read and its address-only index read do not associate.
+    ///
+    /// **Accepted public surface** (2026-08-18, under
+    /// `decide-the-data-dependent-index-representation-public-surface`):
+    /// exactly the eight [`GatherAddressReadRule`]s, and this arm rather than
+    /// the broad [`Self::AccessContract`] or
+    /// [`Self::NumericalOrAccessRefinement`] buckets. The association is a
+    /// cross-access referential-integrity property — each access can be locally
+    /// well formed while the pair is wrong — so a producer told only that "the
+    /// program, the topology, and the access map disagree" could not tell an
+    /// orphaned address read from a shared one.
+    ///
+    /// Both coordinates are carried because the refusal is otherwise
+    /// unactionable: a broken association is wrong only relative to the two
+    /// accesses it relates.
+    GatherAddressRead {
+        /// The owning gather source read, absent only for
+        /// [`GatherAddressReadRule::IndexUnowned`] — where the defect is
+        /// precisely that no source claims the address read.
+        source_access: Option<AccessOrdinal>,
+        /// The address-only index read. Named even when it is orphaned, so the
+        /// producer can locate the access that no gather owns.
+        index_access: AccessOrdinal,
+        /// The violated association rule.
+        rule: GatherAddressReadRule,
+    },
 }
+
+/// One violated rule associating a gather source read with its address read.
+///
+/// **Accepted public surface** (2026-08-18, under
+/// `decide-the-data-dependent-index-representation-public-surface`): exactly
+/// these eight rules, reported at the accepted first-failure precedence —
+/// owner range and order, then mode, then relation, then scalar-leaf use, then
+/// sharing, then orphaning, then occurrence binding, then proof mismatch.
+///
+/// The canonical scheduled access order the rules police is: every scalar
+/// value-producing read in pointwise-leaf order, then one address-only U32 read
+/// per owning [`super::LogicalAccess::GatherSource`] in owner-access order,
+/// then the write. Every address-only read has exactly one owner; none is a
+/// scalar leaf, shared by two gathers, or unreferenced.
+///
+/// Fieldless deliberately: the two access coordinates a producer needs are on
+/// the [`ScheduledRegionDiagnostic::GatherAddressRead`] arm that carries this
+/// rule, so repeating either here would be a second authority that can
+/// disagree with it.
+///
+/// U32 typing is **not** among these rules, and its absence is deliberate: a
+/// standalone scheduled [`super::Access`] carries no dtype at all, so the
+/// element-type half of the association belongs to the compiler's exact
+/// occurrence-binding cross-check. A rule here would have to invent the fact it
+/// checks.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum GatherAddressReadRule {
+    /// The named index access is not strictly later than its gather source.
+    ///
+    /// Address reads follow every scalar leaf, so an ordinal at or before the
+    /// owning source — including one past the end of the access list — cannot
+    /// be an address read of this gather.
+    IndexNotLater,
+    /// The named index access is not an input read.
+    ///
+    /// An address read on the owning write, an intermediate, or an output would
+    /// address the gather from storage no program input backs.
+    IndexMode,
+    /// The named index access does not carry the derived address relation.
+    ///
+    /// The relation is verifier-derived by
+    /// [`super::gather_index_read_map`] and never caller-selected, so any other
+    /// map is a second, contradictory account of the same addressing.
+    IndexRelation,
+    /// The named index access is also a scalar value-producing leaf.
+    ///
+    /// An address read supplies coordinates, not values. Coalescing the two
+    /// would expose the loaded U32 as scalar SSA, which the accepted
+    /// unsupported population refuses by name.
+    IndexUsedAsScalarLeaf,
+    /// Two gather sources name the same address-only read.
+    ///
+    /// Sharing one address read across gathers is refused rather than admitted:
+    /// the two gathers would have one coordinate authority between them.
+    IndexShared,
+    /// An address-only read is named by no gather source at all.
+    ///
+    /// The orphan half of the ownership bijection. This is the one rule for
+    /// which [`ScheduledRegionDiagnostic::GatherAddressRead::source_access`] is
+    /// `None`, because no source claims it.
+    IndexUnowned,
+    /// The gather relation does not describe its own occurrence.
+    ///
+    /// The stated `result_shape` is not the one the source shape, axis, and
+    /// index shape derive, or it is not the region's iteration domain.
+    OccurrenceBinding,
+    /// The retained bounds proof does not prove this gather.
+    ///
+    /// The paired [`super::BoundsProofKind::GatherSource`]'s relation fields, or
+    /// the subject of the [`crate::index::GatherIndexBoundsProof`] it carries,
+    /// disagree with the relation being proved.
+    ProofMismatch,
+}
+
+impl GatherAddressReadRule {
+    /// Returns the stable rule identifier for this association failure.
+    #[must_use]
+    pub const fn rule(self) -> &'static str {
+        match self {
+            Self::IndexNotLater => "gather-address-read-not-later",
+            Self::IndexMode => "gather-address-read-mode",
+            Self::IndexRelation => "gather-address-read-relation",
+            Self::IndexUsedAsScalarLeaf => "gather-address-read-scalar-leaf",
+            Self::IndexShared => "gather-address-read-shared",
+            Self::IndexUnowned => "gather-address-read-unowned",
+            Self::OccurrenceBinding => "gather-address-read-occurrence-binding",
+            Self::ProofMismatch => "gather-address-read-proof-mismatch",
+        }
+    }
+}
+
+impl fmt::Display for GatherAddressReadRule {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.rule())
+    }
+}
+impl Error for GatherAddressReadRule {}
 
 /// One violated rule of a cooperative workgroup tile's dataflow.
 ///
@@ -856,6 +980,7 @@ impl ScheduledRegionDiagnostic {
             Self::VectorLaneBinding { rule } => rule.rule(),
             Self::PartitionedCopy { rule } => rule.rule(),
             Self::LiveRowMajorSource { rule } => rule.rule(),
+            Self::GatherAddressRead { rule, .. } => rule.rule(),
         }
     }
 }

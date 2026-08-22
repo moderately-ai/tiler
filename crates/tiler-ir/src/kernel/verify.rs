@@ -66,6 +66,14 @@ pub(super) fn access_elements(
         BoundsProofKind::ReductionDomain { input_shape, .. } => {
             element_count(input_shape).map_err(|_| KernelDiagnostic::ElementCountOverflow)
         }
+        // The gather source's proved domain is its source tensor's own
+        // contiguous element range, the same domain a contraction operand and
+        // both structural relations prove. Which of those positions any one
+        // invocation touches is what the relation states and what the index
+        // values select; the domain the proof bounds is the whole buffer.
+        BoundsProofKind::GatherSource { source_shape, .. } => {
+            element_count(source_shape).map_err(|_| KernelDiagnostic::ElementCountOverflow)
+        }
     }
 }
 
@@ -402,6 +410,11 @@ fn access_rank(access: &Access, schedule: &ScheduledRegion) -> u64 {
         // range, which is the fail-closed direction.
         crate::schedule::LogicalAccess::LiveRowMajor => crate::schedule::live_source_axis(schedule)
             .map_or(0, |axis| u64::from(axis.get()).saturating_add(1)),
+        // The source tensor's own rank, for the reason the builder's twin of
+        // this function states: the gathered axis is one of the source's axes.
+        crate::schedule::LogicalAccess::GatherSource { source_shape, .. } => {
+            source_shape.rank() as u64
+        }
     }
 }
 

@@ -33,6 +33,8 @@ mod reduction;
 mod tile;
 
 #[cfg(test)]
+pub(crate) mod gather_tests;
+#[cfg(test)]
 mod structural_relation_tests;
 #[cfg(test)]
 mod tests;

@@ -1280,6 +1280,15 @@ fn scheduled_access_rank(schedule: &ScheduledRegion, access: &crate::schedule::A
         // verification refuses such a region before a kernel over it verifies.
         LogicalAccess::LiveRowMajor => crate::schedule::live_source_axis(schedule)
             .map_or(0, |axis| u64::from(axis.get()).saturating_add(1)),
+        // The gather source's static rank is its source tensor's, exactly as
+        // every other operand-shape-carrying relation reports its operand's.
+        // The gathered axis is one of those source axes — the indirection
+        // decides *which coordinate* that axis takes, not how many axes the
+        // tensor has — so reporting anything else here would misdescribe the
+        // buffer. Nothing lowerable reaches this: `addressing` refuses the
+        // relation as `BodyRefinement` first, and this stays a truthful answer
+        // for the signature checks that run before it.
+        LogicalAccess::GatherSource { source_shape, .. } => source_shape.rank() as u64,
     };
     if matches!(
         schedule.schedule.reduction,

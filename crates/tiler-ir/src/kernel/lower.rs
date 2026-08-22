@@ -768,6 +768,27 @@ fn addressing(
         // refuses rather than inventing a second language or selecting a
         // concrete neighbour.
         LogicalAccess::ParametricBroadcast { .. } => Err(KernelDiagnostic::BodyRefinement),
+        // The `body-refinement` wall for the data-dependent read. A statically
+        // proved literal gather may reach verified schedule formation, but it
+        // has no indirect kernel or backend route: emitting one needs an
+        // address *load* inside the body, and no `ReadAddressing` form has one.
+        //
+        // Refused by name rather than by selecting a neighbouring relation.
+        // `LinearIdentity` would read the source at the invocation index and
+        // `BroadcastReplication` at a derived static coordinate; both return a
+        // wrong element silently, which is exactly the typed, explainable
+        // failure this arm exists to keep. There is no backend fallback.
+        //
+        // Kept a separate arm from the parametric refusal above, which shares
+        // its result: the two are different unsupported languages — a sourced
+        // mapping that would have to bind an extent, against an address that
+        // would have to be loaded — and merging them would leave one comment
+        // standing for both.
+        #[expect(
+            clippy::match_same_arms,
+            reason = "distinct unsupported relations that share one diagnostic"
+        )]
+        LogicalAccess::GatherSource { .. } => Err(KernelDiagnostic::BodyRefinement),
         // Unreachable through `plan`, which refuses the copy region program
         // before any read is addressed; refused by name so a reachable path
         // added later names the missing carrier rather than a body defect.

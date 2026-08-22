@@ -432,6 +432,62 @@ pub enum LogicalAccess {
     /// admissible only on a [`RegionProgram::PartitionedCopy`] region's reads;
     /// every other program family's admission refuses it by name.
     PartitionedCopySource,
+    /// The one data-dependent read: this source tensor is addressed along
+    /// `axis` by U32 values loaded from the region's index input.
+    ///
+    /// The scheduled half of [ADR 0108](../../../../../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md)'s
+    /// accepted tagged gather access, carrying the five members that record
+    /// fixes: source shape, result shape, gathered axis, index-input ordinal,
+    /// and index shape. Every other coordinate of the read is direct — the
+    /// source axes other than `axis` are addressed by the result coordinates
+    /// that carry them — so this relation localizes the indirection to exactly
+    /// one axis and states nothing about the index operand's *values*.
+    ///
+    /// **The gathered axis receives no result coordinate.** The result domain
+    /// is the source axes before `axis`, then the whole index shape, then the
+    /// source axes after it, which is the composition
+    /// [`crate::semantic::gather_result_shape`] performs; the loaded U32
+    /// supplies the gathered coordinate. `result_shape` is therefore derivable
+    /// from the other three members, and the verifier requires the two to
+    /// agree rather than trusting the stated one — the same stated-and-checked
+    /// arrangement [`Self::ReindexBijection`] and [`Self::BroadcastReplication`]
+    /// use for their own `result_shape`.
+    ///
+    /// **`index_access` is a region-local ordinal, not a second relation.** It
+    /// names the access *within this region* that supplies the addresses, and
+    /// [`super::GatherAddressReadRule`] cross-validates the two accounts: the
+    /// named access must be a strictly later address-only input read, unshared
+    /// and never a scalar leaf, whose own map is the one
+    /// [`gather_index_read_map`] derives from this relation. A caller cannot
+    /// author a source that gathers one way and an index read that addresses
+    /// another.
+    ///
+    /// It is deliberately a **local** [`AccessOrdinal`] rather than a declared
+    /// program-input coordinate. Putting a declared ordinal into shared
+    /// schedule identity would alias reusable computation with
+    /// program-interface position, so the checked semantic association lives in
+    /// the compiler's retained request subject instead. This is the one
+    /// [ADR 0108] clause the accepted surface amends rather than applies
+    /// literally: that record says "index-input ordinal", and the later
+    /// accepted layer boundary makes a declared ordinal unavailable here.
+    ///
+    /// [ADR 0108]: ../../../../../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md
+    ///
+    /// This relation states no bounds conclusion. Whether the loaded values are
+    /// in range is the paired [`BoundsProofKind::GatherSource`]'s subject, and
+    /// it is deliberately not a field here.
+    GatherSource {
+        /// Shape of the gathered-from source tensor.
+        source_shape: Shape,
+        /// Shape of the region's result, which is its iteration domain.
+        result_shape: Shape,
+        /// The gathered source axis, whose coordinate the loaded U32 supplies.
+        axis: Axis,
+        /// Region-local ordinal of this gather's address-supplying index read.
+        index_access: AccessOrdinal,
+        /// Shape of the address-supplying index tensor.
+        index_shape: Shape,
+    },
 }
 
 /// One logical tensor access performed by a scheduled region.
@@ -477,6 +533,51 @@ pub enum BoundsProofKind {
         axes: Vec<Axis>,
         /// Contributor combination order.
         order: ContributorOrder,
+    },
+    /// The domain a data-dependent gather source read stays inside, carrying
+    /// the closed static proof that discharged its index-value obligation.
+    ///
+    /// Paired with [`LogicalAccess::GatherSource`], whose five members it
+    /// restates so the proof and the relation can be *compared* rather than
+    /// assumed to agree; a disagreement is
+    /// [`super::GatherAddressReadRule::ProofMismatch`].
+    ///
+    /// **Only a statically proved gather reaches schedule formation.** The
+    /// retained [`crate::index::GatherIndexBoundsProof`] is minted solely by
+    /// the index layer's verifier-private deriver, so holding one here is
+    /// itself evidence that the closed argument ran. A gather whose obligation
+    /// is outstanding carries a
+    /// [`crate::index::GatherIndexValidationRequirement`] instead and has no
+    /// spelling at this layer at all — which is what stops a schedule from
+    /// ever representing an undischarged data-dependent read.
+    ///
+    /// **The proof kind and fact source are deliberately not copied out of
+    /// it.** They are already encoded once, inside the opaque
+    /// [`crate::index::GatherIndexBoundsProofIdentity`] this variant frames.
+    /// Restating them beside that identity would put the same conclusion in
+    /// two places that can disagree, and would let a caller select a proof kind
+    /// the deriver did not reach.
+    GatherSource {
+        /// Shape of the gathered-from source tensor.
+        source_shape: Shape,
+        /// Shape of the region's result, which is its iteration domain.
+        result_shape: Shape,
+        /// The gathered source axis.
+        axis: Axis,
+        /// Region-local ordinal of this gather's address-supplying index read.
+        index_access: AccessOrdinal,
+        /// Shape of the address-supplying index tensor.
+        index_shape: Shape,
+        /// The closed static proof that every index value is in range.
+        ///
+        /// Boxed because the proof retains its complete subject — three
+        /// shapes, two resolved types, the ordered domain, and the owning
+        /// region identity — and every region carries a `Vec<BoundsProof>`
+        /// whose element size would otherwise be set by this one arm for
+        /// regions that contain no gather at all. Indirection here changes
+        /// nothing a reader can observe: the encoder writes only the framed
+        /// identity, and the accessors are the proof's own.
+        proof: Box<crate::index::GatherIndexBoundsProof>,
     },
 }
 
@@ -2392,6 +2493,77 @@ pub fn broadcast_decodes_are_replicating(
     true
 }
 
+/// Derives the access relation a gather's **address-only index** read carries.
+///
+/// [ADR 0108] keeps the index input "an ordinary U32 read", and this is the
+/// single authority for which ordinary relation that is. The relation is
+/// **verifier-derived, never caller-selected**: the index tensor is addressed
+/// by exactly the result axes its own shape occupies — the run that replaced
+/// the gathered axis — and is invariant in every other result axis, so nothing
+/// about it is a choice. Deriving it here rather than accepting a stated one is
+/// what makes "a caller cannot author two independent, contradictory accounts"
+/// a checked fact.
+///
+/// [ADR 0108]: ../../../../../docs/decisions/0108-site-a-data-dependent-index-coordinate-on-the-expression.md
+///
+/// Three of the vocabulary's existing relations serve, selected in this
+/// precedence:
+///
+/// - **Equal result and index shape** reads
+///   [`LogicalAccess::LinearIdentity`]. It cannot be spelled as a replication,
+///   because [`broadcast_decodes_are_replicating`] refuses a broadcast that
+///   widens nothing — the canonicality rule that stops one meaning having two
+///   spellings. This arm is tested first, so a rank-zero index over a rank-one
+///   source, whose result is also rank zero, is an identity read rather than a
+///   scalar broadcast.
+/// - **A rank-zero index** otherwise reads
+///   [`LogicalAccess::ScalarBroadcast`]: it holds exactly one address, read by
+///   every invocation, and carries no axis correspondence at all.
+/// - **Otherwise** the read genuinely widens and is a canonical
+///   [`LogicalAccess::BroadcastReplication`] projecting the inserted index axes
+///   in their original order, leaving every source-run result axis replicated.
+///
+/// Returns `None` when the members are not a well-formed gather — a rank-zero
+/// source or an out-of-range axis — or when the result arithmetic overflows.
+#[must_use]
+pub fn gather_index_read_map(
+    source_shape: &Shape,
+    axis: Axis,
+    index_shape: &Shape,
+) -> Option<LogicalAccess> {
+    let (_, result_shape) =
+        crate::semantic::gather_result_shape(axis, source_shape, index_shape).ok()?;
+    if *index_shape == result_shape {
+        return Some(LogicalAccess::LinearIdentity);
+    }
+    if index_shape.rank() == 0 {
+        return Some(LogicalAccess::ScalarBroadcast);
+    }
+    let position = usize::try_from(axis.get()).ok()?;
+    let suffix = suffix_products(&result_shape)?;
+    let mut decodes: Vec<AxisDecode> = Vec::with_capacity(index_shape.rank());
+    for (offset, extent) in index_shape.extents().iter().enumerate() {
+        // An extent-one axis reads no coordinate, so its decode must be the
+        // canonical fixed one; any other divisor would be an unobservable
+        // second spelling `AxisDecode::is_canonical` refuses.
+        if extent.get() == 1 {
+            decodes.push(AxisDecode::fixed());
+            continue;
+        }
+        let divisor = *suffix.get(position.checked_add(offset)?)?;
+        decodes.push(AxisDecode {
+            divisor,
+            modulus: extent.get(),
+            mirrored: false,
+        });
+    }
+    Some(LogicalAccess::BroadcastReplication {
+        operand_shape: index_shape.clone(),
+        result_shape,
+        axes: decodes,
+    })
+}
+
 /// Counts the reduction contributors a reduction-contributor access combines.
 ///
 /// Returns `0` when any reduced extent is `0` (an empty reduction).
@@ -2586,8 +2758,49 @@ const TAG_LIVE_ROW_MAJOR_CONSUMER: u8 = 0x0B;
 /// reading an access the earlier vocabulary could not express and no
 /// previously encodable region's bytes move.
 const TAG_PARTITIONED_COPY_SOURCE: u8 = 0x0D;
+/// Logical-access tag of the data-dependent gather source read.
+///
+/// The value `0x0C` the accepted data-dependent-index surface
+/// (`decide-the-data-dependent-index-representation-public-surface`,
+/// 2026-08-18) reserved for exactly this relation, and which the
+/// `TAG_PARTITIONED_COPY_SOURCE` derivation above records as
+/// `reserved-and-unwritten at this base`. This is the write that consumes that
+/// reservation, so the gap that comment describes closes here.
+///
+/// The injectivity argument is unchanged in form: `0x01`–`0x08`, `0x0A`,
+/// `0x0B`, and `0x0D` keep their tags and their field layouts, and `0x09`
+/// stays retired-and-never-reused, so a reader that reaches `0x0C` is reading
+/// an access the earlier vocabulary could not express and no previously
+/// encodable region's bytes move. The schedule identity domain does not step.
+///
+/// Its payload is the one ADR 0108 fixes — source shape, result shape,
+/// gathered axis, index-input ordinal, index shape — each framed the way the
+/// earlier shape-carrying arms frame theirs, so every field is recoverable at
+/// a frame-determined position. `result_shape` is written even though the
+/// verifier requires it to equal the shape derived from the other three,
+/// exactly as the two structural relations write a `result_shape` they are
+/// required to match against the iteration domain. That is a
+/// stated-and-checked redundancy the accepted surface names, not a second
+/// authority: a region whose two accounts disagree does not build.
+const TAG_GATHER_SOURCE: u8 = 0x0C;
 const TAG_LINEAR_RANGE: u8 = 0x11;
 const TAG_REDUCTION_DOMAIN: u8 = 0x12;
+/// Bounds-proof tag of a gather source read's domain.
+///
+/// Allocated in the `0x1X` **family run** the bounds-proof kinds occupy, whose
+/// two earlier members are `TAG_LINEAR_RANGE` and `TAG_REDUCTION_DOMAIN`. The
+/// accepted packet named `0x03` for this tag; that value is
+/// `TAG_SCALAR_BROADCAST`, and taking it would spell a bounds proof outside
+/// its own family run. It would **not** have produced a byte-level collision —
+/// `push_bounds_proof` and `push_logical_access` write into disjoint frames,
+/// and `TAG_SCALAR_POINTWISE_BF16` below documents one deliberate harmless
+/// overlap of exactly that kind — so the ground for `0x13` is the run
+/// convention rather than collision avoidance.
+///
+/// `0x11` and `0x12` keep their tags and their field layouts, so no previously
+/// encodable region's bytes move and the schedule identity domain does not
+/// step.
+const TAG_GATHER_INDEX_BOUNDS: u8 = 0x13;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
 const TAG_SCALAR_FUSED_SUM: u8 = 0x23;
 const TAG_SCALAR_POINTWISE_F32: u8 = 0x24;
@@ -2849,12 +3062,39 @@ fn push_logical_access(bytes: &mut Vec<u8>, access: &LogicalAccess) {
         // this map is a derivation from the region's copy program. See
         // `TAG_PARTITIONED_COPY_SOURCE` for the tag-value reconciliation.
         LogicalAccess::PartitionedCopySource => bytes.push(TAG_PARTITIONED_COPY_SOURCE),
+        // Framed exactly as the earlier shape-carrying arms are: two framed
+        // shapes, a fixed-width axis, a fixed-width ordinal, then a third framed
+        // shape. Every field reaches the bytes, so two relations differing in
+        // meaning differ here; nothing else reaches them, so two relations equal
+        // in meaning encode identically. The ordinal is written because two
+        // gathers differing only in *which* access supplies their addresses are
+        // different relations — the region's read list is ordered, so the
+        // ordinal is semantic and not a spelling.
+        LogicalAccess::GatherSource {
+            source_shape,
+            result_shape,
+            axis,
+            index_access,
+            index_shape,
+        } => {
+            bytes.push(TAG_GATHER_SOURCE);
+            push_shape(bytes, source_shape);
+            push_shape(bytes, result_shape);
+            bytes.extend_from_slice(&axis.get().to_be_bytes());
+            bytes.extend_from_slice(&index_access.get().to_be_bytes());
+            push_shape(bytes, index_shape);
+        }
     }
 }
 
 #[cfg(test)]
 pub(super) fn push_logical_access_for_test(bytes: &mut Vec<u8>, access: &LogicalAccess) {
     push_logical_access(bytes, access);
+}
+
+#[cfg(test)]
+pub(super) fn push_bounds_proof_for_test(bytes: &mut Vec<u8>, proof: &BoundsProof) {
+    push_bounds_proof(bytes, proof);
 }
 
 /// Encodes one framed run of operand-axis coordinate decodes.
@@ -3284,6 +3524,29 @@ fn push_bounds_proof(bytes: &mut Vec<u8>, proof: &BoundsProof) {
             push_shape(bytes, output_shape);
             push_axes(bytes, axes);
             push_order(bytes, *order);
+        }
+        // The exact relation fields, then the framed opaque proof identity.
+        // The proof's *kind* and *fact source* are deliberately not written
+        // here: both are already folded into those identity bytes by the index
+        // layer's deriver, so writing them again would put one conclusion at
+        // two byte positions that can disagree. Framing the identity with
+        // `push_slice` keeps this arm self-delimiting whatever length that
+        // domain's encoding takes.
+        BoundsProofKind::GatherSource {
+            source_shape,
+            result_shape,
+            axis,
+            index_access,
+            index_shape,
+            proof,
+        } => {
+            bytes.push(TAG_GATHER_INDEX_BOUNDS);
+            push_shape(bytes, source_shape);
+            push_shape(bytes, result_shape);
+            bytes.extend_from_slice(&axis.get().to_be_bytes());
+            bytes.extend_from_slice(&index_access.get().to_be_bytes());
+            push_shape(bytes, index_shape);
+            push_slice(bytes, proof.identity().as_bytes());
         }
     }
 }
