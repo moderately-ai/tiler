@@ -359,14 +359,22 @@ fn every_refusal_renders_a_nonempty_message() {
     }
 }
 
-/// The family is registered, and it registers no realization law.
+/// The family is registered, and it registers exactly the standard gather law.
 ///
-/// Both halves are the claim. A key with no law is what makes a program stating
-/// an occurrence fail closed at refinement rather than reach a plan, which is
-/// the delivered maturity boundary: registered and reference-evaluated, not
-/// lowered.
+/// Both halves are the claim, and the second half is what the accepted
+/// data-dependent index surface changed. The key carried **no** law before,
+/// which is what made an occurrence fail closed at refinement; it now refines to
+/// one logical region, so the delivered maturity boundary moved one layer up —
+/// registered, reference-evaluated, and refined, still not lowered, because no
+/// lowering capability or fusion role exists for this family.
+///
+/// The law is compared against the exact constructor rather than merely asserted
+/// present, so registering some *other* family's law under this key would fail
+/// here instead of reading as gather support.
 #[test]
-fn the_family_is_registered_and_carries_no_realization_law() {
+fn the_family_is_registered_and_carries_the_standard_gather_law() {
+    use crate::index::IndexRealizationLaw;
+
     let registry = FrozenSemanticRegistry::standard().expect("the standard registry builds");
     let key = gather_f32_op();
     assert!(
@@ -375,10 +383,15 @@ fn the_family_is_registered_and_carries_no_realization_law() {
             .any(|definition| definition.key() == &key),
         "the gather key is registered"
     );
-    assert!(
-        registry.index_realization_law(&key).is_none(),
-        "no realization law is registered, so an occurrence fails closed at refinement"
+    let registered = registry
+        .index_realization_law(&key)
+        .expect("the gather key carries a realization law");
+    assert_eq!(
+        registered.law,
+        IndexRealizationLaw::gather_f32(),
+        "the standard gather realization law is registered under the gather key"
     );
+    assert_eq!(registered.revision, 1, "the first law row is revision one");
 }
 
 /// The normative definition names the rules a reader must be able to find.

@@ -2590,9 +2590,10 @@ impl SemanticRegistryProvider for StandardSemantics {
         // The fifth element-moving family, and the first whose coordinate
         // relation is not a function of the iteration coordinate. It follows the
         // four that are, because what separates it from them is exactly that
-        // difference; registration order fixes nothing about semantics. No
-        // realization law is registered for it below, and no lowering capability
-        // or fusion role exists, so a program stating one fails closed.
+        // difference; registration order fixes nothing about semantics. A
+        // realization law *is* registered for it below, so a stated gather now
+        // refines to a logical region; no lowering capability or fusion role
+        // exists, so it still fails closed above that layer.
         register_standard_gather(registrar)?;
         register_standard_quantization(registrar)?;
 
@@ -2683,6 +2684,24 @@ impl SemanticRegistryProvider for StandardSemantics {
             (
                 super::concatenate::concatenate_f32_op(),
                 IndexRealizationLaw::concatenate_f32(),
+            ),
+            // The first registered row whose coordinate relation is not a
+            // function of the iteration coordinate: one source coordinate is a
+            // value loaded from the second operand. Tag 14 is append-only, so
+            // this row moves the count-prefixed sidecar — and therefore
+            // `FrozenIndexRealizationLawRegistry`'s identity — for the reason
+            // the rows above state, while every earlier row and the semantic
+            // snapshot remain byte-identical.
+            //
+            // Registering the law does not discharge the family's index bound.
+            // A realized gather's access carries a `GatherIndexBoundsResolution`
+            // that is either a static proof or an outstanding invocation
+            // obligation, and no lowering capability or fusion role exists for
+            // this family, so a program stating one still fails closed above
+            // this layer.
+            (
+                super::gather::gather_f32_op(),
+                IndexRealizationLaw::gather_f32(),
             ),
         ] {
             registrar.register_index_realization_law(operation, 1, law)?;
@@ -3416,25 +3435,35 @@ mod tests {
         assert_ne!(multiply_laws.identity(), add_laws.identity());
     }
 
-    /// The slice enters as one revision-one row and changes no earlier row.
+    /// The gather enters as one revision-one row and changes no earlier row.
     ///
-    /// Fourteen of the fifteen old row pins were captured at exact base
-    /// `946e0328`, before the slice law existed. Each row is checked
-    /// independently rather than by slicing the new sidecar: rows are ordered
-    /// by operation key, so inserting a new key in the middle moves later byte
-    /// offsets without changing any row. The complete law-registry pin moved
-    /// from `2b382beb419307175cd2bdb516c0b316be5c0e6b0d81ed4a09c09903b89de105`
-    /// when the sidecar count and one row changed.
+    /// Each row is checked independently rather than by slicing the new
+    /// sidecar: rows are ordered by operation key, so inserting a new key in
+    /// the middle moves later byte offsets without changing any row. That is
+    /// what makes this test evidence for the boundary the accepted surface
+    /// requires — *no previously encodable row's bytes move* — rather than a
+    /// single aggregate digest that cannot say which row changed.
     ///
-    /// The contraction row and the two aggregate pins were recomputed for the
+    /// The complete law-registry pin moved from
+    /// `2b382beb419307175cd2bdb516c0b316be5c0e6b0d81ed4a09c09903b89de105` when
+    /// the slice arrived, and from
+    /// `1e771f9e787a8f4b9fccaa3f8b0085b76d17e9ceb25bcf704fc053424d2479b4` when
+    /// the gather did. Both moves are the intended meaning of a count-prefixed
+    /// sidecar identity, not a cost.
+    ///
+    /// The contraction row and the aggregate pins were recomputed for the
     /// accepted `tiler::tensor-contraction-f32@1` replacement (2026-08-18):
     /// the row's law payload is byte-identical — the strict left fold remains
     /// its sole registered realization — and only the operation-key spelling
     /// moved, which is why its width shrinks by exactly the seven bytes the
-    /// retired `strict-` prefix carried. The semantic snapshot pin moves with
-    /// the successor definition's thirteen-field facts.
+    /// retired `strict-` prefix carried.
+    ///
+    /// **The semantic snapshot pin deliberately does not move here.** Admitting
+    /// a lower-layer realization for an already-registered family changes no
+    /// semantic definition, which is what keeps every artifact and
+    /// kernel-program identity derived from that snapshot byte-identical.
     #[test]
-    fn the_standard_slice_law_is_one_append_only_revision_one_row() {
+    fn the_standard_gather_law_is_one_append_only_revision_one_row() {
         const DOMAIN: &[u8] = b"tiler.test.index-realization-law-row-pin\0";
         let semantic = FrozenSemanticRegistry::standard().unwrap();
         let scalars = crate::index::FrozenScalarRegistry::standard().unwrap();
@@ -3460,15 +3489,15 @@ mod tests {
             tiler_digest::DigestAlgorithm::GOVERNED
                 .digest(DOMAIN, laws.identity().as_bytes())
                 .label(),
-            "1e771f9e787a8f4b9fccaa3f8b0085b76d17e9ceb25bcf704fc053424d2479b4",
-            "the complete law-registry identity pins the successor contraction row beside the source-bearing slice definition"
+            "510a368c1cb4e370f5dfc8b84485950871d7f61045abad9b085aa6399cbd6873",
+            "the complete law-registry identity pins the appended gather row beside every earlier row"
         );
         assert_eq!(
             semantic.encode_index_realization_law_sidecar().len(),
-            1_759,
-            "the sidecar is the 1,766-byte slice-bearing run minus the seven bytes the successor key spelling removes from the contraction row"
+            1_846,
+            "the sidecar is the 1,759-byte pre-gather run plus the appended 87-byte gather row"
         );
-        assert_eq!(semantic.index_realization_laws().len(), 16);
+        assert_eq!(semantic.index_realization_laws().len(), 17);
 
         let expected_old_rows = [
             (
@@ -3531,6 +3560,15 @@ mod tests {
                 81,
                 "2210e229e32e622abd3361038511d2fa031988424841e63b5d1be899b789845b",
             ),
+            // Pinned here from the block that previously checked it separately,
+            // when it was itself the newest row. It is an old row now, and the
+            // point of this array is that every row predating the appended one
+            // keeps its exact width and bytes.
+            (
+                "tiler::slice-f32@1",
+                86,
+                "2a352358c72d1d4c7e230145abea2e4a7d443218d35ecaf0410a25386e074b46",
+            ),
             (
                 "tiler::softmax-f32@1",
                 88,
@@ -3549,7 +3587,7 @@ mod tests {
         ];
         let old_rows = semantic
             .index_realization_laws()
-            .filter(|(operation, _)| *operation != &crate::semantic::slice::slice_f32_op())
+            .filter(|(operation, _)| *operation != &crate::semantic::gather::gather_f32_op())
             .collect::<Vec<_>>();
         assert_eq!(old_rows.len(), expected_old_rows.len());
         for ((operation, _), (expected_operation, expected_len, expected_digest)) in
@@ -3569,22 +3607,22 @@ mod tests {
             );
         }
 
-        let slice_operation = crate::semantic::slice::slice_f32_op();
-        let slice = semantic.index_realization_law(&slice_operation).unwrap();
+        let gather_operation = crate::semantic::gather::gather_f32_op();
+        let gather = semantic.index_realization_law(&gather_operation).unwrap();
         assert_eq!(
-            slice.revision, 1,
-            "the first law row starts at revision one"
+            gather.revision, 1,
+            "the first gather law row starts at revision one"
         );
-        assert_eq!(slice.law, IndexRealizationLaw::slice_f32());
-        let slice_row = semantic
-            .encode_index_realization_law_row_for(&slice_operation)
+        assert_eq!(gather.law, IndexRealizationLaw::gather_f32());
+        let gather_row = semantic
+            .encode_index_realization_law_row_for(&gather_operation)
             .unwrap();
-        assert_eq!(slice_row.len(), 86);
+        assert_eq!(gather_row.len(), 87);
         assert_eq!(
             tiler_digest::DigestAlgorithm::GOVERNED
-                .digest(DOMAIN, &slice_row)
+                .digest(DOMAIN, &gather_row)
                 .label(),
-            "2a352358c72d1d4c7e230145abea2e4a7d443218d35ecaf0410a25386e074b46"
+            "f48df9a673b0a8472e84e83d264421b583e56fbaa354d8f5548e2513f88899b3"
         );
     }
 

@@ -25,12 +25,13 @@ use crate::semantic::{
     BroadcastAxisMapping, BroadcastAxisSource, CONCATENATE_AXIS_ATTRIBUTE,
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
     CanonicalValueView, ContractionIndex, ContractionIndexStructure, EncodedComponentRole,
-    F32_CONSTANT_BITS_ATTRIBUTE, OperationAttributes, REDUCTION_AXES_ATTRIBUTE,
-    REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE,
-    ReindexForm, ReindexFormKind, ResolvedValueType, SLICE_SELECTION_ATTRIBUTE,
-    SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
-    STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey,
-    concatenate_axis, concatenate_result_shape,
+    F32_CONSTANT_BITS_ATTRIBUTE, GATHER_AXIS_ATTRIBUTE, OperationAttributes,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
+    RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
+    SLICE_SELECTION_ATTRIBUTE, SOFTMAX_REDUCED_AXES_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
+    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection,
+    StrictAffineU4, TypeKey, concatenate_axis, concatenate_result_shape, gather_axis,
+    gather_index_resolved_type, gather_result_shape,
 };
 use crate::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent};
 
@@ -91,11 +92,14 @@ const F32_NEGATIVE_ONE_BITS: u32 = 0xbf80_0000;
 /// **Nothing here relaxes the discipline for a *reachable* refusal**, which is
 /// still watched failing before it is trusted. The exception is this one class,
 /// and each member of it says at its own site that it is unreachable and why it
-/// is stated anyway, so the reason travels with the rule. The four members are
-/// `softmax-reduced-axis-rank` in `realize_softmax`, and
+/// is stated anyway, so the reason travels with the rule. The members are
+/// `softmax-reduced-axis-rank` in `realize_softmax`;
 /// `concatenate-result-arity`, `concatenate-result-shape`, and
 /// `concatenate-operand-binding` in `realize_concatenate`,
-/// `ConcatenatePlan::derive`, and `emit_partitioned_concatenate`.
+/// `ConcatenatePlan::derive`, and `emit_partitioned_concatenate`; and the
+/// complete rule set of `realize_gather`, whose own header states why the three
+/// literal-boundary rules among them are load-bearing rather than duplicated
+/// from the builder.
 ///
 /// The convention is stated for the realization-law vocabulary. Whether it
 /// reaches any other vocabulary is undecided, and nothing here decides it.
@@ -349,6 +353,50 @@ pub enum IndexRealizationLaw {
         /// Atomic scalar operation implementing the widened strict decode.
         scalar: ScalarOpKey,
     },
+    /// Data-dependent read along one gathered axis named by a semantic attribute.
+    ///
+    /// The realization is one region whose result domain is the source shape
+    /// with the index shape composed into the gathered axis' position. Every
+    /// source axis except the gathered one reads its own result coordinate; the
+    /// index axes read the result coordinates the composition placed at that
+    /// position; and the U32 element loaded from the index operand supplies the
+    /// omitted gathered-axis coordinate. The write is identity over the result
+    /// domain.
+    ///
+    /// **Why the address read is not a second law operand.** The loaded index
+    /// value never becomes a scalar SSA value, so this law states one compound
+    /// access rather than a read whose coordinate another read produced. That is
+    /// [`IndexRegionBuilder::gather_read`](super::IndexRegionBuilder::gather_read)'s
+    /// contract, and it is what keeps a consumer that pairs scalar leaves to
+    /// reads by ordinal from mistaking the address for a value input.
+    ///
+    /// **Included and excluded surface.** The variant reads a literal source
+    /// boundary, a literal index boundary, and a literal result domain, an exact
+    /// F32 source, an exact U32 index, one explicit gathered axis, nonzero source
+    /// rank, and a rank-zero or higher index. It deliberately excludes a sourced
+    /// source, index, or domain boundary — refused here by name before any shape
+    /// is derived — as well as scatter, data-dependent result shapes, negative or
+    /// wrapping index conventions, scheduling, and backend realization.
+    ///
+    /// **The bound this law does not discharge.** Realization mints the access'
+    /// [`GatherIndexBoundsResolution`](super::GatherIndexBoundsResolution) through
+    /// the verifier's own deriver. A resolution that is not statically proved is
+    /// an outstanding invocation obligation, not a proof, and nothing here treats
+    /// it as discharged.
+    ///
+    /// **Accepted public surface.** Tom accepted the exact variant, its `const`
+    /// constructor, append-only tag-14 encoding, and standard
+    /// `tiler::gather-f32@1` revision-1 registration on 2026-08-18 under
+    /// [`decide-the-data-dependent-index-representation-public-surface`]. The
+    /// acceptance is limited to the included and excluded surface above; it
+    /// grants no sourced boundary support, scheduled-region spelling, kernel
+    /// construct, or backend realization.
+    ///
+    /// [`decide-the-data-dependent-index-representation-public-surface`]: ../../../../tickets/decide-the-data-dependent-index-representation-public-surface.md
+    Gather {
+        /// Attribute containing the gathered axis.
+        axis_attribute: AttributeFieldId,
+    },
 }
 
 impl IndexRealizationLaw {
@@ -382,6 +430,13 @@ impl IndexRealizationLaw {
             | Self::StagedRootMeanSquareScaleF32 { .. }
             | Self::StagedSoftmaxF32 { .. }
             | Self::PartitionedConcatenate { .. }
+            // Payload-preserving like the four coordinate-mapping families
+            // above it: the gathered element reaches the result unchanged, so
+            // what the contract governs here is the result's own arithmetic
+            // type and nothing this law computes. The index operand's U32 never
+            // becomes a scalar value, so it is not arithmetic the contract could
+            // govern.
+            | Self::Gather { .. }
             | Self::StrictTensorContractionF32 { .. } => governs_result_arithmetic(subject),
         }
     }
@@ -488,6 +543,19 @@ impl IndexRealizationLaw {
     pub const fn concatenate_f32() -> Self {
         Self::PartitionedConcatenate {
             axis_attribute: CONCATENATE_AXIS_ATTRIBUTE,
+        }
+    }
+
+    /// Standard gather-f32 law, as `tiler::gather-f32@1` registers it.
+    ///
+    /// Names that family's own axis identifier. It is record-local — the
+    /// concatenate, reindex, and broadcast records number their own single field
+    /// the same way — so this constructor is what ties the general template to
+    /// the one family whose record means this field.
+    #[must_use]
+    pub const fn gather_f32() -> Self {
+        Self::Gather {
+            axis_attribute: GATHER_AXIS_ATTRIBUTE,
         }
     }
 
@@ -676,6 +744,9 @@ impl IndexRealizationLaw {
                 Self::PartitionedConcatenate { axis_attribute } => {
                     realize_concatenate(&mut context, *axis_attribute)?;
                 }
+                Self::Gather { axis_attribute } => {
+                    realize_gather(&mut context, *axis_attribute)?;
+                }
                 Self::StrictTensorContractionF32 {
                     structure_attribute,
                 } => realize_contraction(&mut context, *structure_attribute)?,
@@ -840,6 +911,22 @@ impl IndexRealizationLaw {
                 // selection field identifier.
                 output.push(13);
                 output.extend_from_slice(&selection_attribute.get().to_be_bytes());
+            }
+            Self::Gather { axis_attribute } => {
+                // Tag 14 is append-only. Tags 1..=13 and their payloads are
+                // unchanged, so every pre-existing row remains byte-identical;
+                // only the newly registered gather row enters the sidecar.
+                //
+                // Injectivity at this site: the first byte discriminates this
+                // variant from the seven older one-attribute payloads — tags 4,
+                // 5, 6, 7, 11, 12, and 13 each write the payload shape this one
+                // does, one fixed-width attribute identifier and nothing else —
+                // and the remaining four bytes injectively encode the
+                // record-local axis field identifier. There is no second field,
+                // so no ordering question arises here of the kind tag 10 has to
+                // answer for its pair.
+                output.push(14);
+                output.extend_from_slice(&axis_attribute.get().to_be_bytes());
             }
         }
     }
@@ -1047,6 +1134,24 @@ impl LawContext<'_> {
         coordinates: &[IndexExprId],
     ) -> Result<ScalarValueId, IndexRealizationLawError> {
         Ok(self.builder.read(tensor, domain, coordinates)?)
+    }
+    fn gather_read(
+        &mut self,
+        source: TensorId,
+        index: TensorId,
+        domain: &[DimensionId],
+        source_coordinates: &[IndexExprId],
+        index_coordinates: &[IndexExprId],
+        axis: Axis,
+    ) -> Result<ScalarValueId, IndexRealizationLawError> {
+        Ok(self.builder.gather_read(
+            source,
+            index,
+            domain,
+            source_coordinates,
+            index_coordinates,
+            axis,
+        )?)
     }
     fn write(
         &mut self,
@@ -2330,6 +2435,114 @@ fn realize_source_bearing_slice(
 /// produce exactly this result from exactly these operands, so a subject whose
 /// declared result disagrees with the family's own derivation is refused instead
 /// of realized as a different join.
+/// Realizes one gather as a single region over the composed result domain.
+///
+/// # Refusals stated against the subject, not the inferencer
+///
+/// **No current producer reaches any rule below, and they are stated anyway.**
+/// This is the class this module's header names a **reinterpretation boundary**.
+/// The semantic schema fixes two operands, one result, one axis attribute, and
+/// an exact U32 index, and `GatherF32` is registered
+/// `ShapeInferenceParticipation::LiteralOnly`, so a malformed or symbolic
+/// occurrence is refused before an [`IndexRefinementSubject`] exists. Every
+/// refused form is nonetheless expressible in the subject's own types, so a
+/// subject re-read from durable bytes or built by a later producer can present
+/// one, and this law is what answers.
+///
+/// **The three literal-boundary rules are load-bearing rather than duplicated
+/// from the builder.** [`IndexRefinementBoundary::shape`] returns an **empty
+/// shape** for a boundary that names a symbol. Reading it without first
+/// demanding a literal would therefore hand `gather_read` a rank-zero source and
+/// derive a result shape for a program nobody wrote — a silently wrong answer
+/// where the vocabulary owes a refusal. Reading `sourced_shape().as_static()`
+/// makes that case a named refusal instead. The builder's own literal checks
+/// then run behind these on the concrete shapes, as defence in depth rather than
+/// as the first authority.
+fn realize_gather(
+    context: &mut LawContext<'_>,
+    attribute: AttributeFieldId,
+) -> Result<(), IndexRealizationLawError> {
+    let ([source, index], [result]) = (context.subject.inputs(), context.subject.results()) else {
+        return Err(unsupported("gather-arity"));
+    };
+    if context.subject.operands() != [0, 1] {
+        return Err(unsupported("gather-operand-binding"));
+    }
+    let [field] = context.subject.attributes().fields() else {
+        return Err(unsupported("gather-attributes"));
+    };
+    if field.id() != attribute {
+        return Err(unsupported("gather-attribute-key"));
+    }
+    let axis = gather_axis(field.value()).map_err(|_| unsupported("gather-axis-attribute"))?;
+
+    // Read the *sourced* boundary and demand a literal, rather than reading
+    // `shape()`, whose empty answer for a symbolic boundary would silently
+    // become a rank-zero operand. Each of the three is a separate refusal so a
+    // reader learns which boundary was sourced.
+    let Some(source_shape) = source.sourced_shape().as_static().cloned() else {
+        return Err(unsupported("gather-source-shape-not-literal"));
+    };
+    let Some(index_shape) = index.sourced_shape().as_static().cloned() else {
+        return Err(unsupported("gather-index-shape-not-literal"));
+    };
+    let Some(result_shape) = result.sourced_shape().as_static().cloned() else {
+        return Err(unsupported("gather-result-shape-not-literal"));
+    };
+
+    if index.value_type() != &gather_index_resolved_type() {
+        return Err(unsupported("gather-index-type"));
+    }
+    let (_, derived) = gather_result_shape(axis, &source_shape, &index_shape)
+        .map_err(|_| unsupported("gather-result-shape"))?;
+    if derived != result_shape {
+        return Err(unsupported("gather-result-shape"));
+    }
+
+    let dimensions = declare_parallel_domain(context, &result_shape)?;
+    let coordinates = dimension_expressions(context, &dimensions)?;
+
+    // The composition `gather_result_shape` performs is what fixes this split:
+    // result axes before `position` are the source's own leading axes, the next
+    // `index_shape.rank()` are the whole index shape, and the remainder are the
+    // source's trailing axes. The gathered axis itself has no result coordinate
+    // — the loaded U32 supplies it — which is why the source run is one shorter
+    // than the source rank.
+    let position = usize::try_from(axis.get()).unwrap_or(usize::MAX);
+    let index_rank = index_shape.rank();
+    let leading = coordinates.get(..position).unwrap_or_default();
+    let trailing = coordinates
+        .get(position.saturating_add(index_rank)..)
+        .unwrap_or_default();
+    let mut source_coordinates = Vec::with_capacity(source_shape.rank().saturating_sub(1));
+    source_coordinates.extend_from_slice(leading);
+    source_coordinates.extend_from_slice(trailing);
+    let index_coordinates = coordinates
+        .get(position..position.saturating_add(index_rank))
+        .unwrap_or_default()
+        .to_vec();
+
+    let source_tensor =
+        context.tensor(TensorRole::Input, source.value_type().clone(), source_shape)?;
+    let index_tensor =
+        context.tensor(TensorRole::Input, index.value_type().clone(), index_shape)?;
+    let value = context.gather_read(
+        source_tensor,
+        index_tensor,
+        &dimensions,
+        &source_coordinates,
+        &index_coordinates,
+        axis,
+    )?;
+    let output = context.tensor(
+        TensorRole::Output,
+        result.value_type().clone(),
+        result_shape,
+    )?;
+    let write = context.write(output, &dimensions, &coordinates)?;
+    context.output(write, value)
+}
+
 fn realize_concatenate(
     context: &mut LawContext<'_>,
     attribute: AttributeFieldId,
@@ -3258,11 +3471,11 @@ fn reindex_operand_coordinates(
 mod tests {
     use super::*;
     use crate::index::{
-        AccessMode, BoundsProofView, FrozenScalarRegistry, IndexDomainFactSource,
-        IndexDomainUnknownReason, IndexExprView, IndexRegionBuildError, IndexRegionDiagnostic,
-        JointPartitionProofView, NumericalContractIdentity, ScalarOperationKindRef,
-        ScalarOperationRef, ScalarValueDefinitionView, VerifiedScalarOperationId,
-        VerifiedScalarValueId, WriteOwnershipProofView,
+        AccessMode, BoundsProofView, FrozenScalarRegistry, GatherIndexBoundsProofKind,
+        IndexDomainFactSource, IndexDomainUnknownReason, IndexExprView, IndexRegionBuildError,
+        IndexRegionDiagnostic, JointPartitionProofView, NumericalContractIdentity,
+        ScalarOperationKindRef, ScalarOperationRef, ScalarValueDefinitionView, TensorAccessView,
+        VerifiedScalarOperationId, VerifiedScalarValueId, WriteOwnershipProofView,
     };
     use crate::semantic::{
         F32, F32Slice, InputKey, OperationAttributes, OutputKey, RMS_NORM_F32_REFERENCE_EPS_BITS,
@@ -4842,12 +5055,237 @@ mod tests {
         );
     }
 
+    /// Builds one standard gather occurrence's refinement subject.
+    fn gather_subject(source: &[u64], index: &[u64], axis: u32) -> IndexRefinementSubject {
+        let mut program = SemanticProgramBuilder::try_standard().unwrap();
+        let shape = |dims: &[u64]| {
+            Shape::try_new(dims.iter().copied().map(Extent::new).collect::<Vec<_>>())
+                .expect("the test shape is canonical")
+        };
+        let source_value = program
+            .input_resolved(
+                InputKey::new("source").unwrap(),
+                shape(source),
+                F32::resolved_type(),
+            )
+            .unwrap();
+        let index_value = program
+            .input_resolved(
+                InputKey::new("index").unwrap(),
+                shape(index),
+                gather_index_resolved_type(),
+            )
+            .unwrap();
+        let attributes = OperationAttributes::new([CanonicalField::new(
+            GATHER_AXIS_ATTRIBUTE,
+            CanonicalValue::unsigned_u32(axis),
+        )])
+        .unwrap();
+        let result = program
+            .apply(
+                crate::semantic::gather_f32_op(),
+                attributes,
+                &[source_value, index_value],
+            )
+            .unwrap()[0];
+        program
+            .output_resolved(OutputKey::new("gathered").unwrap(), result)
+            .unwrap();
+        let program = program.build().unwrap();
+        let operation = program.operations().next().unwrap().id();
+        IndexRefinementSubject::derive(&program, operation, strict_contract()).unwrap()
+    }
+
+    /// The law realizes one gather access whose coordinate split follows the
+    /// result composition, and one identity write.
+    ///
+    /// The axis is interior and the index has rank two, so the three runs are all
+    /// nonempty and distinct: a source `[2, 7, 4]` gathered on axis 1 by an index
+    /// `[3, 5]` composes to `[2, 3, 5, 4]`. A law that spliced the runs in the
+    /// wrong order, or that fed the gathered axis its own result coordinate,
+    /// would still produce a well-formed region of some other shape — which is
+    /// why the coordinate identities are compared, not just the arities.
+    #[test]
+    fn the_gather_law_realizes_one_compound_access_over_the_composed_domain() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let subject = gather_subject(&[2, 7, 4], &[3, 5], 1);
+        let region = IndexRealizationLaw::gather_f32()
+            .realize(&subject, &scalars)
+            .unwrap();
+
+        let accesses = region.accesses().collect::<Vec<_>>();
+        assert_eq!(accesses.len(), 2, "one compound read and one write");
+
+        let read = accesses
+            .iter()
+            .find(|access| access.mode() == AccessMode::Read)
+            .expect("the gather read is present");
+        let TensorAccessView::GatherRead(gather) = read.view() else {
+            panic!("the gather law realizes a gather access, not a direct read");
+        };
+        assert_eq!(gather.axis(), Axis::new(1));
+        assert_ne!(
+            gather.source(),
+            gather.index(),
+            "the two operands are distinct tensors"
+        );
+        assert_eq!(
+            gather.source_coordinates().len(),
+            2,
+            "every source axis except the gathered one"
+        );
+        assert_eq!(gather.index_coordinates().len(), 2, "every index axis");
+
+        // The result domain is `[2, 3, 5, 4]`, so dimension 0 is the source's
+        // leading axis, dimensions 1 and 2 are the index shape, and dimension 3
+        // is the source's trailing axis. The gathered source axis 1 has no
+        // result coordinate at all, because the loaded U32 supplies it.
+        //
+        // **Each coordinate is resolved to the domain dimension it names**, not
+        // merely counted. Both runs are length two for this occurrence, so an
+        // arity assertion — or comparing the runs for inequality — passes just
+        // as happily when the two are exchanged. Resolving them is what makes
+        // the split itself the thing under test.
+        let domain = read.domain().collect::<Vec<_>>();
+        assert_eq!(domain.len(), 4, "the composed result domain");
+        let dimension_of = |expression| {
+            let view = region
+                .index_expression(expression)
+                .expect("a realized coordinate resolves in its own region");
+            match view.view() {
+                IndexExprView::Dimension(dimension) => dimension,
+                other => panic!("a gather coordinate is a bare dimension, not {other:?}"),
+            }
+        };
+        assert_eq!(
+            gather
+                .source_coordinates()
+                .map(dimension_of)
+                .collect::<Vec<_>>(),
+            vec![domain[0], domain[3]],
+            "the source run is the leading and trailing result axes, skipping the gathered one"
+        );
+        assert_eq!(
+            gather
+                .index_coordinates()
+                .map(dimension_of)
+                .collect::<Vec<_>>(),
+            vec![domain[1], domain[2]],
+            "the index run is exactly the axes the index shape contributed"
+        );
+
+        let write = accesses
+            .iter()
+            .find(|access| access.mode() == AccessMode::Write)
+            .expect("the identity write is present");
+        let TensorAccessView::Direct(write) = write.view() else {
+            panic!("the write is a direct access");
+        };
+        assert_eq!(
+            write.coordinates().len(),
+            4,
+            "the write is identity over the composed result domain"
+        );
+    }
+
+    /// A rank-zero index drops the gathered axis and leaves the index run empty.
+    ///
+    /// Driven separately from the interior case because it is the boundary where
+    /// the index run is empty and the source run is the whole source rank minus
+    /// one — the arithmetic a `saturating_sub` could hide.
+    #[test]
+    fn a_rank_zero_index_gather_drops_the_gathered_axis() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let region = IndexRealizationLaw::gather_f32()
+            .realize(&gather_subject(&[6, 4], &[], 0), &scalars)
+            .unwrap();
+        let read = region
+            .accesses()
+            .find(|access| access.mode() == AccessMode::Read)
+            .expect("the gather read is present");
+        let TensorAccessView::GatherRead(gather) = read.view() else {
+            panic!("the gather law realizes a gather access");
+        };
+        assert_eq!(gather.index_coordinates().len(), 0, "a rank-zero index");
+        assert_eq!(
+            gather.source_coordinates().len(),
+            1,
+            "the one source axis the gather did not consume"
+        );
+        assert_eq!(read.domain().count(), 1, "the result domain is `[4]`");
+    }
+
+    /// The realized gather carries a bounds resolution, and an ordinary one is
+    /// an outstanding obligation rather than a proof.
+    ///
+    /// This is the half of the family's contract the law must not quietly
+    /// discharge. A `[2, 7, 4]` source gathered on axis 1 has neither an empty
+    /// result extent nor a `2^32` gathered extent, so neither closed static
+    /// argument applies and the only truthful answer is the requirement.
+    #[test]
+    fn an_ordinary_realized_gather_retains_an_invocation_obligation() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let region = IndexRealizationLaw::gather_f32()
+            .realize(&gather_subject(&[2, 7, 4], &[3, 5], 1), &scalars)
+            .unwrap();
+        let read = region
+            .accesses()
+            .find(|access| access.mode() == AccessMode::Read)
+            .expect("the gather read is present");
+        let TensorAccessView::GatherRead(gather) = read.view() else {
+            panic!("the gather law realizes a gather access");
+        };
+        let resolution = gather.bounds_resolution();
+        assert!(
+            resolution.statically_proved().is_none(),
+            "no closed static argument applies to an ordinary gather"
+        );
+        assert!(
+            resolution.invocation_validation_required().is_some(),
+            "the bound survives as an exact invocation obligation"
+        );
+    }
+
+    /// An empty result extent is proved vacuously, without reading index data.
+    ///
+    /// Driven separately from the ordinary case above so the two resolutions are
+    /// independently attributable. The source's *leading* extent is zero rather
+    /// than the gathered one, which is the case the first pass recorded as
+    /// distinguishing a complete result-domain argument from an index-shape one.
+    #[test]
+    fn an_empty_result_extent_proves_the_gather_bound_vacuously() {
+        let scalars = FrozenScalarRegistry::standard().unwrap();
+        let region = IndexRealizationLaw::gather_f32()
+            .realize(&gather_subject(&[0, 7, 4], &[3], 1), &scalars)
+            .unwrap();
+        let read = region
+            .accesses()
+            .find(|access| access.mode() == AccessMode::Read)
+            .expect("the gather read is present");
+        let TensorAccessView::GatherRead(gather) = read.view() else {
+            panic!("the gather law realizes a gather access");
+        };
+        let proof = gather
+            .bounds_resolution()
+            .statically_proved()
+            .expect("an empty result domain places no obligation on any value");
+        assert_eq!(
+            proof.kind(),
+            GatherIndexBoundsProofKind::VacuousEmptyResultDomain
+        );
+        assert_eq!(
+            proof.facts(),
+            IndexDomainFactSource::Program,
+            "every literal boundary and coordinate makes the complete subject literal"
+        );
+    }
+
     /// Every law variant has one distinct leading tag, sized from the type.
     ///
     /// The array length is `variant_count`, so adding a variant without adding a
-    /// representative is a build error at this census. The slice is the
-    /// append-only thirteenth row: every earlier representative retains its old
-    /// tag, and changing only the slice's record-local field changes only its
+    /// representative is a build error at this census. The gather is the
+    /// append-only fourteenth row: every earlier representative retains its old
+    /// tag, and changing only the gather's record-local field changes only its
     /// four-byte payload.
     #[test]
     fn every_law_variant_has_one_append_only_encoding_tag() {
@@ -4865,6 +5303,7 @@ mod tests {
             IndexRealizationLaw::staged_softmax_f32(),
             IndexRealizationLaw::concatenate_f32(),
             IndexRealizationLaw::slice_f32(),
+            IndexRealizationLaw::gather_f32(),
         ];
         let encodings = laws
             .iter()
@@ -4879,10 +5318,10 @@ mod tests {
                 .iter()
                 .map(|encoded| encoded[0])
                 .collect::<Vec<_>>(),
-            (1_u8..=13).collect::<Vec<_>>()
+            (1_u8..=14).collect::<Vec<_>>()
         );
 
-        let slice = encodings.last().unwrap();
+        let slice = &encodings[12];
         let mut moved_selection = Vec::new();
         IndexRealizationLaw::Slice {
             selection_attribute: AttributeFieldId::new(SLICE_SELECTION_ATTRIBUTE.get() + 1),
@@ -4892,6 +5331,22 @@ mod tests {
         assert_eq!(moved_selection.first(), Some(&13));
         assert_ne!(slice, &moved_selection);
         assert!(encodings[..12].iter().all(|encoded| encoded[0] < 13));
+
+        // The same two properties for the appended fourteenth row, driven
+        // separately: the tag discriminates it from every earlier one-attribute
+        // payload, and its record-local axis identifier is the only thing its
+        // four payload bytes encode.
+        let gather = encodings.last().unwrap();
+        let mut moved_axis = Vec::new();
+        IndexRealizationLaw::Gather {
+            axis_attribute: AttributeFieldId::new(GATHER_AXIS_ATTRIBUTE.get() + 1),
+        }
+        .encode(&mut moved_axis);
+        assert_eq!(gather.first(), Some(&14));
+        assert_eq!(moved_axis.first(), Some(&14));
+        assert_ne!(gather, &moved_axis);
+        assert_eq!(gather.len(), 5);
+        assert!(encodings[..13].iter().all(|encoded| encoded[0] < 14));
     }
 
     #[test]
