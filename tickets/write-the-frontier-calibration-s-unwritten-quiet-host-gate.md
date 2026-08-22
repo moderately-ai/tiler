@@ -1,7 +1,7 @@
 ---
 id: write-the-frontier-calibration-s-unwritten-quiet-host-gate
 title: Write the frontier calibration's unwritten quiet-host gate
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy, calibrate-the-physical-frontier-provider-and-outcome-budgets]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, protocol, unfireable-checks]
-claimed_from: todo
-assignee: worker-frontiergate
-lease_expires_at: 1787438923
 ---
 ## User-visible outcome
 
