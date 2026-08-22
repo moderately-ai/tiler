@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: []
-scopes: []
+scopes: [research/reference, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [graph-hygiene, doc-drift, process]
