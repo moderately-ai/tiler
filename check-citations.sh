@@ -372,12 +372,99 @@
 # in report(), plus a form floor under the fixture link, so a matcher that stops
 # finding `](` cannot report a clean run.
 #
-# THE THREE POPULATIONS, AND WHAT TERMINAL MEANS IN EACH
+# SPIKE RECORDS: LINKS CHECKED, PINNED CITATIONS DELIBERATELY NOT
 #
-# `tickets/**`, `docs/**`, and the tracked markdown at the repository root are
-# read and counted separately, and each carries its own floor, so none of them
-# can collapse into another and read as a clean run on the strength of the ones
-# that still work.
+# `spikes/**` was outside every population until 2026-08-22, and the gap was
+# found the way this file keeps finding them -- by perturbation, not by reading.
+# `worker-tileprotocol` planted a broken link under `spikes/` and this script
+# returned exit 0. Re-run at `77cd0104` the output was not merely green but
+# byte-identical to the unperturbed run, which is the signature of a file that
+# was never opened rather than one that passed.
+#
+# The two properties are split here, and the split is the whole decision. A
+# spike record is checked for its links and deliberately not for its pinned
+# citations, because the two make different claims and only one of them is a
+# claim about this tree today.
+#
+# Why the citations are declined. `spikes/README.md` states the governing
+# convention under "Whether a spike still runs": a spike is "evidence about the
+# base its own record names, not about `main`", spikes are "repaired on demand"
+# rather than kept green, and that is a recorded decision with two mechanical
+# alternatives costed and rejected against real breakage. A spike record pinning
+# `honourability.rs:1492-1498` is describing the tree at its own dated base, so
+# demanding it resolve at the tip is the unsatisfiable condition the bare-path
+# rule above already names -- and it is the same rule the terminal-ticket and
+# `superseded`-document skips state over different metadata: skip a record whose
+# citations describe a tree it is no longer authoritative over, because
+# rewriting one to match today's line numbers destroys the account of what was
+# actually done.
+#
+# It would also be the failure AGENTS.md forbids by name. Nothing here builds or
+# runs a spike, so a landing in `crates/` that moves a line would redden
+# `make citations` through a spike record -- turning exploratory material into a
+# repository gate, which is what AGENTS.md refuses with "manually from
+# documented commands so exploratory dependencies do not silently become
+# repository gates".
+# Measured at `77cd0104` by running this script over the corpus with the
+# declination below switched off: 50 pinned spans qualify as citations here, of
+# which 41 resolve, 7 do not, and 2 are skipped as version-pinned dependency
+# sources. All 7 are that case rather than drift this gate should police, and
+# the 7 decompose as 4 reaching the resolver and 3 failing as an ambiguity absent
+# from the ledger -- which is why the checked count reads 45 rather than 48, a
+# sum a reader should not have to reconstruct from a census line. Six sit
+# in `spikes/numerics/delivered-realization-record/README.md`, a dated audit
+# record whose own body says "No production edit" -- two line pins now past the
+# end of a `honourability.rs` that has since shrunk to 1044 lines, one naming a
+# `metal_profile.rs` that no longer exists, and three on a `realization.rs`
+# suffix that has since turned ambiguous across three tracked files. The seventh
+# is `MTLComputeCommandEncoder.h:31-34`, an Apple SDK header cited without its
+# provenance. Not one is a defect in the record; every one is the record being
+# older than the tree, which is what a spike record is for.
+#
+# Why the links are checked, and why they are free. A link is a promise to a
+# reader who follows it now, not a claim about a base -- the distinction the
+# link section above already draws. The currency convention itself is navigated
+# by link: `spikes/README.md` sends a reader to the metadata contract for
+# `last_verified` and routes the entire "repaired on demand" rationale through a
+# link into `target-profiles/scalar-cpu-vertical/README.md`. If those rot, the
+# route the convention sends readers down is the one nothing guards. Measured at
+# `77cd0104` across the 68 tracked markdown files in this corpus: 598 link
+# targets reach the checker, 590 of them local and resolving, 1 external and 7
+# same-document anchors. Zero dangle, and zero are forward references to paths
+# that do not exist yet -- so this population closes a gap at no repair cost, the
+# way the repository-root documents did on 2026-08-08.
+#
+# What this does still expose, stated rather than left for someone to find. A
+# spike link into `crates/` is resolved like any other link, and 12 of them
+# exist -- 11 inline targets plus the one reference definition in this corpus.
+# So deleting or renaming a file a spike record links to does fail this
+# gate. That is the intended asymmetry rather than a leak in the argument above:
+# a line moving is the ordinary consequence of any landing and can never redden
+# this gate through a spike, while a path disappearing breaks a promise to a
+# reader who follows it today -- and `docs/**` and `tickets/**` already carry
+# exactly that exposure, by the thousand.
+#
+# The floors mirror that split. There is a file-count floor sized from the index
+# and a link floor, and deliberately no citation floor: this population resolves
+# no citation at all by construction, so a citation floor here would fail on a
+# correct tree -- the same reason the repository-root population carries none.
+# The declined citations are counted on the census line rather than dropped, so
+# the exclusion is a number a reader can see rather than a silence.
+#
+# What was rejected. Checking spike citations too, and checking only the
+# `README.md` and `PROTOCOL-*.md` records rather than everything under
+# `spikes/`. The second is not the narrowing it looks like: only 3 of the 68
+# markdown files here are not a `README.md`, two of them `PROTOCOL-*.md`, so it
+# selects 67 of 68 files and both citation-failing files are READMEs. Harness
+# sources are `.rs`, `.metal`, and `.toml`, which no markdown checker reads
+# either way.
+#
+# THE FOUR POPULATIONS, AND WHAT TERMINAL MEANS IN EACH
+#
+# `tickets/**`, `docs/**`, `spikes/**`, and the tracked markdown at the
+# repository root are read and counted separately, and each carries its own
+# floor, so none of them can collapse into another and read as a clean run on
+# the strength of the ones that still work.
 #
 # The skip rule is the same rule in each, stated over different metadata: skip a
 # record whose citations describe a tree it is no longer authoritative over,
@@ -718,9 +805,23 @@ IFS='
 # and nothing else, which is exactly the split wanted. Quoting it would pass all
 # 256 paths to awk as one filename.
 set -- "$@" $(find docs -type f -name '*.md' | LC_ALL=C sort)
-unset IFS
 if [ "$#" -eq "$docs_before" ]; then
+	unset IFS
 	printf 'check-citations: no document files matched docs/**/*.md.\n' >&2
+	exit 2
+fi
+
+# The spike records, appended after the documents and reached by the same
+# recursive `find` for the same reason: they nest to six components
+# (`spikes/program-planning/reduction-dispatch-crossover/results/<run>/RUN.md`),
+# so a fixed-depth glob chain would drop a subtree in silence. IFS is still the
+# newline-only split set above.
+spikes_before=$#
+# shellcheck disable=SC2046 # Deliberate, as above: IFS splits on newlines only.
+set -- "$@" $(find spikes -type f -name '*.md' | LC_ALL=C sort)
+unset IFS
+if [ "$#" -eq "$spikes_before" ]; then
+	printf 'check-citations: no spike records matched spikes/**/*.md.\n' >&2
 	exit 2
 fi
 
@@ -879,6 +980,10 @@ BEGIN {
 		# The size of the ticket corpus, taken from the index so the floor in
 		# report() is derived rather than written down and left to go stale.
 		if (p ~ /^tickets\/.*\.md$/) tickets_tracked++
+		# The size of the spike corpus, derived from the index for the same
+		# reason: a hand-written number is satisfied by a find that has quietly
+		# stopped covering its domain.
+		if (p ~ /^spikes\/.*\.md$/) spikes_tracked++
 		suffix = p
 		while (1) {
 			suffix_count[suffix]++
@@ -938,6 +1043,9 @@ BEGIN {
 function role_of(path) {
 	if (path == fixture) return "fixture"
 	if (path ~ /^docs\//) return "doc"
+	# Spike records are read for their links and never for their pinned
+	# citations; classify() carries the declination and the header says why.
+	if (path ~ /^spikes\//) return "spike"
 	if (path ~ /\.comments\//) return "comment"
 	# A markdown file with no directory component is a repository-root document.
 	# The test is over the shape rather than over the three names, so a document
@@ -1053,7 +1161,12 @@ function decide(   parent) {
 	# and CLAUDE.md carry no frontmatter at all and reach the same conclusion by
 	# a different road. Only the counters differ, and they are keyed by role so
 	# the census and the floors keep the two populations apart.
-	if (role == "doc" || role == "root") {
+	# Spike records share this branch too. `spikes/README.md` is a `tiler-doc/v1`
+	# portal and the records carry research frontmatter, so `superseded` retires
+	# one exactly as it retires any other document, and a record with no status
+	# facet is checked rather than skipped. Only the counters differ, and they are
+	# keyed by role so the census and the floors keep the populations apart.
+	if (role == "doc" || role == "root" || role == "spike") {
 		if (doc_superseded) {
 			skip_file = 1
 			files_terminal[role]++
@@ -1236,6 +1349,23 @@ function classify(t, wrapped,   path, pin, anchor, form, ln, lo, hi, resolved, h
 
 	if (!qualifies(path)) return
 
+	# A spike record pins lines into the tree at the dated base its own record
+	# names, not at the tip, so demanding one resolve here is the unsatisfiable
+	# condition the bare-path rule names -- and a landing in crates/ would redden
+	# this gate through exploratory material. Counted rather than dropped, on its
+	# own census line, so the exclusion is a number rather than a silence.
+	#
+	# Declined ahead of the form counters deliberately. Those counters feed the
+	# form floors, whose question is whether the matcher still recognises a form
+	# in the corpus it actually checks; a citation this run will never resolve
+	# must not be what keeps one of them off zero. The fixture guarantees an
+	# instance of every form regardless, so nothing is lost by not counting these.
+	if (role == "spike") {
+		spike_declined++
+		if (verbose) printf "SKIP  %s: `%s` (spike record, pinned to its own base)\n", ticket, t
+		return
+	}
+
 	if (form == "both") cit_both++
 	else if (form == "anchor") cit_anchor++
 	else cit_line++
@@ -1396,8 +1526,8 @@ function count_floor(n, floor, name, unit, hint) {
 }
 
 function report(   starved, empty, live) {
-	live = files_live["ticket"] + files_live["comment"] + files_live["doc"] + files_live["root"]
-	printf "\ncitations: %d pinned citation(s) resolved across %d live ticket/comment/document file(s), the repository-root documents among them, and the built-in fixture\n", checked + 0, live + 0
+	live = files_live["ticket"] + files_live["comment"] + files_live["doc"] + files_live["root"] + files_live["spike"]
+	printf "\ncitations: %d pinned citation(s) resolved across %d live ticket/comment/document file(s), the repository-root documents and the spike records among them, and the built-in fixture\n", checked + 0, live + 0
 	# Each corpus is reported on its own line, and floored on its own counts
 	# below, so a population that stopped being reached cannot ride another one
 	# to a green run.
@@ -1409,6 +1539,11 @@ function report(   starved, empty, live) {
 		cit_checked["doc"] + 0, files_live["doc"] + 0, files_read["doc"] + 0, files_terminal["doc"] + 0, no_status["doc"] + 0
 	printf "  root         %d citation(s) from %d live file(s) of %d read against a floor of %d, %d skipped as superseded, %d carrying no status facet\n", \
 		cit_checked["root"] + 0, files_live["root"] + 0, files_read["root"] + 0, ROOT_FLOOR, files_terminal["root"] + 0, no_status["root"] + 0
+	# The spike corpus resolves no citation by construction, so its number here
+	# is the count declined rather than the count checked, and it is printed on
+	# its own line so nobody reads the zero-shaped population as an unread one.
+	printf "  spikes       %d pinned citation(s) DECLINED (pinned to the base each record names, never to the tip) from %d live file(s) of %d read against a floor of %d, %d skipped as superseded\n", \
+		spike_declined + 0, files_live["spike"] + 0, files_read["spike"] + 0, spikes_tracked + 0, files_terminal["spike"] + 0
 	printf "  comments     %d checked, inheriting the status of their parent ticket\n", files_live["comment"] + 0
 	printf "  fixture      %d citation(s) from %s, which holds no status for a ticket transition to change\n", \
 		cit_checked["fixture"] + 0, FIXTURE_LABEL
@@ -1447,6 +1582,7 @@ function report(   starved, empty, live) {
 		link_ck["ticket"] + link_ck["comment"] + 0
 	printf "  docs         %d link(s) from the live document files above\n", link_ck["doc"] + 0
 	printf "  root         %d link(s) from the repository-root document files above\n", link_ck["root"] + 0
+	printf "  spikes       %d link(s) from the live spike record files above, which is the one property checked in that corpus\n", link_ck["spike"] + 0
 	printf "  fixture      %d link(s) from %s\n", link_ck["fixture"] + 0, FIXTURE_LABEL
 	printf "  not resolved %d external (scheme://, mailto:, tel:), %d same-document heading anchor(s), %d in vendored upstream sources under docs/research/*/sources/, %d malformed (empty target, or whitespace inside one)\n", \
 		link_external + 0, link_selfanchor + 0, link_vendored + 0, link_malformed + 0
@@ -1498,6 +1634,26 @@ function report(   starved, empty, live) {
 		"Every tracked markdown file under tickets/ must be reached by tickets/*.md or tickets/*.comments/*.md; a shortfall means one is nested deeper than either glob reaches and is being passed over in silence. Reach it with the same find the docs population uses, or return the file to a depth the globs cover.")
 	empty += population_floor(link_ck["root"], "repository-root markdown link", "link(s)", \
 		"README.md is six links of route into docs/ and spikes/, and AGENTS.md links the ADR governing every unsafe site in the workspace; zero means scan_links stopped reaching them, or the entry points stopped pointing anywhere at all.")
+	# Two floors on the spike corpus and deliberately not a third. The file count
+	# is sized from the index, like the ticket one and for the same reason, and it
+	# is what says the find still reaches a corpus that nests six components deep.
+	# The link count is what says the prose was walked: 68 files read with zero
+	# links resolved is a matcher that stopped reaching them and prints exactly as
+	# green as a clean run. There is no citation floor here, because this
+	# population declines every citation it finds -- one would fail on a correct
+	# tree, which is the reason the repository-root population carries none either.
+	empty += count_floor(files_read["spike"], spikes_tracked, "spikes/**", "file(s)", \
+		"Every tracked markdown file under spikes/ must be reached by the recursive find; a shortfall means one is nested where the find no longer looks and is being passed over in silence.")
+	# Floored at one link per live record rather than at "more than zero", and the
+	# difference was measured rather than assumed. Disabling scan_links for this
+	# role entirely left the counter reading 1, not 0, because a reference
+	# definition reaches link() on its own path -- and exactly one exists in this
+	# corpus, in spikes/cache/README.md. A greater-than-zero floor is therefore
+	# satisfied by a single stray line while all 68 records go unwalked, which is
+	# the silence it would exist to end. The bar is derived from the corpus rather
+	# than written down, so it cannot go stale as records are added.
+	empty += count_floor(link_ck["spike"], files_live["spike"], "spikes/** markdown link", "link(s)", \
+		"A spike record links to the document it supports, to its own results, and to the catalog row that reaches it -- 590 links across 68 records at 77cd0104, so fewer than one per live record means scan_links stopped walking the prose of the corpus whose currency convention is itself navigated by link.")
 	if (empty > 0)
 		printf "\ncheck-citations: %d population floor(s) went unmet -- a population contributed ZERO checked citations or links, read fewer files than it must, or holds fewer recorded entries than it must. Another population passing says nothing about this one; separate counts exist so that none can stand in for the others.\n", empty
 
