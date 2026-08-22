@@ -101,12 +101,67 @@ New pinned identity domains, sorted into `PINNED_IDENTITY_DOMAINS`: `tiler.gathe
 
 A negative control is retained for both static arguments: a source axis of exactly `2^32 - 1` is **not** proved, because `u32::MAX` itself is then out of range.
 
+## Second pass — 2026-08-22, the realization-law layer, base `f61c0786`
+
+### Exact-base Fact re-audit
+
+Every Fact the second pass depended on was re-read in its named source file at base `f61c0786ac240503dd36e3170d1f29d75525e221`. The first pass's audit above holds unchanged, with two additions and one correction to how a consequence was stated.
+
+| Claim | Verdict at `f61c0786` |
+|---|---|
+| Fact 9d: bounds-proof tags are `0x11`/`0x12`, not `0x01`/`0x02`; `0x03` is `TAG_SCALAR_BROADCAST` | **verified at source** — all three constants read in `crates/tiler-ir/src/schedule/model.rs`. The packet's Fact 9d is false, and the gather bounds proof takes `0x13`. |
+| Fact 9c: `0x0C` is free and explicitly reserved for `GatherSource` | **verified** — the reservation is written out in the doc comment on `TAG_PARTITIONED_COPY_SOURCE`, which names this packet by ticket id. |
+| *Consequence* stated as "a bounds proof at `0x03` would collide with the access-map space" | **imprecise, and corrected here.** `push_bounds_proof` and `push_logical_access` write into **disjoint frames**, so `0x03` as a bounds-proof kind would not produce a byte-level collision. The same file documents a deliberate harmless overlap of exactly this kind (`TAG_SCALAR_POINTWISE_BF16`: "The two node tag spaces overlap deliberately and harmlessly"), and `TAG_COVERAGE_PADDED = 0x01` already coexists with `TAG_LINEAR_IDENTITY = 0x01`. The real ground for `0x13` is the **family-run convention** — bounds proofs are allocated in the `0x1X` run — not collision avoidance. `0x13` remains correct; the reason is different, and restating the collision framing would have replaced a false claim with another one. |
+| Fact 9b: `IndexRealizationLaw` uses tags `1..=13`, so `0x0E` is fresh | **verified** — 13 variants, encoder arms `output.push(1)` through `output.push(13)`. |
+| Fact 10: sixteen standard realization rows | **verified** — counted in the registration array in `crates/tiler-ir/src/semantic/registry.rs`; the seventeenth is appended by this pass. |
+| `IndexRefinementBoundary::shape()` is safe to consult for a gather | **false, and load-bearing.** Its own doc says it "returns … an empty shape when it names a symbol". Reading it without first demanding a literal would hand `gather_read` a rank-zero source and derive a result shape for a program nobody wrote. `realize_gather` therefore reads `sourced_shape().as_static()` and refuses by name. |
+
+### Landed on this branch
+
+`IndexRealizationLaw::Gather { axis_attribute }` at fresh append-only tag **14** (`0x0E`), `IndexRealizationLaw::gather_f32()` fixing `GATHER_AXIS_ATTRIBUTE`, `realize_gather`, and the seventeenth standard realization row `tiler::gather-f32@1` at revision 1.
+
+`realize_gather` composes the result domain exactly as `gather_result_shape` does — source axes before the gathered one, the whole index shape, then the source axes after it — and splits the result coordinates into a source run (every source axis except the gathered one) and an index run. The gathered axis receives no result coordinate; the loaded U32 supplies it. Its complete rule set is stated against the subject rather than the inferencer, which is the `AGENTS.md`/`law.rs` **reinterpretation-boundary** class: the semantic schema and `ShapeInferenceParticipation::LiteralOnly` mean no current producer reaches any of them, and each is reachable from a subject re-read from durable bytes. The module header's member list was extended to name this set.
+
+**Identity moved, and only where it should.**
+
+| Value | Previous | Now |
+|---|---|---|
+| Frozen law-registry identity (`tiler.ir.index-realization-law-registry.v1`, under the test pin domain) | `1e771f9e787a8f4b9fccaa3f8b0085b76d17e9ceb25bcf704fc053424d2479b4` | `510a368c1cb4e370f5dfc8b84485950871d7f61045abad9b085aa6399cbd6873` |
+| Law sidecar length | 1,759 bytes | 1,846 bytes (+87, the appended row) |
+| Standard realization rows | 16 | 17 |
+| Explain-trace request qualifier | `13fa48000c9aa422` | `8bdb7dd58e3aa485` |
+| Gather row digest | *(absent)* | `f48df9a673b0a8472e84e83d264421b583e56fbaa354d8f5548e2513f88899b3` (87 bytes) |
+| Semantic snapshot identity | `3b7f49b2c9dd802bfd01bcbabbebcce16a8050986708e9a6ede5a5c5f9bfd0d1` | **unchanged** |
+
+Every figure was recomputed on this tree; none was copied from a document. **No previously encodable row's bytes moved**: all sixteen pre-gather rows are pinned individually by width and digest, and the slice row's pin was moved into that array from the block that previously checked it alone, so the array is now the complete pre-gather population. The semantic snapshot deliberately does not move, which is what keeps every artifact and kernel-program identity derived from it byte-identical. The one compiler pin that moved is the request qualifier, which is the cascade the packet predicts: request subject v6 folds the realization registry.
+
+`the_family_is_registered_and_carries_no_realization_law` was **inverted, not deleted** — it now asserts the standard gather law is registered at revision 1, compared against the exact constructor so another family's law under this key would fail rather than read as support.
+
+### Subject perturbations, each driven separately with its failure text
+
+| Perturbation | Failure |
+|---|---|
+| gather law encoder reuses the slice tag 13 | `left: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 13]  right: [… 13, 14]` |
+| source and index coordinate runs exchanged | `the source run is the leading and trailing result axes, skipping the gathered one` / `left: [… index: 1 }, … index: 2 }]  right: [… index: 0 }, … index: 3 }]` |
+| gathered axis given its own result coordinate | the index layer refuses first: `Emit(GatherSourceCoordinateRank { expected: 2, actual: 3 })` |
+| gather row registration dropped | law-registry identity reverts exactly to the pre-gather `1e771f9e…` |
+| an **old** row perturbed (slice attribute moved) | `tiler::slice-f32@1 row bytes moved` / `left: 0231dd31…  right: 2a352358…` |
+
+Two notes a later worker should not have to rediscover. First, the coordinate-run exchange **initially passed**: with source `[2, 7, 4]` on axis 1 and index `[3, 5]` both runs are length two, so an arity assertion — and comparing the runs for inequality — survives the swap. The test was strengthened to resolve each coordinate to the domain dimension it names, which is what made the perturbation fail; the arity form was not load-bearing. Second, the aggregate law-registry pin fires **before** the per-row loop, so an old row moving is reported first as an aggregate mismatch. The per-row guard was shown reachable by letting the perturbed subject past the aggregate gate, where it named the exact row.
+
+### Gates
+
+`cargo nextest run --workspace` 3,872 passed / 8 skipped; `cargo nextest run -p tiler-ir` 1,252 passed; `make lint` clean; `git diff --check` clean; `tkt lint` ok. `prototypes/serial-sum-run` carries three pre-existing clippy findings, attributed by `git log` to `79dc05a1` and deliberately outside the style gate per the `Makefile`'s `lint` target exclusions.
+
+### Scopes
+
+No scope beyond the declared set was needed. The pass touched `crates/tiler-ir` (`implementation/ir`), `crates/tiler-compiler` (`implementation/compiler`), and `tickets/` (`project/tickets`). `implementation/artifact` and `implementation/build` were **not** taken, and no pin under them moved.
+
 ## Remaining work - not landed here
 
-The accepted packet's layers above the index region are untouched, and no scope beyond the declared `implementation/{ir,reference,compiler}` was needed for what landed. These are the named remainder:
+The accepted packet's layers above the realization law are untouched. These are the named remainder:
 
-- `IndexRealizationLaw::Gather { axis_attribute }` at fresh tag `0x0E`, `gather_f32()`, the seventeenth standard realization row, and the frozen realization-registry identity move it causes.
-- `LogicalAccess::GatherSource` at reserved tag `0x0C`, `BoundsProofKind::GatherSource` at **`0x13`** (see Fact 9d - *not* the `0x03` the packet states), `GatherAddressReadRule`, `ScheduledRegionDiagnostic::GatherAddressRead`, and schedule association verification.
+- `LogicalAccess::GatherSource` at reserved tag `0x0C`, `BoundsProofKind::GatherSource` at **`0x13`** (see Fact 9d - *not* the `0x03` the packet states; and see the second pass's correction to *why* `0x13` is right), `GatherAddressReadRule`, `ScheduledRegionDiagnostic::GatherAddressRead`, and schedule association verification.
 - `kernel::lower::addressing`'s exhaustive `LogicalAccess::GatherSource => Err(KernelDiagnostic::BodyRefinement)` arm and the `body-refinement` wall behind it.
 - `NormalizedOutput::Gather` / `NormalizedOutputSubject::Gather`, the `gather-f32.v1` output subtag, compiler access-relation tag `0x06`, and every total consumer named in the packet.
 - `InvocationGatherIndexValidationRequirement`, the two `InvocationValidationRequired` outcomes, `tiler_compiler::legality::PendingInvocationIndexValidation`, and the `gather-invocation-validation-required` reason.
