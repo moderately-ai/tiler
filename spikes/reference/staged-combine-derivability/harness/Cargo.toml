@@ -1,0 +1,17 @@
+[package]
+name = "staged-combine-derivability"
+description = "Tests whether a staged kernel's intra-workgroup combine structure is a function of program scope"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "staged-combine-derivability"
+path = "src/main.rs"
+
+[dependencies]
+tiler-compiler.workspace = true
+tiler-ir.workspace = true
+
+[lints]
+workspace = true
