@@ -1,7 +1,7 @@
 ---
 id: measure-thread-execution-width-on-the-standard-metal-profiles-own-host
 title: Measure threadExecutionWidth on the standard Metal profile's own host
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [declare-metal-subgroup-realization-facts-in-the-target-profile, measure-metal-thread-execution-width-across-prepared-pipelines, correct-the-metal-profile-authority-ledgers-stale-identity-pins]
@@ -9,9 +9,6 @@ scopes: [research/target-profiles]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, metal, subgroup, target-profiles, evidence, needs-tom]
-claimed_from: todo
-assignee: worker-width
-lease_expires_at: 1787424719
 ---
 ## User-visible outcome
 
