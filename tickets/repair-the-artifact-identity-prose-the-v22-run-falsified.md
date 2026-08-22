@@ -1,7 +1,7 @@
 ---
 id: repair-the-artifact-identity-prose-the-v22-run-falsified
 title: Repair the artifact identity prose the v22 run falsified
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, artifact, identity]
+claimed_from: todo
+assignee: worker-abiprose
+lease_expires_at: 1787441390
 ---
 ## User-visible outcome
 

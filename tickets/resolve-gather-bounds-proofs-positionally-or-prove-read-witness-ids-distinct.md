@@ -1,7 +1,7 @@
 ---
 id: resolve-gather-bounds-proofs-positionally-or-prove-read-witness-ids-distinct
 title: Resolve gather bounds proofs positionally or prove read witness ids distinct
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-the-selected-data-dependent-index-representation, carry-the-gather-relation-through-the-compiler-vertical]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, gather, identity, fail-closed]
+claimed_from: todo
+assignee: worker-boundsproof
+lease_expires_at: 1787441390
 ---
 ## User-visible outcome
 

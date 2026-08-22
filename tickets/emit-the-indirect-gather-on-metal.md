@@ -3,7 +3,7 @@ id: emit-the-indirect-gather-on-metal
 title: Emit the indirect gather on Metal
 status: blocked
 priority: p3
-dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-selected-data-dependent-index-representation, admit-a-storage-carrier-for-integer-program-inputs, admit-an-invocation-scoped-gather-index-validation-receipt, accept-the-invocation-scoped-gather-validation-public-surface]
+dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-selected-data-dependent-index-representation, admit-a-storage-carrier-for-integer-program-inputs, admit-an-invocation-scoped-gather-index-validation-receipt, accept-the-invocation-scoped-gather-validation-public-surface, resolve-gather-bounds-proofs-positionally-or-prove-read-witness-ids-distinct]
 related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-a-storage-carrier-for-integer-program-inputs, validate-device-resident-gather-indices-before-dispatch, admit-a-zero-copy-exclusive-lease-for-validated-gather-indices]
 scopes: [implementation/metal, implementation/compiler]
 shared_scopes: [project/tickets]

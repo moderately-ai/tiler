@@ -1,7 +1,7 @@
 ---
 id: re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree
 title: Re-run a merged document's own evidence commands against the merged tree
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [graph-hygiene, doc-drift, process]
+claimed_from: todo
+assignee: worker-evidence
+lease_expires_at: 1787441390
 ---
 ## User-visible outcome
 
