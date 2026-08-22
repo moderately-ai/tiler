@@ -1,7 +1,7 @@
 ---
 id: narrow-the-contraction-witness-refusal-to-staging-it-cannot-read
 title: Narrow the contraction witness refusal to staging it cannot read
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [join-the-scheduled-region-into-the-contraction-witness, derive-staged-combine-structure-from-program-scope]
