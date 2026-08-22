@@ -35,3 +35,9 @@ prerequisites, and retained records: the
 which measures which reduction topology each candidate realization of the
 language-model workload's projection contraction actually delivers on an Apple9
 GPU, and what each costs.
+
+A third experiment calibrates one parameter of that probe's tiled candidate: the
+[contraction tile-width sweep](metal_contraction_tile_width/README.md), which
+sweeps the tile shape the probe compiled in as a single constant, under a frozen
+protocol that names its beneficiary profile key before the run. Its harness is
+validated; its timing leg has not been run.
