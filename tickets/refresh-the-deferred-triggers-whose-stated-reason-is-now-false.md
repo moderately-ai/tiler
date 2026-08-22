@@ -45,3 +45,14 @@ Running the idle-M3 measurement, which is held above. Repairing unfireable comma
 ## Closes when
 
 All six state a holding reason that is true at the time of writing, every correction preserves what it replaced, any changed verdict is reported rather than acted on, and item 1's reading is either settled from the text or handed up as one question.
+
+## Four more stale facts, added 2026-08-22 from the trigger-check repair lane
+
+Each was found by *running* a check rather than reading around it, which is the point — a stale fact inside a trigger log is invisible until someone executes the thing.
+
+- **Two tickets assert `declare-cpu-vector-realization-facts-in-the-target-profile` is `awaiting-decision`; it is `blocked`.** Verified by the coordinator at `51145c0a`: its frontmatter reads `status: blocked`, and `accept-adr-0093-cpu-vector-lane-tier.md` and `reconsider-registered-quantitative-capability-axis-schemas.md` both carry the older claim. A cross-ticket status claim that drifts is the shape that makes a sweep believe a decision is pending when it is parked.
+- **`StorageScalar` has four variants, not the three a log asserts.** Reported by the repair lane, unverified by the coordinator — re-derive it **from the type** rather than by hand, and prefer `core::mem::variant_count` if the site admits it.
+- **Governed keys are 50, not the 47 three `scope-the-*` entries carry.** This is the same transcription defect [`size-the-governed-key-census-from-the-type-across-the-deferred-pool`](size-the-governed-key-census-from-the-type-across-the-deferred-pool.md) owns, appearing at a third stale value; repair it there rather than here, and note it has now drifted 46 → 47 → 50.
+- **The host OS build is `26A5416b`.** Already named in item 2 above; recorded here too because a second log carries the superseded `26A5406e`.
+
+**One correction to the coordinator's own census shape.** I recorded that `keep-the-first-macos-apple9-host-row-on-its-measured-os-build` carries no command. It does — `/usr/bin/sw_vers -buildVersion`. The census that produced that claim missed it because its verb list omitted `sw_vers`. **A census over commands is only as complete as its verb list**, and a ticket wrongly recorded as commandless is the same false-absence direction as every other trap in this pool. Do not trust a commandless-entry count you did not derive yourself.
