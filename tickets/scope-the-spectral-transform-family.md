@@ -51,3 +51,20 @@ The family has signatures for its real and complex variants, a canonical normali
 
 - 2026-08-05 — **not fired, on either half.** The complex vertical's trigger is unfired — no operation admits `tiler::complex@1` and its constructor refuses every component but f16, f32, and f64 — and no workload names a spectral transform. Recheck: read the `Trigger check log` or activation section of [`scope-the-complex-arithmetic-vertical`](scope-the-complex-arithmetic-vertical.md) and re-run the command it names.
 - 2026-08-09 — **not fired, on either half.** `tiler::complex@1` remains recognition-only with no complex operation, and no workload names a Fourier or related transform. Neither catalog identity nor a host library's FFT availability satisfies the two-part trigger.
+- **Recheck repaired — 2026-08-22; no verdict re-decided here.** The 2026-08-05 entry's recheck was *"read the `Trigger check log` or activation section of [`scope-the-complex-arithmetic-vertical`](scope-the-complex-arithmetic-vertical.md) and re-run the command it names"*. **Neither that log's last line nor its activation section names a command**, so the delegation resolves to nothing runnable. Stated inline instead, as two commands for the two halves this entry asserts.
+
+  The complex half — no operation admits a complex value:
+
+  ```sh
+  rg -n 'complex_value_type|complex_type_constructor' crates/ --glob '!**/catalog.rs' --glob '!**/catalog/**' --glob '!**/tests.rs'
+  ```
+
+  returns **one** line at this base, `crates/tiler-ir/src/semantic.rs:59`, which is the re-export of the constructor rather than a consumer of it. A second line outside the defining catalog is an operation reaching for a complex value. **Watched producing the firing answer:** on a scratch copy a `complex_value_type(F32)` operand was added to `crates/tiler-ir/src/semantic/contraction.rs`, and the command reported two lines, naming the new site.
+
+  The spectral half — no spectral family key is registered:
+
+  ```sh
+  rg -o -N --no-filename 'tiler::[a-z0-9-]+@[0-9]+' crates/tiler-ir/src/semantic/ | sort -u | rg -i 'fft|dft|spectral|convolve'
+  ```
+
+  is empty against a census of **50** unique governed keys at this base, whose only complex-related member is the `tiler::complex@1` catalog identity itself. Note that this census counts unique keys through `sort -u`, not lines of output.
