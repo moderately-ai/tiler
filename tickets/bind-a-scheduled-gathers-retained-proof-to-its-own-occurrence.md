@@ -1,7 +1,7 @@
 ---
 id: bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence
 title: Bind a scheduled gather's retained proof to its own occurrence
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [decide-whether-refinement-evidence-may-reach-a-physical-provider]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, gather, identity, fail-closed]
+claimed_from: todo
+assignee: worker-occupancy
+lease_expires_at: 1787445714
 ---
 ## User-visible outcome
 

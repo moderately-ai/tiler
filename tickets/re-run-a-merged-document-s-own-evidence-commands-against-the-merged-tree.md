@@ -1,7 +1,7 @@
 ---
 id: re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree
 title: Re-run a merged document's own evidence commands against the merged tree
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []
