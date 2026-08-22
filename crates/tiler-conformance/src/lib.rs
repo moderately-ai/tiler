@@ -187,6 +187,30 @@
 //! name, so what a non-Apple host loses there is the body of a device call and
 //! never the call itself.
 //!
+//! # One integration test, and why it is not a module here
+//!
+//! `tests/independent_backend/` is a Cargo **integration test target** rather
+//! than a fourteenth module above, and the difference is the whole of what it
+//! is evidence for. It is the second independently authored backend fixture
+//! that `decide-the-backend-provider-conformance-harness-public-surface`'s
+//! typed deferral names as sufficient, on its own, to reopen the partial-facade
+//! question: one device-free structural subject and one execution subject, with
+//! typed host unavailability, caller-owned execution policy, `tiler-reference`
+//! as the sole mathematical oracle, and adapter-owned terminal resource
+//! lifetime. A fixture standing in for a third-party backend author has to
+//! compile against public surfaces alone, and a module here could reach every
+//! `pub(crate)` item in this crate — which would prove nothing about the
+//! boundary an external author actually faces. From `tests/` it cannot reach
+//! one, and this crate exports nothing for it to reach in the first place.
+//!
+//! It adds no public item, no `metal` edge, and no macOS predicate, and it
+//! changes nothing about the census below: `portability` walks this crate's
+//! `src` directory, so the device-free floor is a statement about the modules
+//! above and is neither raised nor satisfied by a `tests/` target. That target
+//! is device-free in its own right — it runs on any host the workspace builds
+//! on, and its one host-dependent outcome is a typed unavailability it reports
+//! rather than a skip.
+//!
 //! # That claim is checked rather than asserted
 //!
 //! It has failed twice without anything noticing, so it is worth being exact
