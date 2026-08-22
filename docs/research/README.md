@@ -17,6 +17,8 @@ single weakest-to-strongest ladder.
 
 The rows below are **maintained by hand**, and nothing checks them. A renderer once produced this block from frontmatter; it was deleted along with the rest of the repository's Python tooling, and the [metadata contract](../document-metadata.md#validation-and-catalog-updates) records what that leaves behind — add, retitle, or supersede a record and you must edit its row in the same change, because nothing will tell you later that you did not.
 
+An `experiments:` clause below routes to a spike record, and nothing gates `spikes/`: that record is evidence about the base it names, not about the tip, and a workspace change can break it while every gate stays green. The [experiment catalog](../../spikes/README.md) states the currency convention and the steps to take before citing a spike's number as current.
+
 <!-- BEGIN RESEARCH CATALOG -->
 ### Foundation, semantics, and extensions
 

@@ -37,6 +37,21 @@ uv run --with mpmath python spikes/numerics/check_witnesses.py
 
 Most harnesses are standard library plus `pytest`. Five are not, and each says so in its own README: `spikes/numerics/check_witnesses.py` and `spikes/numerics/region_accuracy_probe.py` need `mpmath`; `spikes/program-planning/qwen3-conformance-fixture` and `spikes/program-planning/qwen3-corpus-reachability` each pin their own locked `torch` and `transformers` environment, because there the dependency *is* the evidence and a floating resolution would silently re-baseline the retained digests; and `spikes/numerics/qwen3-weight-quantization-profiles` needs `numpy`, `torch`, and `transformers` from the host interpreter and deliberately pins none of them, because every reading it takes is a difference against a baseline it recomputes in the same process.
 
+## Whether a spike still runs
+
+`spikes/` is absent from the workspace `members` and no `Makefile` target names it, so nothing in this repository builds or runs a spike. A landing in `crates/` can break one while `make full` stays green, and on 2026-08-22 six API changes across four independent landings had done exactly that to two retained spikes without any of them reporting it. **A spike is evidence about the base its own record names, not about `main`** — the `reproducible` in a catalog row states what was true at that base, not what is true at the tip.
+
+Spikes are **repaired on demand** rather than kept green, and that is a recorded decision rather than an unfilled gap. Two mechanical alternatives were costed against that real breakage and both were rejected on evidence; the reasoning is written once, in [the scalar CPU vertical's record](target-profiles/scalar-cpu-vertical/README.md) under "Keeping this spike current, and why no mechanical check guards it". A symbol census asserting the call sites still name existing symbols reports green on the exact defect, because the accessor those spikes lost is still defined under its old name elsewhere in the very file that replaced it. A compile-only target misses a break that is not a compile question at all: one spike compiled cleanly and then exited non-zero, its plan refused because its profile never declared three numerical dimensions the contract requires. Neither catches every row of that breakage, and running the spike is the only thing that does.
+
+So the currency claim lives in each record, and reading it is the reader's job rather than a check's. Before citing a spike's number as current:
+
+1. **Read the record's `last_verified` date, and its `verified_at_commit` where it carries one.** These date the retained result fixture. `last_verified` is required frontmatter on a reproducible experiment under the [metadata contract](../docs/document-metadata.md#required-common-fields); `verified_at_commit` is carried by four records and is not a governed field.
+2. **Read any later dated check in the body.** A re-run that did not rewrite a fixture bounded to its own base is recorded as a dated paragraph naming the base it ran at, and deliberately leaves `last_verified` alone — so the frontmatter date is often older than the last time the spike was known to run, and the body is where that is said.
+3. **Compare the base each names against the tip.** A long interval is the one to distrust: a record attributes drift it observed, and can say nothing about landings after it.
+4. **Run the documented command from the spike's own directory.** This is the only step that settles it, and `cargo check` is not a substitute — it was measured reporting `Finished dev profile` on a spike whose run exits 1.
+
+A spike found broken is repaired by whoever needs it, and the repair adds a dated check recording what moved and what did not. That is the whole mechanism: there is no check here to perturb, which is stated rather than left implicit.
+
 The rows below are **maintained by hand**, like the [research catalog](../docs/research/README.md)'s and for the same reason: the renderer that once produced this block from frontmatter is gone, and the [metadata contract](../docs/document-metadata.md#validation-and-catalog-updates) makes editing the affected row part of the change that edits the record behind it.
 
 <!-- BEGIN EXPERIMENT CATALOG -->
