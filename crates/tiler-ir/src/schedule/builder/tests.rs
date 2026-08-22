@@ -1217,6 +1217,41 @@ fn dangling_bounds_witness_is_rejected_by_proof_reference() {
     assert_eq!(recovered.accesses.len(), 2);
 }
 
+/// Two read proofs may not claim one witness identity.
+///
+/// The positional zip above proves each record against the access at its own
+/// ordinal, so a duplicated id survives it: both records are well formed where
+/// they sit. The defect is that nothing can then *address* the second one —
+/// every resolver in the tree takes the first record bearing an id — while it
+/// is still folded into canonical scheduled-region identity.
+#[test]
+fn two_read_proofs_may_not_claim_one_bounds_witness() {
+    let mut builder = three_input_builder(4);
+    builder.accesses[1].bounds = BoundsWitnessId::new(0);
+    builder.bounds_proofs[1].id = BoundsWitnessId::new(0);
+    assert_eq!(
+        builder.build().unwrap_err().diagnostics(),
+        [ScheduledRegionDiagnostic::ProofReference]
+    );
+}
+
+/// A read proof and the write proof may not claim one witness identity either.
+///
+/// The same rule, driven from the other side. Stated as its own subject because
+/// this pairing was refused by a narrower clause before the distinctness rule
+/// replaced it, and a reader needs to see that the replacement did not trade
+/// one half of the invariant for the other.
+#[test]
+fn a_read_proof_and_the_write_proof_may_not_claim_one_bounds_witness() {
+    let mut builder = three_input_builder(4);
+    builder.accesses[0].bounds = BoundsWitnessId::new(3);
+    builder.bounds_proofs[0].id = BoundsWitnessId::new(3);
+    assert_eq!(
+        builder.build().unwrap_err().diagnostics(),
+        [ScheduledRegionDiagnostic::ProofReference]
+    );
+}
+
 #[test]
 fn setting_a_component_twice_is_a_local_insertion_error() {
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(0));
