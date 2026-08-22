@@ -1,7 +1,7 @@
 ---
 id: plan-the-materialized-attention-decomposition
 title: Plan the materialized attention decomposition with its residency predicate
-status: todo
+status: in-progress
 priority: p1
 dependencies: [assemble-the-causal-self-attention-block-program, realize-the-attention-contractions-on-metal, reclassify-language-model-work-as-a-conformance-track, reconcile-the-first-attention-planning-record-with-landed-fusion-roles-and-budgets]
 related: [design-attention-program-vertical, plan-the-recomputing-attention-decomposition, implement-general-dag-partitioning, implement-analytical-component-cost-model, implement-boundary-property-enforcers, integrate-the-attention-block-into-the-runtime]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, fusion, feasibility, attention, language-model, class-generic-capability]
+claimed_from: todo
+assignee: worker-attnplan
+lease_expires_at: 1787442342
 ---
 ## User-visible outcome
 
