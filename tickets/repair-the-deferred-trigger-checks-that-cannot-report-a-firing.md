@@ -40,6 +40,33 @@ for f in $(grep -l '^status: deferred$' tickets/*.md); do awk '/^## Trigger chec
 - Move the nine buried logs to the end of their tickets. Change no wording while moving; a move and an edit in one diff cannot be reviewed apart.
 - Where an entry carries no command, either supply one **and run it before writing it down**, or record explicitly that the condition is not mechanically checkable and say what a human must read instead. An absent command silently defers the obligation; a stated one discharges it.
 
+## Fact audit — 2026-08-22 at `1fb3675c`
+
+Every Fact re-run at the dispatch base rather than relayed.
+
+**Fact 1 (`system_profiler SPUSBDataType`) — verified.** `system_profiler SPUSBDataType | wc -c` returns `0` at exit 0; `system_profiler SPUSBHostDataType | wc -c` returns `345`. `system_profiler SPUSBDataType | grep -icE 'iphone|ipad'` also returns `0`, so the not-fired reading is the only reading available.
+
+**Fact 2 (nine buried logs) — verified.** The stated command returns exactly the nine named tickets. It now returns none.
+
+**Fact 3 (five more forms) — verified, with two corrections and one addition.**
+
+- *Correction 1: "two censuses that match their own file" overcounts the deferred pool by one.* Only [`measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity`](measure-complete-explain-demand-and-lossless-compaction-for-full-physical-provider-activity.md) is deferred. The second, [`calibrate-the-physical-frontier-provider-and-outcome-budgets`](calibrate-the-physical-frontier-provider-and-outcome-budgets.md), reads `status: done` and its trigger is recorded **fired** on 2026-08-18, so it is outside this repair's population.
+- *Correction 2: the `grep -v tests` defect is worse than reported.* The line filter is real — it strips 1 line of 57 and leaves two `RuleRef::builtin("test.root")` sites standing — but the command is additionally **blind to its own subject**: a semantic rewrite is registered as a `RewriteRuleIdentity`, not a `RuleRef::builtin`, and a fifth production rewrite added to a scratch tree produced `0` hits from it.
+- *Addition — a sixth form the audit did not report.* [`admit-a-recognized-chain-more-than-one-materialization-boundary-deep`](admit-a-recognized-chain-more-than-one-materialization-boundary-deep.md) reproduces through `cargo nextest` filters that match **zero tests**: both stated forms report `0 tests run: 0 passed, 987 skipped`, because nextest's `test()` predicate matches test names while the two names given are integration-test *binaries*.
+- The remaining forms are verified as stated: the `target.rs` module-split trap, the unanchored `full (32|provider)` matching `full 32 bytes in the file`, the two rechecks delegating to logs whose last lines name no command, and the `head -3` truncating an 11-line population so that `fn prove_contraction` at line 4400 falls outside the window the claim rests on.
+
+**Fact 4 (162 of 278 entries; 92 tickets) — imprecise.** Measured at this base over the 119 deferred tickets that carry a log, grouping each dated bullet with the indented and fenced lines beneath it and counting a "command" as a backticked span containing a shell verb: **281** dated entries, **160** carrying no command, **90** tickets whose most recent entry carries none. The claimed 278 / 162 / 92 are within one to two percent on each figure; the differences are definitional, not substantive, and the Fact's conclusion stands.
+
+**Scope note on Fact 4's repair.** Historical entries are dated records of what was run on their date, so they are not retrofitted with commands run today. The live obligation is the *current* recheck, which is the 90 latest entries; each now carries a command that was run before it was written down, or an explicit statement that the condition is not mechanically checkable together with what a human must read instead.
+
+## Findings reported, not acted on
+
+Per this ticket's non-goals, these belong to [`refresh-the-deferred-triggers-whose-stated-reason-is-now-false`](refresh-the-deferred-triggers-whose-stated-reason-is-now-false.md).
+
+- **A recheck has changed its answer.** [`prove-partition-coverage-for-symbolic-extents`](prove-partition-coverage-for-symbolic-extents.md) records `rg -n 'symbolic_dimension|sourced_tensor' crates/tiler-compiler` as **empty**, and says a non-empty construction site would fire it. It now returns **three** lines, all in `crates/tiler-compiler/src/capability.rs`. Whether they emit a multi-root partition over undetermined extents is the reading that ticket owns.
+- **A trigger already reads fired while its ticket is deferred.** [`scope-launch-granularity-optimization-for-the-decode-dominated-regime`](scope-launch-granularity-optimization-for-the-decode-dominated-regime.md) records **fired** on 2026-08-09.
+- **Four stale counts and statuses**, each found by running a check rather than reading prose: the governed key census is **50**, not the **47** recorded in three `scope-the-*` entries; `StorageScalar` has **four** variants, not the three recorded in [`generalize-the-sub-byte-storage-encoding-contract`](generalize-the-sub-byte-storage-encoding-contract.md); [`declare-cpu-vector-realization-facts-in-the-target-profile`](declare-cpu-vector-realization-facts-in-the-target-profile.md) is `blocked`, not the `awaiting-decision` recorded in [`reconsider-registered-quantitative-capability-axis-schemas`](reconsider-registered-quantitative-capability-axis-schemas.md); and the host OS build is `26A5416b`, not the `26A5406e` recorded in [`keep-the-first-macos-apple9-host-row-on-its-measured-os-build`](keep-the-first-macos-apple9-host-row-on-its-measured-os-build.md). None of the four changes its ticket's verdict.
+
 ## Non-goals
 
 Re-deciding whether any trigger has fired — that is [`refresh-the-deferred-triggers-whose-stated-reason-is-now-false`](refresh-the-deferred-triggers-whose-stated-reason-is-now-false.md). The hand-maintained key census, which is its own ticket. Any edit outside `tickets/`.

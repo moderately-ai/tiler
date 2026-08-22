@@ -23,10 +23,11 @@ A width-agnostic CPU vector approach may map independent outputs only when its K
 - Require an exact native scalable execution approach and host-earned ISA qualification in `tiler-cpu` / `tiler-cpu-runtime`. No architecture name, target triple, mock probe, simulator, or reference evaluator supplies the evidence.
 - Record identity, artifact, and cache consequences without enumerating one fixed schedule per observed runtime length.
 
-## Trigger check log
-
-- 2026-08-12 — **not fired.** No production native scalable CPU representation or width-agnostic KIR exists. Recheck when `tiler-cpu` has a selected SVE- or RVV-class approach that can execute one retained payload without a fixed lane literal.
-
 ## Closes when
 
 The trigger fires, Tom accepts the exact scalable carrier, and one real scalable CPU artifact executes under host-earned qualification with fixed-width and contributor-partition substitutions independently refused.
+
+## Trigger check log
+
+- 2026-08-12 — **not fired.** No production native scalable CPU representation or width-agnostic KIR exists. Recheck when `tiler-cpu` has a selected SVE- or RVV-class approach that can execute one retained payload without a fixed lane literal.
+- **Recheck supplied — 2026-08-22; no verdict re-decided here.** The entry above states its verdict in prose and names no command, and no earlier entry in this log names one either, so AGENTS.md's per-entry obligation — a verdict *plus a reproducing command* — has never been met on this ticket. The entry's own reconsideration condition names `tiler-cpu`, so the narrowest check is whether that crate exists at all: `ls -d crates/tiler-cpu` answers `ls: crates/tiler-cpu: No such file or directory`. There is no CPU crate to hold a selected SVE- or RVV-class approach, so the condition is unreachable rather than merely unmet. This check fails loudly the moment the crate appears, which is the property a grep into a nonexistent path would not have. Whether the trigger has fired is deliberately not re-decided here; that reading belongs to [`refresh-the-deferred-triggers-whose-stated-reason-is-now-false`](refresh-the-deferred-triggers-whose-stated-reason-is-now-false.md).

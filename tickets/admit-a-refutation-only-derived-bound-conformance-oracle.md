@@ -32,12 +32,13 @@ A candidate class Tiler emits whose executed evaluation order is not pinnable an
 - A decision type whose `Conforms` arm is unrepresentable rather than merely unreached.
 - A case outside the interval, watched being refused, and a case inside it, watched returning `Undecided` rather than a pass.
 
+## Graph maintenance
+
+Filed by [the permitted-divergence oracle derivation](../docs/research/reference/permitted-divergence-oracle.md), which retained this object rather than eliminating it outright.
+
 ## Trigger check log
 
 - 2026-08-05 — **not fired, on both clauses.** No measurement of backend order preservation exists (`measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order` is `todo` and unstarted), and no decision to emit an unpinnable candidate has been taken. Reproduce the first clause with `tkt show measure-whether-the-metal-compiler-preserves-the-emitted-evaluation-order` — a status other than `done` is the not-fired verdict.
 - 2026-08-06 — **not fired: the first clause fired and the second did not.** Finding 34 (the Apple record) measures the backend compiler re-serializing an emitted two-by-two split under `relaxed` and `fast` on both compilation paths, which is exactly the NotPreserved answer the first clause names. No decision to emit an unpinnable candidate has been taken — such candidates are still refused, and no workload is asking for qualification — so the caller this oracle needs still does not exist. Reproduce clause 1 with `rg -n '### 34\.|does not survive' docs/research/apple-targets/numerical-behaviour.md` (token `NotPreserved` is in the measure ticket Outcome, not that file); clause 2 with the absence of any decision record admitting an unpinnable candidate.
 - 2026-08-09 — **not fired on the remaining clause.** The NotPreserved measurement remains current, but no accepted decision emits a candidate whose evaluation order is unpinnable and no workload asks to qualify one rather than refuse it. The oracle still has no candidate class to evaluate.
-
-## Graph maintenance
-
-Filed by [the permitted-divergence oracle derivation](../docs/research/reference/permitted-divergence-oracle.md), which retained this object rather than eliminating it outright.
+- **Recheck restored — 2026-08-22; no verdict re-decided here.** The entry above states its verdict in prose and names no command, so AGENTS.md's per-entry obligation — a verdict *plus a reproducing command* — was carried forward unmet. Restored from this log's own history rather than invented: the most recent command this log names is `rg -n '### 34\.|does not survive' docs/research/apple-targets/numerical-behaviour.md`, and run at this base it returns **2** lines. A result other than the 2 recorded here is the changed answer. Whether the trigger has fired is deliberately not re-decided here; that reading belongs to [`refresh-the-deferred-triggers-whose-stated-reason-is-now-false`](refresh-the-deferred-triggers-whose-stated-reason-is-now-false.md).
