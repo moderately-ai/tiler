@@ -97,3 +97,21 @@ A protocol naming its beneficiary key is committed before its harness runs, a wi
 **HELD: the timing sweep. Release trigger — bench-host load below the 0.5 gate the protocol freezes.** At delivery the M3 Pro reported load `2.13 2.17 2.16` with no process above 3.2% CPU, so the cause is unidentified rather than transient; `--mode timing` refuses outright above the gate, which is the protocol working. The bench host is on build `26A5388g`, **not** the retained record's `26A5378n`, so the retained µs figures are not a baseline and every prediction in the protocol is written as a ratio internal to the new sweep. Command to run when the host is quiet is recorded in the delivery.
 
 **Gate blind spot found by perturbation, filed separately.** `make citations` returns exit 0 with a deliberately broken link under `spikes/`; the checker's population is `tickets/**`, `docs/**`, and root markdown. All sixteen links in this lane's documents were resolved by hand. See [`decide-whether-the-citation-checker-should-reach-spike-records`](decide-whether-the-citation-checker-should-reach-spike-records.md).
+
+## Release-trigger correction — 2026-08-22, by `worker-quietgate`
+
+The disposition above is left standing rather than rewritten; this note governs the trigger. Filed from [`re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy`](re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy.md), whose whole purpose is to release this hold.
+
+**The stated release trigger could never fire.** It reads *bench-host load below the 0.5 gate the protocol freezes*, and the bench M3 Pro's **idle** one-minute load average is **1.86–2.47** — a floor the OS configuration imposes, not a queue that drains. The same floor is retained in-tree on the same host nine days earlier, at `spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-wide-macos-27.0-m3-pro.stdout.txt` reporting `loadavg={ 2.22 2.39 2.26 }` and its 2026-08-14 sibling reporting `loadavg={ 2.18 2.23 2.24 }`. So this hold was not waiting, it was foreclosed, and it would have read as *not yet* indefinitely.
+
+**Two supporting observations in the disposition above are also wrong, and are corrected rather than restated in new words.** *No process above 3.2% CPU* does not hold: the bench host carries a live console session running Google Chrome across seven processes, observed with a renderer at **88.8% CPU** and the main process at 21.7%, producing episodic bursts of about 1.1 of its 11 cores. And *the cause is unidentified* is no longer true — the cause is that the load average reads 2.2 on a host measured at 98.8–99.4% CPU idle and 0–1% GPU device utilization, so it cannot discriminate competing work from baseline at any threshold.
+
+**The trigger is replaced.** Read: **release when the protocol's quiet-host gate admits the bench host**, which is now a condition with a reachable satisfying case. Confirm it directly, dispatching nothing and reading no wall clock:
+
+```sh
+ssh m3 'cd ~/tiler-tile-width-spike && python3 tile_width_sweep.py --mode gate'
+```
+
+Exit 0 admits and exit 1 refuses naming the component and its reason. **Quiesce the interactive console session — quit foreground applications — before the timing leg; do not re-read the gate until it happens to pass**, because that selects for the quiet phase of a host that is not quiet. The gate, the evidence for each threshold, and both perturbation directions are in [the protocol's pre-run amendment](../spikes/scheduling/metal_contraction_tile_width/PROTOCOL-2026-08-22-contraction-tile-width.md) and [the spike README](../spikes/scheduling/metal_contraction_tile_width/README.md).
+
+**Pre-registration is intact.** The amendment was committed before any dispatch was timed: no `results/` directory exists in the spike, no timing artefact is tracked, and the protocol's `Result` section still reads *Not yet run*. Nothing else in the protocol changed — not a cell, variant, prediction, beneficiary key, or measurement boundary.

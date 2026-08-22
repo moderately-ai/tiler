@@ -37,7 +37,7 @@ One metallib exports 21 functions:
 
 ## Harness validation — 2026-08-22, and it is not a timing result
 
-Run on the **coordination host** (Apple M4 Max, macOS 27.0 build `26A5416b`), **not** the bench host, while three compiling worker lanes were live. The one-minute load average was 4.03. That is why this leg reads no wall clock: every check below is a compile-success, cardinality, or bit-identity check, none of which a busy machine can move. The driver prints `NO WALL CLOCK WAS READ` on success for exactly this reason, and `--mode timing` refuses outright above a load of 0.5.
+Run on the **coordination host** (Apple M4 Max, macOS 27.0 build `26A5416b`), **not** the bench host, while three compiling worker lanes were live. The one-minute load average was 4.03. That is why this leg reads no wall clock: every check below is a compile-success, cardinality, or bit-identity check, none of which a busy machine can move. The driver prints `NO WALL CLOCK WAS READ` on success for exactly this reason, and `--mode timing` refuses outright unless the quiet-host gate admits.
 
 Toolchain, with the invocation that produced it — `DEVELOPER_DIR=/Applications/Xcode.app xcrun --sdk macosx metal --version` answered `Apple metal version 32023.883 (metalfe-32023.883)`, under `Xcode 26.6`, SDK 26.5 build `25F70`.
 
@@ -93,7 +93,73 @@ DEVELOPER_DIR=/Applications/Xcode.app python3 tile_width_sweep.py \
   --mode perturb --perturbation zero-seed-under-oracle --work-dir work
 ```
 
-The timing leg runs on the bench host under the frozen commands in the protocol, and only there. It refuses to start above a one-minute load average of 0.5.
+The timing leg runs on the bench host under the frozen commands in the protocol, and only there. It refuses to start unless the quiet-host gate admits, and the gate can be read alone — dispatching nothing, reading no wall clock — with `--mode gate`.
+
+## The quiet-host gate, and both directions of it watched
+
+The gate this lane originally froze required a one-minute load average **below 0.5**, and the bench host's idle one-minute load average is **1.86–2.47**. That gate had no reachable satisfying case: it did not delay the timing run, it foreclosed it. It was replaced before any dispatch was timed, under [the protocol's pre-run amendment](PROTOCOL-2026-08-22-contraction-tile-width.md), by four components that fail closed — mean CPU idle over ten one-second samples at or above 95%, GPU device utilization at or below 5%, one-minute load average at or below a baseline-relative 3.5, and an exclusive measurement lock.
+
+A gate that only ever admits is the defect being removed, reintroduced in the other direction, so each component was broken on the bench host on 2026-08-22 and its own failure text is quoted below. **The subject was perturbed in every case; no assertion was edited.**
+
+**It admits the quiet host.** Read on the bench host with nothing dispatched, quoted in full and unedited:
+
+```text
+== quiet-host gate ==
+   host Thomass-MacBook-Pro, 11 cores, Apple M3 Pro
+  CPU idle, mean of 10 x 1 s    98.65%  (floor 95.0%, min sample 98.10%)  pass
+  GPU device utilization              1%  (ceiling 5%)  pass
+  load average, one minute         2.33   (ceiling 3.5, recorded idle baseline one-minute 1.86-2.47 over 20+ observations 2026-08-22; retained in-tree at spikes/program-planning/physical-frontier-budget-calibration/results/ as { 2.22 2.39 2.26 } on 2026-08-13 and { 2.18 2.23 2.24 } on 2026-08-14, same host)  pass
+  exclusive measurement lock     /tmp/tiler-contraction-tile-width-sweep.lock  held
+
+verdict: ADMIT -- a timing run may start now.
+NO WALL CLOCK WAS READ. This mode makes no timing claim of any kind.
+```
+
+The refusal blocks below are excerpts from their own runs; where a long constant is elided it is marked `...`, and no line is combined from a different read.
+
+**It refuses competing CPU work.** Four bounded busy loops were started on the bench host and the gate re-read twenty-five seconds later:
+
+```text
+  CPU idle, mean of 10 x 1 s    61.17%  (floor 95.0%, min sample 55.50%)  REFUSE
+  load average, one minute         2.89   (ceiling 3.5, ...)  pass
+REFUSED: CPU idle averaged 61.17% over 10 s, below the 95.0% floor. Work is competing
+for CPU, and on a unified-memory device that competes for bandwidth with the dispatch
+being timed.
+```
+
+**That reading is also the evidence for demoting the load average.** Twenty-five seconds into four cores of competing work the load average was still `2.89`, inside any ceiling that also admits this host's 2.2 baseline — so a gate resting on load alone would have admitted that run. Seventy seconds further into the same load it caught up and the second component fired too:
+
+```text
+  CPU idle, mean of 10 x 1 s    51.92%  (floor 95.0%, min sample 49.62%)  REFUSE
+  load average, one minute         4.24   (ceiling 3.5, ...)  REFUSE
+REFUSED: One-minute load average is 4.24, above the 3.5 ceiling. This ceiling is
+relative to this host's recorded idle baseline of ..., not an absolute quiet figure.
+```
+
+**It refuses an unreadable probe rather than passing it.** The `Device Utilization %` key was renamed on its way out of `ioreg`, reproducing the failure that left a deferred trigger polling a `system_profiler` data type macOS had renamed and reading *not fired* forever. A pass-through stub on the same `PATH` is the negative control, and it passes — so the refusal is the rename, not the stub:
+
+```text
+=== CONTROL: pass-through ioreg stub on PATH ===
+  GPU device utilization              0%  (ceiling 5%)  pass
+
+=== PERTURBED: the Device Utilization % key is renamed by the OS ===
+  GPU device utilization         UNREADABLE  REFUSE
+REFUSED: GPU utilization is unreadable: no `Device Utilization %` field was found on
+any IOAccelerator node. The field may have been renamed. An unreadable probe refuses,
+because a renamed key and an idle GPU look identical.
+```
+
+**It refuses a second measurement session.** A separate process took the lock, and the gate was read while it was held and again after it exited:
+
+```text
+  exclusive measurement lock     /tmp/tiler-contraction-tile-width-sweep.lock  REFUSE
+REFUSED: Another measurement session holds /tmp/tiler-contraction-tile-width-sweep.lock.
+Two sweeps sharing one device measure each other.
+...
+  exclusive measurement lock     /tmp/tiler-contraction-tile-width-sweep.lock  held
+```
+
+**Before the run, quiesce the interactive session.** This host carries a console login whose foreground applications produce episodic bursts of about one core, and the gate refuses during them — correctly. Quit them before the timing leg. Re-reading the gate until it happens to pass selects for the quiet phase of a host that is not quiet, which is exactly the contamination the gate exists to exclude. Nothing here authorizes disabling the system extensions that carry the load-average floor: they are the machine's networking, and that is Tom's decision.
 
 ## Traceability
 
