@@ -510,7 +510,7 @@ impl IndexRegionBuilder {
         (predicates, partition_proofs)
     }
 
-    /// Revalidates one gather access against every rule `gather_read` enforces.
+    /// Revalidates one gather access against every obligation `gather_read` enforces.
     ///
     /// This is the *later* owner, not a second copy of the caller's diagnostics:
     /// the builder's structured errors win for caller input, and this exists so
@@ -520,6 +520,20 @@ impl IndexRegionBuilder {
     /// `CoordinateOutOfBounds` is deliberate — invocation-required data is not
     /// an observed bad coordinate, and collapsing the two would let a reader
     /// conclude that some index value was seen out of range.
+    ///
+    /// **Obligations, not a rule-for-rule mirror.** `gather_read` refuses an
+    /// aliased pair under its own [`IndexBuildError::GatherAliasedTensors`], and
+    /// [`GatherAccessRule`] has no alias member — yet the obligation is still
+    /// total here, discharged by the two type rules instead of by a rule of its
+    /// own. An aliased access names **one** tensor, and one tensor carries
+    /// **one** value type: either that type is not `tiler::f32@1`, and
+    /// [`GatherAccessRule::SourceType`] fires, or it is — and then it is not
+    /// `tiler::u32@1` either, so [`GatherAccessRule::IndexType`] fires. There is
+    /// no third case. That is also why no alias member is added: it could never
+    /// be raised, and a published rule nothing can raise states an obligation
+    /// the vocabulary cannot honour. The test module below drives *both*
+    /// aliasings and asserts the premise the argument rests on: that the two
+    /// value types differ.
     ///
     /// The literal-shape rules are checked before `DomainShape`, mirroring the
     /// builder boundary exactly: a sourced boundary must never be reported as a
@@ -1582,4 +1596,256 @@ pub(super) enum PartitionVerdict {
     Enumerate,
     /// Interval reasoning refuted the set and recorded its diagnostic.
     Refuted,
+}
+
+/// Whole-region gather revalidation, driven from corrupted draft state.
+///
+/// These are the only tests that reach [`IndexRegionBuilder::verify_gather_access`]
+/// with a gather it can refuse. Every gather that arrives through `gather_read`
+/// was already checked by `prepare_gather_access` against the same obligations,
+/// so no admitted region can make an arm fire — which is the design, and also
+/// why the arms need a test that corrupts the draft directly. Without one,
+/// "nothing ran" and "every rule holds" are the same green.
+///
+/// Each case perturbs exactly one field of the committed [`AccessData`], so a
+/// reddening perturbation names which rule is load-bearing.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An admitted `[4, 4]` gather on axis 0 by a `[2]` index, and its ordinal.
+    ///
+    /// Authored through the public builder so the starting point is a gather the
+    /// authoring path *accepted*; the corruption is then the only difference
+    /// between a diagnostic and none.
+    fn admitted_gather() -> (IndexRegionBuilder, u32) {
+        let registry = FrozenScalarRegistry::standard().expect("the governed profile composes");
+        let mut builder = IndexRegionBuilder::new(registry).expect("a builder identity remains");
+        let rows = builder
+            .dimension(DomainRole::Parallel, Extent::new(2))
+            .expect("a parallel dimension is admitted");
+        let columns = builder
+            .dimension(DomainRole::Parallel, Extent::new(4))
+            .expect("a parallel dimension is admitted");
+        let source = builder
+            .tensor(
+                TensorRole::Input,
+                F32::resolved_type().clone(),
+                Shape::from_dims([4, 4]),
+            )
+            .expect("a literal f32 input is admitted");
+        let index = builder
+            .tensor(
+                TensorRole::Input,
+                gather_index_resolved_type(),
+                Shape::from_dims([2]),
+            )
+            .expect("a literal u32 input is admitted");
+        let row = builder
+            .dimension_expr(rows)
+            .expect("a dimension expression");
+        let column = builder
+            .dimension_expr(columns)
+            .expect("a dimension expression");
+        builder
+            .gather_read(
+                source,
+                index,
+                &[rows, columns],
+                &[column],
+                &[row],
+                Axis::new(0),
+            )
+            .expect("the fixture gather is admitted");
+        let ordinal = builder
+            .accesses
+            .iter()
+            .position(|access| access.gather_read().is_some())
+            .expect("the fixture authors exactly one gather");
+        (builder, bounded_index(ordinal))
+    }
+
+    /// Corrupts the committed gather, revalidates it, and returns the diagnostics.
+    fn revalidate(
+        corrupt: impl FnOnce(&mut IndexRegionBuilder, u32),
+    ) -> Vec<IndexRegionDiagnostic> {
+        let (mut builder, access) = admitted_gather();
+        corrupt(&mut builder, access);
+        let mut diagnostics = Vec::new();
+        builder.verify_gather_access(access, &mut diagnostics);
+        diagnostics
+    }
+
+    /// The one rule the revalidation reported, or `None` for any other shape.
+    fn refused(diagnostics: &[IndexRegionDiagnostic]) -> Option<GatherAccessRule> {
+        match diagnostics {
+            [IndexRegionDiagnostic::GatherAccess { rule, .. }] => Some(*rule),
+            _ => None,
+        }
+    }
+
+    fn gather_mut(builder: &mut IndexRegionBuilder, access: u32) -> &mut GatherReadAccessData {
+        match &mut builder.accesses[access as usize] {
+            AccessData::GatherRead(gather) => gather,
+            AccessData::Direct(_) => panic!("the fixture committed a gather"),
+        }
+    }
+
+    /// The negative control: an uncorrupted gather is revalidated silently.
+    ///
+    /// Without this, every case below would also pass against a
+    /// `verify_gather_access` that refused unconditionally, and the suite would
+    /// be evidence that the arms *fire* rather than that they *discriminate*.
+    #[test]
+    fn an_admitted_gather_revalidates_without_a_diagnostic() {
+        assert_eq!(revalidate(|_, _| {}), Vec::new());
+    }
+
+    /// An aliased pair is refused under a **type** rule, from either side.
+    ///
+    /// The whole of why `GatherAccessRule` needs no alias member. One tensor
+    /// carries one value type, so aliasing onto the f32 source leaves the index
+    /// role holding f32 and aliasing onto the u32 index leaves the source role
+    /// holding u32 — the two type rules between them cover every aliasing there
+    /// is. The premise is asserted rather than assumed: were the two value types
+    /// ever made equal, both arms would stop firing and this would say so here
+    /// instead of admitting a corrupted region.
+    #[test]
+    fn an_alias_onto_either_operand_is_refused_by_a_type_rule() {
+        assert_ne!(
+            F32::resolved_type().clone(),
+            gather_index_resolved_type(),
+            "the alias argument rests on the two operand types being distinct",
+        );
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let gather = gather_mut(builder, access);
+                gather.index = gather.source;
+            })),
+            Some(GatherAccessRule::IndexType),
+            "a pair aliased onto the f32 source has an index operand that is not u32",
+        );
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let gather = gather_mut(builder, access);
+                gather.source = gather.index;
+            })),
+            Some(GatherAccessRule::SourceType),
+            "a pair aliased onto the u32 index has a source operand that is not f32",
+        );
+    }
+
+    /// A boundary demoted out of the input role is refused in its own role.
+    ///
+    /// Driven separately per operand, because one shared role check would report
+    /// whichever ordinal it happened to read first and could not tell a caller
+    /// which of the two boundaries moved.
+    #[test]
+    fn a_gather_operand_outside_the_input_role_is_refused_by_role() {
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let source = gather_mut(builder, access).source;
+                builder.tensors[source as usize].role = TensorRole::Output;
+            })),
+            Some(GatherAccessRule::SourceRole),
+        );
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let index = gather_mut(builder, access).index;
+                builder.tensors[index as usize].role = TensorRole::Output;
+            })),
+            Some(GatherAccessRule::IndexRole),
+        );
+    }
+
+    /// An axis outside the source rank is refused, and rank zero before it.
+    ///
+    /// The two are checked in this order by the builder boundary, so a rank-zero
+    /// source must be reported as `SourceRank` and never as an axis that happens
+    /// to exceed a rank of nothing.
+    #[test]
+    fn a_corrupted_axis_and_a_rank_zero_source_are_refused_in_that_precedence() {
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                gather_mut(builder, access).axis = 7;
+            })),
+            Some(GatherAccessRule::Axis),
+        );
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let source = gather_mut(builder, access).source;
+                let scalar = Shape::try_new([]).expect("a rank-zero shape is admitted");
+                builder.tensors[source as usize].shape = scalar.into();
+                // Left at 7 so the rank rule must win on precedence rather than
+                // because no other rule could have fired.
+                gather_mut(builder, access).axis = 7;
+            })),
+            Some(GatherAccessRule::SourceRank),
+            "a rank-zero source is named as such, not as an out-of-range axis",
+        );
+    }
+
+    /// A coordinate run of the wrong arity is refused in its own run's name.
+    #[test]
+    fn a_coordinate_run_of_the_wrong_arity_is_refused_by_run() {
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                gather_mut(builder, access).source_coordinates.clear();
+            })),
+            Some(GatherAccessRule::SourceCoordinateRank),
+        );
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                gather_mut(builder, access).index_coordinates.clear();
+            })),
+            Some(GatherAccessRule::IndexCoordinateRank),
+        );
+    }
+
+    /// A declared domain that no longer derives from the operands is refused.
+    #[test]
+    fn a_domain_disagreeing_with_the_derived_result_shape_is_refused() {
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                gather_mut(builder, access).domain.pop();
+            })),
+            Some(GatherAccessRule::DomainShape),
+        );
+    }
+
+    /// A coordinate reaching outside the access domain is refused per run.
+    ///
+    /// The substituted coordinate keeps its run's arity and leaves the declared
+    /// domain untouched, so every earlier rule still passes and only the scope
+    /// rule can be what fired. Both runs are driven, because a scope check
+    /// written over one run would leave the other unguarded while still turning
+    /// this test green for the run it did cover.
+    #[test]
+    fn a_coordinate_leaving_the_access_domain_is_refused_by_run() {
+        /// Replaces one coordinate run with an expression over a fresh
+        /// dimension the gather's domain does not contain.
+        fn outside(builder: &mut IndexRegionBuilder) -> u32 {
+            let spare = builder
+                .dimension(DomainRole::Parallel, Extent::new(2))
+                .expect("a parallel dimension is admitted");
+            builder
+                .dimension_expr(spare)
+                .expect("a dimension expression")
+                .index
+        }
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let coordinate = outside(builder);
+                gather_mut(builder, access).source_coordinates = vec![coordinate];
+            })),
+            Some(GatherAccessRule::SourceCoordinateScope),
+        );
+        assert_eq!(
+            refused(&revalidate(|builder, access| {
+                let coordinate = outside(builder);
+                gather_mut(builder, access).index_coordinates = vec![coordinate];
+            })),
+            Some(GatherAccessRule::IndexCoordinateScope),
+        );
+    }
 }

@@ -1,3 +1,4 @@
+#![feature(variant_count)]
 //! Admission, refusal, proof, and identity tests for the index-layer gather.
 //!
 //! Every perturbation here breaks the *subject* — the tag, a field order, a
@@ -5,6 +6,7 @@
 //! is driven separately so that a reddening perturbation names which property
 //! is load-bearing.
 
+use std::mem::variant_count;
 use std::sync::Arc;
 
 use tiler_ir::index::FrozenScalarRegistry;
@@ -16,8 +18,9 @@ use tiler_ir::index::{
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{F32, gather_index_resolved_type};
 use tiler_ir::shape::{
-    Axis, BindingSource, Extent, FactProvenance, InterfaceParameterKey, RootBinding, Shape,
-    ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SourcedExtent, SymbolScope,
+    Axis, BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
+    RootBinding, SemanticInputConstraint, Shape, ShapeEnv, ShapeEnvBuilder, ShapeSymbol,
+    SourcedExtent, SymbolScope,
 };
 
 fn registry() -> FrozenScalarRegistry {
@@ -177,6 +180,20 @@ fn scale_environment() -> Arc<ShapeEnv> {
             )
             .unwrap(),
         )
+        .unwrap();
+    // Constrained to the single value one, not merely declared and bound. Every
+    // caller of this environment depends on it: the symbolic coordinate below
+    // reads `S * d` as selecting the same element as `d`, and the three sourced
+    // refusal controls are only *controls* if the environment they run against
+    // genuinely determines its symbol. An unconstrained symbol carries the
+    // default interval, `determined_extent` answers `None`, and a rule wrongly
+    // consulting `determined()` instead of `as_static()` would refuse for that
+    // reason and leave the controls green without ever discriminating.
+    draft
+        .require(SemanticInputConstraint::new(
+            ExtentRelation::interval(ExtentTerm::Symbol(scale), 1, 1).unwrap(),
+            FactProvenance::FrontendRequired,
+        ))
         .unwrap();
     Arc::new(draft.build().unwrap())
 }
@@ -457,6 +474,16 @@ enum Defect {
     Aliased,
     /// An axis the source does not have.
     Axis(u32),
+    /// The source boundary is an output rather than an input.
+    SourceIsOutput,
+    /// The index boundary is an output rather than an input.
+    IndexIsOutput,
+    /// The source has no axes at all, so no axis can be gathered.
+    SourceIsScalar,
+    /// One source coordinate too many for the source's rank.
+    ExtraSourceCoordinate,
+    /// One index coordinate too few for the index's rank.
+    MissingIndexCoordinate,
 }
 
 /// Authors a gather carrying exactly `defect` and returns the refusal it hits.
@@ -489,13 +516,21 @@ fn refusal(defect: Defect) -> IndexBuildError {
     } else {
         builder
             .tensor(
-                TensorRole::Input,
+                if matches!(defect, Defect::SourceIsOutput) {
+                    TensorRole::Output
+                } else {
+                    TensorRole::Input
+                },
                 if matches!(defect, Defect::SourceIsU32) {
                     gather_index_resolved_type()
                 } else {
                     F32::resolved_type().clone()
                 },
-                Shape::from_dims([3]),
+                if matches!(defect, Defect::SourceIsScalar) {
+                    Shape::try_new([]).unwrap()
+                } else {
+                    Shape::from_dims([3])
+                },
             )
             .unwrap()
     };
@@ -510,7 +545,11 @@ fn refusal(defect: Defect) -> IndexBuildError {
             .unwrap(),
         _ => builder
             .tensor(
-                TensorRole::Input,
+                if matches!(defect, Defect::IndexIsOutput) {
+                    TensorRole::Output
+                } else {
+                    TensorRole::Input
+                },
                 if matches!(defect, Defect::IndexIsF32) {
                     F32::resolved_type().clone()
                 } else {
@@ -524,9 +563,83 @@ fn refusal(defect: Defect) -> IndexBuildError {
         Defect::Axis(axis) => axis,
         _ => 0,
     };
+    // A rank-one source owes no source coordinate and a rank-one index owes
+    // exactly one, so the admitted runs are empty and `[c0]`; each arity defect
+    // moves one run by one and leaves the other alone.
+    let source_coordinates: &[_] = match defect {
+        Defect::ExtraSourceCoordinate => &[c0],
+        _ => &[],
+    };
+    let index_coordinates: &[_] = match defect {
+        Defect::MissingIndexCoordinate => &[],
+        _ => &[c0],
+    };
     builder
-        .gather_read(source, index, &[d0], &[], &[c0], Axis::new(axis))
+        .gather_read(
+            source,
+            index,
+            &[d0],
+            source_coordinates,
+            index_coordinates,
+            Axis::new(axis),
+        )
         .expect_err("this fixture is authored to be refused")
+}
+
+/// Neither operand may be an output boundary, and each is named on its own.
+///
+/// Driven per operand rather than once, because a single role check would report
+/// whichever boundary it read first and could not tell a caller which of the two
+/// it had mis-declared.
+#[test]
+fn a_gather_operand_outside_the_input_role_is_refused_by_name() {
+    assert!(matches!(
+        refusal(Defect::SourceIsOutput),
+        IndexBuildError::GatherSourceNotInput { .. }
+    ));
+    assert!(matches!(
+        refusal(Defect::IndexIsOutput),
+        IndexBuildError::GatherIndexNotInput { .. }
+    ));
+}
+
+/// A rank-zero source is refused as such, before any axis is considered.
+///
+/// The gathered axis is zero here, which is out of range for a rank of nothing —
+/// so a boundary that checked the axis first would report `GatherAxisOutOfRange`
+/// and describe a source that has no axes as having the wrong one.
+#[test]
+fn a_rank_zero_source_is_refused_before_the_axis_is_judged() {
+    assert!(matches!(
+        refusal(Defect::SourceIsScalar),
+        IndexBuildError::GatherSourceRankZero { .. }
+    ));
+}
+
+/// Each coordinate run's arity is judged against its **own** rank.
+///
+/// The two runs derive their arities from different ranks — the source owes one
+/// coordinate per source axis *except* the gathered one, the index owes one per
+/// index axis — so a boundary that compared both against a single rank would
+/// admit one of these two and refuse the other for the wrong reason. The
+/// expected and actual counts are asserted, not merely the variant, because the
+/// off-by-one direction is what a caller acts on.
+#[test]
+fn each_coordinate_run_is_refused_against_its_own_rank() {
+    assert!(matches!(
+        refusal(Defect::ExtraSourceCoordinate),
+        IndexBuildError::GatherSourceCoordinateRank {
+            expected: 0,
+            actual: 1,
+        }
+    ));
+    assert!(matches!(
+        refusal(Defect::MissingIndexCoordinate),
+        IndexBuildError::GatherIndexCoordinateRank {
+            expected: 1,
+            actual: 0,
+        }
+    ));
 }
 
 #[test]
@@ -646,11 +759,23 @@ fn the_access_view_is_exhaustive_and_the_arms_are_exclusive() {
     assert_eq!(direct, 1, "and exactly one direct write");
 }
 
-/// `GatherAccessRule` is inspectable and its whole-region owner is distinct.
+/// `GatherAccessRule` is inspectable and the census covers all of it.
 ///
 /// The rule vocabulary is what the later verifier reports under; naming it here
 /// keeps the enum reachable from outside the crate and pins that the diagnostic
 /// does not collapse into `CoordinateOutOfBounds`.
+///
+/// The two assertions below are load-bearing in different directions and
+/// neither is redundant. `variant_count` is read from the **type**, so a
+/// widened or narrowed vocabulary is a failure here rather than a census that
+/// silently stops covering its domain — a hand-written length would pass
+/// unchanged through either. The pairwise comparison then rules out the one
+/// list a correct length still admits: one naming a variant twice and omitting
+/// another. Together they pin the list as exactly the vocabulary.
+///
+/// `BoundsResolution` is in the list and **no production site constructs it**;
+/// `verify_gather_access` raises the other fourteen and never that one. It is
+/// carried here as vocabulary, not as evidence that anything can raise it.
 #[test]
 fn the_gather_rule_vocabulary_is_publicly_inspectable() {
     let rules = [
@@ -670,6 +795,11 @@ fn the_gather_rule_vocabulary_is_publicly_inspectable() {
         GatherAccessRule::IndexCoordinateScope,
         GatherAccessRule::BoundsResolution,
     ];
+    assert_eq!(
+        rules.len(),
+        variant_count::<GatherAccessRule>(),
+        "the census must name every rule the vocabulary admits",
+    );
     for (position, rule) in rules.iter().enumerate() {
         for other in &rules[position + 1..] {
             assert_ne!(rule, other, "each rule names one obligation");
