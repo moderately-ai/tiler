@@ -1,7 +1,7 @@
 ---
 id: decide-whether-refinement-evidence-may-reach-a-physical-provider
 title: Decide whether refinement evidence may reach a physical provider
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [carry-the-gather-relation-through-the-compiler-vertical, decide-the-data-dependent-index-representation-public-surface, emit-the-indirect-gather-on-metal]
@@ -128,3 +128,15 @@ Implementing either seam; removing the typed wall; the Metal gather emission, wh
 ## Closes when
 
 Tom has accepted one route by which physical planning obtains a gather bounds proof — or accepted that it does not, with what a provider receives instead recorded — the effect on `pipeline/verify.rs`'s independence is stated either way, and the packet's stale citations are repaired.
+
+## Coordinator disposition — 2026-08-22, closed `done`; no Tom decision was needed
+
+**The packet dissolved its own question, and the coordinator's framing was wrong.** I filed this as a public-boundary decision on whether refinement evidence *may* reach a provider. It already does, under the surface Tom accepted on 2026-08-18: `BoundsProofKind::GatherSource`'s `proof` is a public field of a public variant, `ScheduledRegion.index.bounds_proofs` is public, `ImplementationContext::baseline()` is `pub`, and `GatherIndexBoundsProof` is `Clone`. Verified by the coordinator at `0c086aee`. **No new public surface makes that true and none can now make it false without reopening an accepted decision.** The wall is a missing *argument*, not a missing boundary.
+
+**The recommended option adds no public surface, so it is not reserved.** Every item it touches was verified `pub(crate)` or private, one by one. It therefore does not meet ADR 0075's reservation bar, and this ticket's `needs-tom` tag and its `Closes when` both presupposed a decision the evidence says is unnecessary. The delivering lane **stated that rather than acting on it**, which was right — changing what a ticket is for is the coordinator's call.
+
+**One Fact of mine was imprecise and the correction strengthens the conclusion.** I wrote that the proof is minted by a *verifier*-private deriver. It is `pub(super) fn derive_gather_index_bounds` in `crates/tiler-ir/src/index/builder/gather.rs`, private to the index **builder** and driven from `builder/compact.rs` during construction — not from `refinement/verify.rs`. The load-bearing half survives and is stronger than the label: neither record has a public constructor or byte conversion, so it is unforgeable outside `tiler_ir::index` whatever the module is called.
+
+**Three follow-ups filed**, in dependency order: [`bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence`](bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence.md) closes the real gap and is a prerequisite; [`thread-resolved-lowering-into-the-governed-spelling-path`](thread-resolved-lowering-into-the-governed-spelling-path.md) retires the wall and now gates `emit-the-indirect-gather-on-metal`; [`record-that-schedule-rule-8-cannot-check-the-proofs-region-identity`](record-that-schedule-rule-8-cannot-check-the-proofs-region-identity.md) guards the layering.
+
+**One question is worth Tom's time and it is not this ticket's**, recorded here rather than presented, because it concerns an accepted surface rather than blocking work: *the surface accepted on 2026-08-18 already hands every installed provider a clonable `GatherIndexBoundsProof` through `baseline().region()`, and nothing checks which occurrence a retained proof belongs to. Should that check land as a prerequisite of the gather frontier work — the recommendation, now filed — or should `baseline()` also withhold a gather baseline from providers the way it already withholds a published-and-consumed one?* **Release trigger: Tom online.**
