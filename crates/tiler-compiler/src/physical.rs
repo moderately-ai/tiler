@@ -756,6 +756,32 @@ pub(crate) enum RegionVocabularyWall {
     /// or refusing it as a generic symbolic-extent would mask that capability
     /// gap.
     ParametricBroadcast,
+    /// The region is one recognized gather, and this layer cannot obtain the
+    /// static index-bounds proof a scheduled gather relation must carry.
+    ///
+    /// **Distinct from every wall above, and the distinction is what it names.**
+    /// Those say a cover grouped occurrences this vocabulary has no region for,
+    /// or that a recognized relation is one this provider does not implement.
+    /// This says the cover is right, the occurrence is recognized, the schedule
+    /// layer *does* define the relation and its paired proof, and the obstacle
+    /// is a missing seam between two layers.
+    ///
+    /// `BoundsProofKind::GatherSource` carries a
+    /// `tiler_ir::index::GatherIndexBoundsProof`, which only the index layer's
+    /// verifier-private deriver mints and which binds a
+    /// `CanonicalIndexRegionIdentity`. Physical planning therefore cannot
+    /// re-derive one — a region built here would carry an identity no lowering
+    /// produced — and the refinement that *does* hold one is not reachable from
+    /// `crate::frontier::ImplementationContext`, whose documented surface is the
+    /// target profile, the numerical realization, the region subject, and the
+    /// host baseline.
+    ///
+    /// Closing it is
+    /// [`carry-the-gather-relation-through-the-compiler-vertical`](../../tickets/carry-the-gather-relation-through-the-compiler-vertical.md)'s
+    /// named remainder: it needs a decision about whether refinement evidence
+    /// may reach a provider at all, and about how the independent verify stage
+    /// re-derives such a proof rather than borrowing planning's copy.
+    GatherProofUnavailable,
 }
 
 impl RegionVocabularyWall {
@@ -769,6 +795,7 @@ impl RegionVocabularyWall {
             Self::FusedPrologueUnspellable => "fused-prologue-unspellable",
             Self::StagedFamilyUnspellable => "region-staged-family-unspellable",
             Self::ParametricBroadcast => "parametric-broadcast",
+            Self::GatherProofUnavailable => "gather-proof-unavailable",
         }
     }
 }
@@ -870,6 +897,39 @@ fn spell_output(
                 RegionSpellingKind::Contraction,
             ))
         }),
+        // **A decided wall, not a spelling, and the wall names a missing route
+        // rather than a missing vocabulary.** Every other part of the gather
+        // vertical is present: the occurrence is recognized, the request subject
+        // binds it, the schedule layer defines `LogicalAccess::GatherSource` and
+        // `BoundsProofKind::GatherSource`, and `verify_region_output_binding`
+        // below checks a gather region whole. What is absent is a way for *this*
+        // layer to obtain the `tiler_ir::index::GatherIndexBoundsProof` that
+        // proof variant carries.
+        //
+        // That proof is minted only by the index layer's verifier-private
+        // deriver and binds a `CanonicalIndexRegionIdentity`, so it cannot be
+        // re-derived here: a throwaway index region built during physical
+        // planning would carry a *different* region identity than the one
+        // lowering produced, and embedding its proof would bind a schedule to a
+        // region nothing lowered. The value already exists — index refinement
+        // runs before physical planning and holds it — but no seam carries it
+        // across, and adding one changes what an installed provider may read.
+        // See the ticket named in this wall's own documentation.
+        //
+        // Declining here is the fail-closed direction and keeps the population
+        // of representable gather schedules empty by *construction* rather than
+        // by absence. It is a decided wall rather than a `None` fall-through
+        // because a member set that is exactly this occurrence's is definitively
+        // this output's; reporting partial coverage for it would name the cover
+        // instead of the real obstacle.
+        //
+        // A member set that is not this singleton falls through, because it may
+        // legitimately be another output's and only the caller has seen them
+        // all. An empty set never reaches here: `frontier::govern_spelling`
+        // answers `UnspelledSubject::Coverless` before `spell_region` is called.
+        NormalizedOutput::Gather(normalized) => (members
+            == [SemanticStage::first(normalized.member)])
+        .then_some(Err(RegionVocabularyWall::GatherProofUnavailable)),
         NormalizedOutput::SerialSum(normalized) => {
             let recognized = &normalized.members;
             // Asked through the partition rather than by comparing against the
@@ -1214,6 +1274,27 @@ fn declared_input_for_verified_access(
                 })
             }
         }
+        // The two canonical read positions, and nothing else. Access 0 is the
+        // `f32` source read and access 1 the address-only U32 read, which is the
+        // canonical schedule order the accepted surface fixes and the association
+        // `verify_region_output_binding` independently cross-checks.
+        //
+        // **Both positions answer, and the address read has to.** It is an
+        // `Input` access binding a declared program buffer, so a caller sizing
+        // work or resolving an ABI slot for local access 1 is asking about a
+        // tensor this region genuinely loads. That the load yields no scalar SSA
+        // value is a fact about the expression vocabulary, not about which
+        // buffer the position binds — answering `None` here would leave the
+        // index operand looking unbound.
+        //
+        // Position 2 is the write, and every higher position is out of range;
+        // both refuse, which is the fail-closed direction. No recursion is
+        // possible because a gather's partition has no producer to descend into.
+        NormalizedOutputSubject::Gather(gather) => match position {
+            0 => Some(gather.source_input()),
+            1 => Some(gather.index_input()),
+            _ => None,
+        },
         // A fold's own regions resolve against its contributor source, and a
         // region of neither — the continuation, or a region of the producer's
         // partition across the contributor edge — resolves against the shape it
@@ -2012,7 +2093,14 @@ pub(crate) fn staged_elementwise_region<'a>(
     members: &[SemanticStage],
 ) -> Option<StagedElementwiseRegion<'a>> {
     match output {
-        NormalizedOutput::Pointwise(_) | NormalizedOutput::Contraction(_) => None,
+        // None of the three is an elementwise pass over a staged value. A gather
+        // stages nothing: its walk places no materialization edge, because the
+        // accepted surface admits only declared program inputs as its source and
+        // index operands, so no region of its partition reads another region's
+        // result.
+        NormalizedOutput::Pointwise(_)
+        | NormalizedOutput::Contraction(_)
+        | NormalizedOutput::Gather(_) => None,
         NormalizedOutput::Epilogue(chain) => {
             if members == chain.members {
                 return Some(StagedElementwiseRegion {
@@ -3913,6 +4001,13 @@ fn published_shape(normalized: &NormalizedOutputSubject) -> Option<&Shape> {
         NormalizedOutputSubject::Contraction(normalized) => Some(&normalized.output_shape),
         NormalizedOutputSubject::Epilogue(normalized) => Some(normalized.shape()),
         NormalizedOutputSubject::Staged(normalized) => Some(&normalized.occurrence().output_shape),
+        // Always static, and unconditionally so rather than through
+        // `as_static`: the accepted surface refuses a nonliteral source
+        // boundary, index boundary, or result-domain extent at the index
+        // builder, so a gather that reached normalization has a concrete result
+        // shape by construction. The pointwise arm's `None` is the symbolic
+        // population this family does not have.
+        NormalizedOutputSubject::Gather(normalized) => Some(normalized.result_shape()),
     }
 }
 
@@ -4086,13 +4181,54 @@ fn verify_region_output_binding(
                 _ => false,
             }
         }
-        // The fail-closed answer for a contraction subject paired with any other
-        // scalar program: it is bound above against the one program its
-        // recognizer produces, so any other pairing is forged. The pointwise
-        // subject needs no companion arm — it matches every scalar program and
-        // answers `false` for each pairing it does not carry, which is what lets
-        // it bind two widths without either falling through to the other.
-        (NormalizedOutputSubject::Contraction(_), _) => false,
+        // The fail-closed answer for a contraction or gather subject paired with
+        // any other scalar program. Each is bound above against the one program
+        // its recognizer produces, so any other pairing is forged.
+        //
+        // The pointwise subject needs no companion arm — it matches every scalar
+        // program and answers `false` for each pairing it does not carry, which
+        // is what lets it bind two widths without either falling through to the
+        // other.
+        // A gather binds exactly one region and one scalar program, and every
+        // quantity is re-derived from the subject rather than read back off the
+        // region — which is what makes this a binding rather than a resemblance.
+        //
+        // **The scalar program is the identity on one `f32` leaf**, and that is
+        // the whole computation: the addressing is in the access relation, not
+        // in the expression. Requiring the exact one-node identity is what stops
+        // a region from carrying arithmetic this occurrence does not perform,
+        // and requiring exactly one leaf is what stops the U32 address read from
+        // being paired to a second leaf — the load has no scalar value, so a
+        // two-leaf program over these two accesses would be reading index bytes
+        // as `f32`.
+        //
+        // **Association and proof are compared, not assumed.** The relation
+        // names its address read by local ordinal and the paired bounds proof
+        // restates the same five members, so this arm checks the region's own
+        // relation against the subject's shapes and axis, checks the derived
+        // address map against `gather_index_read_map` — the single authority for
+        // it, so a caller cannot select one — and checks that the source read's
+        // proof is a `GatherSource` proof agreeing with that relation. A gather
+        // whose obligation is outstanding carries no such proof and cannot reach
+        // here at all.
+        (NormalizedOutputSubject::Gather(normalized), ScalarProgram::PointwiseF32(expression)) => {
+            semantic_members == [SemanticStage::first(normalized.member())]
+                && region.index.id == RegionId::new(0)
+                && region.index.iteration_shape == *normalized.result_shape()
+                && element_count(normalized.result_shape(), region.index.id)?
+                    == normalized.result_elements()
+                && expression_is_the_single_leaf_identity(expression)
+                && gather_accesses_match(region, normalized)
+        }
+        // The fail-closed answer for a contraction or gather subject paired with
+        // any other scalar program. Each is bound above against the one program
+        // its recognizer produces, so any other pairing is forged.
+        //
+        // The pointwise subject needs no companion arm — it matches every scalar
+        // program and answers `false` for each pairing it does not carry, which
+        // is what lets it bind two widths without either falling through to the
+        // other.
+        (NormalizedOutputSubject::Contraction(_) | NormalizedOutputSubject::Gather(_), _) => false,
         // A chain binds either its epilogue region or a region of its producer's
         // partition, and the *members* are what separate the two: an epilogue's
         // region and a fold's prologue are both `PointwiseF32` regions, so the
@@ -4718,6 +4854,98 @@ fn verify_cooperative_contraction_subject_binding(
 /// Checked per normalized read rather than as a set: the ordinal is the buffer
 /// position, so a dense local renumbering or a pair of maps in the wrong order
 /// would bind an operand to another program tensor and still look complete.
+/// Returns whether one scalar program is the identity on a single input leaf.
+///
+/// The exact one-node expression a gather region computes: read local access 0,
+/// publish it. Both halves are required — a program whose root is not its only
+/// node computes something, and a program with a second leaf pairs a second
+/// access to an expression input, which for a gather is the U32 address read.
+fn expression_is_the_single_leaf_identity(expression: &PointwiseF32Expression) -> bool {
+    let [PointwiseF32Node::Input { access }] = expression.nodes() else {
+        return false;
+    };
+    access.get() == 0 && expression.root().index() == 0
+}
+
+/// Requires one gather region's three accesses to realize the recognized gather.
+///
+/// The canonical order the accepted surface fixes: the `f32` source read at
+/// local access 0, the address-only U32 read it owns at access 1, and the owning
+/// write at access 2. The count is exact rather than a lower bound, because a
+/// fourth access in a one-gather region is a read no relation owns.
+///
+/// **The address relation is re-derived, never read back.**
+/// [`tiler_ir::schedule::gather_index_read_map`] is the single authority for it,
+/// so comparing against its answer is what makes the relation verifier-derived
+/// rather than caller-selected — a region proposing `LinearIdentity` for a
+/// replicating index is refused here rather than accepted because it named a
+/// legal-looking relation.
+///
+/// **The source read's bounds proof is compared field by field against the same
+/// relation.** The proof restates the relation's five members precisely so the
+/// two can disagree observably; a proof whose shapes, axis, or owned ordinal
+/// drift from the relation is refused. Holding a `GatherSource` proof at all is
+/// evidence the index layer's closed deriver ran, since nothing else mints one.
+fn gather_accesses_match(
+    region: &ScheduledRegion,
+    normalized: &crate::request::NormalizedGatherSubject,
+) -> bool {
+    let [source, index, write] = region.index.accesses.as_slice() else {
+        return false;
+    };
+    let Some(address_map) = tiler_ir::schedule::gather_index_read_map(
+        normalized.source_shape(),
+        normalized.axis(),
+        normalized.index_shape(),
+    ) else {
+        return false;
+    };
+    let expected_source = LogicalAccess::GatherSource {
+        source_shape: normalized.source_shape().clone(),
+        result_shape: normalized.result_shape().clone(),
+        axis: normalized.axis(),
+        index_access: normalized.index_access(),
+        index_shape: normalized.index_shape().clone(),
+    };
+    let accesses_bind = source.tensor == TensorRole::Input
+        && source.mode == AccessMode::Read
+        && source.map == expected_source
+        && index.tensor == TensorRole::Input
+        && index.mode == AccessMode::Read
+        && index.map == address_map
+        && write.tensor == TensorRole::Output
+        && write.mode == AccessMode::Write
+        && write.map == LogicalAccess::LinearIdentity
+        // The retained ordinal must name the read this region actually places at
+        // that position. Checking it against the canonical order rather than
+        // trusting the field is what keeps a self-locating relation honest.
+        && normalized.index_access() == AccessOrdinal::new(1);
+    accesses_bind
+        && region
+            .index
+            .bounds_proofs
+            .iter()
+            .find(|proof| proof.id == source.bounds)
+            .is_some_and(|proof| {
+                proof.tensor == TensorRole::Input
+                    && matches!(
+                        &proof.kind,
+                        BoundsProofKind::GatherSource {
+                            source_shape,
+                            result_shape,
+                            axis,
+                            index_access,
+                            index_shape,
+                            ..
+                        } if source_shape == normalized.source_shape()
+                            && result_shape == normalized.result_shape()
+                            && *axis == normalized.axis()
+                            && *index_access == normalized.index_access()
+                            && index_shape == normalized.index_shape()
+                    )
+            })
+}
+
 fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContraction) -> bool {
     let Some((_, reads)) = accesses.split_last() else {
         return false;

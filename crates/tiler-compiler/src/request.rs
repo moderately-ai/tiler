@@ -50,12 +50,13 @@ use tiler_ir::schedule::{
 use tiler_ir::semantic::{
     BF16_CONSTANT_BITS_ATTRIBUTE, BROADCAST_AXIS_MAPPING_ATTRIBUTE, Bf16, BroadcastAxisMapping,
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalIntegerWidth, CanonicalValueView,
-    ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE, InputKey, OpKey,
-    OperationAttributes, OutputKey, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE,
-    REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType, SemanticIdentity,
-    SemanticProgram, TypeKey, ValueId, add_bf16_op, add_f32_op, broadcast_f32_op, constant_bf16_op,
-    constant_f32_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op, silu_f32_op,
-    strict_serial_sum_f32_op, tensor_contraction_f32_op,
+    ContractionIndex, ContractionIndexStructure, F32, F32_CONSTANT_BITS_ATTRIBUTE,
+    GATHER_AXIS_ATTRIBUTE, InputKey, OpKey, OperationAttributes, OutputKey, ProviderIdentity,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, ReindexForm, ReindexFormKind,
+    ResolvedValueType, SemanticIdentity, SemanticProgram, TypeKey, ValueId, add_bf16_op,
+    add_f32_op, broadcast_f32_op, constant_bf16_op, constant_f32_op, gather_axis, gather_f32_op,
+    multiply_bf16_op, multiply_f32_op, reindex_f32_op, silu_f32_op, strict_serial_sum_f32_op,
+    tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, ExtentSources, Shape, SourcedExtent, SourcedShape};
 
@@ -136,9 +137,9 @@ use graph::{
 };
 pub(crate) use normal_form::{
     BoundaryRead, ContributorContinuation, DeclaredInputOrdinal, MaterializedContributor,
-    NormalizedContraction, NormalizedContractionRead, NormalizedEpilogue, NormalizedOutput,
-    NormalizedPointwise, NormalizedProgram, NormalizedSerialSum, NormalizedStaged,
-    RecognizedPointwise, RecognizedSerialSumMembers, SerialSumContributor,
+    NormalizedContraction, NormalizedContractionRead, NormalizedEpilogue, NormalizedGather,
+    NormalizedOutput, NormalizedPointwise, NormalizedProgram, NormalizedSerialSum,
+    NormalizedStaged, RecognizedPointwise, RecognizedSerialSumMembers, SerialSumContributor,
 };
 pub(crate) use recognize::recognized_arithmetic;
 use recognize::{recognized_program_arithmetic, select_supported_strategy};
@@ -146,8 +147,8 @@ pub(crate) use refusal::{ContractRejection, DTypeDispatchRefusalDisposition, Req
 use refusal::{mismatch, unsupported};
 use structural::{is_structural_family, recognize_structural_read};
 pub(crate) use subject::{
-    NormalizedEpilogueSubject, NormalizedOutputSubject, NormalizedSerialSumSubject,
-    VerifiedRequestSubject, permission_tag,
+    NormalizedEpilogueSubject, NormalizedGatherSubject, NormalizedOutputSubject,
+    NormalizedSerialSumSubject, VerifiedRequestSubject, permission_tag,
 };
 use subject::{VerifiedRequestAuthorities, request_subject};
 pub(crate) use verified::{

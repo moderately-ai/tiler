@@ -1872,8 +1872,13 @@ fn output_region_role(
     members: &[crate::region::SemanticStage],
 ) -> &'static str {
     match output {
+        // Each publishes the whole declared output from one region computing one
+        // recognized family. A gather's second access is an address read *inside*
+        // that one region rather than a second part of a partition, so it carries
+        // no further role of its own here.
         crate::request::NormalizedOutput::Pointwise(_)
-        | crate::request::NormalizedOutput::Contraction(_) => "whole-program",
+        | crate::request::NormalizedOutput::Contraction(_)
+        | crate::request::NormalizedOutput::Gather(_) => "whole-program",
         crate::request::NormalizedOutput::SerialSum(normalized) => {
             if normalized
                 .prologue_members()

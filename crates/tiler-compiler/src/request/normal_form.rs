@@ -713,6 +713,65 @@ impl NormalizedStaged {
     }
 }
 
+/// A verified one-occurrence `f32` program output that reads one source tensor
+/// at coordinates a second tensor holds.
+///
+/// **The two operands are separate declared ordinals rather than one read list,
+/// because they play different semantic roles and only one of them is a value.**
+/// The source supplies the `f32` payload; the index supplies an address and
+/// never becomes a scalar SSA value, which is what
+/// [`tiler_ir::index::IndexRegionBuilder::gather_read`] enforces one layer down
+/// and what keeps U32 out of the recognized scalar arithmetic. A read list
+/// pairing a [`DeclaredInputOrdinal`] with a [`LogicalAccess`] — the vocabulary
+/// every elementwise arm carries — could not state that asymmetry: both entries
+/// would look like value reads.
+///
+/// **`index_access` is the region-local ordinal of the address read, not a
+/// declared-interface position**, and the separation is the accepted ADR 0108
+/// schedule-clause amendment. The declared association is `source_input` and
+/// `index_input` here, in the compiler-private request subject; shared schedule
+/// identity carries only the local [`AccessOrdinal`], so reusable computation is
+/// not keyed by program-interface position. Changing either declared ordinal
+/// moves this subject while leaving the schedule relation identical, and
+/// changing `index_access` moves both.
+///
+/// Every shape is concrete. The accepted surface admits a wholly literal source
+/// boundary, index boundary, and result domain only, so no `SourcedShape`
+/// reaches here and no `ShapeEnv` is consulted to derive `result_shape`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct NormalizedGather {
+    /// The complete declared-input list, in program declaration order.
+    pub(crate) input_keys: Vec<InputKey>,
+    pub(crate) output_key: OutputKey,
+    /// The declared ordinal supplying the `f32` source payload.
+    pub(crate) source_input: DeclaredInputOrdinal,
+    /// The declared ordinal supplying the exact U32 addresses.
+    ///
+    /// Distinct from [`Self::source_input`] by construction: one `TensorId`
+    /// cannot play both semantic roles.
+    pub(crate) index_input: DeclaredInputOrdinal,
+    pub(crate) source_shape: Shape,
+    pub(crate) index_shape: Shape,
+    /// The index shape spliced into the source shape at [`Self::axis`], which is
+    /// the published shape and the region's iteration domain.
+    pub(crate) result_shape: Shape,
+    /// The gathered source axis, whose coordinate the loaded U32 supplies.
+    pub(crate) axis: Axis,
+    /// Region-local ordinal of the address-only read this gather owns.
+    ///
+    /// Canonical order for the one-gather occurrence this surface admits is
+    /// source read 0, index read 1, write 2, so this is
+    /// [`AccessOrdinal::new(1)`](AccessOrdinal::new). It is retained rather than
+    /// recomputed so a detached relation consumer resolves its address read in
+    /// `O(1)` without the complete access list.
+    pub(crate) index_access: AccessOrdinal,
+    /// The occurrence this walk claimed.
+    pub(crate) member: SemanticMemberId,
+    pub(crate) source_elements: u64,
+    pub(crate) index_elements: u64,
+    pub(crate) result_elements: u64,
+}
+
 /// One recognized ordered named program output, and the region partition that
 /// implements it.
 ///
@@ -745,13 +804,24 @@ pub(crate) enum NormalizedOutput {
     /// list, the occurrence's canonical attribute bytes, and a whole further
     /// recognized output, none of which the other variants pay for.
     Staged(Box<NormalizedStaged>),
+    /// One occurrence reading a source tensor at coordinates a second tensor
+    /// holds.
+    ///
+    /// Boxed because it carries three concrete shapes, two declared ordinals,
+    /// three element counts, an axis, and a local access ordinal — which the
+    /// two unboxed variants would otherwise pay for at every value.
+    Gather(Box<NormalizedGather>),
 }
 
 impl NormalizedOutput {
     pub(crate) const fn serial_sum(&self) -> &NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => {
+            Self::Pointwise(_)
+            | Self::Contraction(_)
+            | Self::Epilogue(_)
+            | Self::Staged(_)
+            | Self::Gather(_) => {
                 panic!("request is not a serial-sum program")
             }
         }
@@ -760,29 +830,68 @@ impl NormalizedOutput {
     pub(crate) const fn try_serial_sum(&self) -> Option<&NormalizedSerialSum> {
         match self {
             Self::SerialSum(normalized) => Some(normalized),
-            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => None,
+            Self::Pointwise(_)
+            | Self::Contraction(_)
+            | Self::Epilogue(_)
+            | Self::Staged(_)
+            | Self::Gather(_) => None,
         }
     }
 
     pub(crate) const fn pointwise(&self) -> Option<&NormalizedPointwise> {
         match self {
-            Self::SerialSum(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => None,
+            Self::SerialSum(_)
+            | Self::Contraction(_)
+            | Self::Epilogue(_)
+            | Self::Staged(_)
+            | Self::Gather(_) => None,
             Self::Pointwise(normalized) => Some(normalized),
         }
     }
 
     pub(crate) const fn contraction(&self) -> Option<&NormalizedContraction> {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Epilogue(_) | Self::Staged(_) => None,
+            Self::SerialSum(_)
+            | Self::Pointwise(_)
+            | Self::Epilogue(_)
+            | Self::Staged(_)
+            | Self::Gather(_) => None,
             Self::Contraction(normalized) => Some(normalized),
+        }
+    }
+
+    /// The recognized gather this output is, or `None` for every other family.
+    ///
+    /// The projection [`crate::physical`] and [`crate::frontier`] will ask, for
+    /// the reason [`Self::pointwise`] exists: a consumer needing the gather's
+    /// shapes, ordinals, and axis should name the family it is asking about
+    /// rather than destructure the enum at each site.
+    ///
+    /// **Test-visible only at this base, and deliberately not wider.** Its
+    /// production consumers are the region builder and frontier offer this lane
+    /// stopped short of, so exposing it crate-wide now would publish an accessor
+    /// with no caller — and a `pub(crate)` item nothing calls is dead code the
+    /// warning-denied gate refuses. The lane that adds those consumers widens
+    /// this back to `pub(crate)` in the same change.
+    #[cfg(test)]
+    pub(crate) const fn gather(&self) -> Option<&NormalizedGather> {
+        match self {
+            Self::SerialSum(_)
+            | Self::Pointwise(_)
+            | Self::Contraction(_)
+            | Self::Epilogue(_)
+            | Self::Staged(_) => None,
+            Self::Gather(normalized) => Some(normalized),
         }
     }
 
     pub(crate) const fn staged(&self) -> Option<&NormalizedStaged> {
         match self {
-            Self::SerialSum(_) | Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) => {
-                None
-            }
+            Self::SerialSum(_)
+            | Self::Pointwise(_)
+            | Self::Contraction(_)
+            | Self::Epilogue(_)
+            | Self::Gather(_) => None,
             Self::Staged(normalized) => Some(normalized),
         }
     }
@@ -825,7 +934,12 @@ impl NormalizedOutput {
                 .producer
                 .as_deref()
                 .is_some_and(Self::carries_parametric_broadcast),
-            Self::Contraction(_) => false,
+            // A contraction reads no structural relation at all. A gather's two
+            // relations are the derived `GatherSource` and the verifier-derived
+            // address map, neither of which is the sourced carrier: the accepted
+            // surface admits a wholly literal source boundary, index boundary,
+            // and result domain, so no operand of one can be a `SourcedShape`.
+            Self::Contraction(_) | Self::Gather(_) => false,
         }
     }
 
@@ -859,7 +973,9 @@ impl NormalizedOutput {
     /// that one.
     pub(crate) fn producer_shape_for(&self, members: &[SemanticStage]) -> &Self {
         match self {
-            Self::Pointwise(_) | Self::Contraction(_) => self,
+            // A gather is one occurrence and one region, so its partition has
+            // exactly one part and no materialization edge to descend across.
+            Self::Pointwise(_) | Self::Contraction(_) | Self::Gather(_) => self,
             Self::SerialSum(normalized) => normalized
                 .contributor
                 .materialized()
@@ -1058,6 +1174,25 @@ impl NormalizedOutput {
                     ),
             )
             .flatten(),
+            // Each operand's own declared tensor count, which is the rule every
+            // arm above states. Neither is the region's iteration domain: the
+            // result domain is the index shape spliced into the source, so it
+            // generally equals neither operand's extent, and answering it for
+            // either ordinal would scale a call by an iteration space rather
+            // than by the buffer the ABI binds.
+            //
+            // The two ordinals are distinct by construction, so no agreement
+            // fold is needed here: at most one arm of the comparison matches and
+            // there is never a second claimant for one ordinal.
+            Self::Gather(normalized) => {
+                if ordinal == normalized.source_input {
+                    Some(normalized.source_elements)
+                } else if ordinal == normalized.index_input {
+                    Some(normalized.index_elements)
+                } else {
+                    None
+                }
+            }
         }
     }
 
@@ -1118,6 +1253,15 @@ impl NormalizedOutput {
                         .producer
                         .as_deref()
                         .is_some_and(|producer| producer.reads_declared_input(ordinal))
+            }
+            // Exactly the two operands, and the address operand counts as read:
+            // the region loads its U32 elements to address the source, so a
+            // caller sizing work over that buffer is asking about a tensor this
+            // output does load. That the load produces no scalar SSA value is a
+            // fact about the expression vocabulary, not about which buffers the
+            // ABI binds.
+            Self::Gather(normalized) => {
+                ordinal == normalized.source_input || ordinal == normalized.index_input
             }
         }
     }
@@ -1218,6 +1362,11 @@ impl NormalizedOutput {
                         .as_deref()
                         .map_or(0, NormalizedOutput::max_input_elements),
                 ),
+            // The larger of the two declared operands' own counts. No domain
+            // substitution is reachable here, because both counts are exact:
+            // this arm never consults `read_tensor_elements`, whose declining
+            // wildcard is what forces the substitution on the elementwise arms.
+            Self::Gather(normalized) => normalized.source_elements.max(normalized.index_elements),
         }
     }
 
@@ -1228,6 +1377,7 @@ impl NormalizedOutput {
             Self::Contraction(normalized) => normalized.output_elements,
             Self::Epilogue(chain) => chain.elements,
             Self::Staged(normalized) => normalized.output_elements,
+            Self::Gather(normalized) => normalized.result_elements,
         }
     }
 
@@ -1283,6 +1433,11 @@ impl NormalizedOutput {
                 members.dedup();
                 members
             }
+            // One occurrence, once. A gather reads only declared program inputs
+            // — the accepted surface refuses a non-input source or index tensor
+            // — so its walk places no materialization edge and claims no
+            // producer's occurrences.
+            Self::Gather(normalized) => vec![SemanticStage::first(normalized.member)],
         }
     }
 
@@ -1358,6 +1513,13 @@ impl NormalizedOutput {
                         .as_deref()
                         .is_some_and(|producer| producer.owns_region_members(members))
             }
+            // Exactly the one-occurrence singleton, compared as a set rather
+            // than tested for containment. A region covering no occurrence must
+            // not resolve here, for the reason
+            // [`NormalizedSerialSum::prologue_members`] states, and a region
+            // covering this occurrence beside another's belongs to no part of
+            // this partition.
+            Self::Gather(normalized) => members == [SemanticStage::first(normalized.member)],
         }
     }
 
@@ -1371,7 +1533,11 @@ impl NormalizedOutput {
     pub(super) fn serial_sum_mut(&mut self) -> &mut NormalizedSerialSum {
         match self {
             Self::SerialSum(normalized) => normalized,
-            Self::Pointwise(_) | Self::Contraction(_) | Self::Epilogue(_) | Self::Staged(_) => {
+            Self::Pointwise(_)
+            | Self::Contraction(_)
+            | Self::Epilogue(_)
+            | Self::Staged(_)
+            | Self::Gather(_) => {
                 panic!("the fixture is a serial sum")
             }
         }
