@@ -1,7 +1,7 @@
 ---
 id: record-the-conformance-reopening-condition-in-the-explain-carrier-s-trigger-log
 title: Record the conformance reopening condition in the explain carrier's trigger log
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: [make-explain-dispositions-assertable-by-a-conformance-suite, decide-the-backend-provider-conformance-harness-public-surface]
