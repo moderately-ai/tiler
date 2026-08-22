@@ -573,7 +573,18 @@ impl fmt::Display for ExecutionFault {
 
 impl std::error::Error for ExecutionFault {}
 
-/// Runs one scalar entry over its launch grid on the calling thread.
+/// Returns the contributor-loop width: the first bound live extent when the
+/// route published any, otherwise the image's baked column count.
+#[must_use]
+pub fn contributor_columns(extents: &[RoutedExtentParameter], entry: &ScalarEntry) -> u64 {
+    extents
+        .first()
+        .copied()
+        .map_or_else(|| u64::from(entry.columns), RoutedExtentParameter::value)
+}
+
+/// Runs one scalar entry over its launch grid on the calling thread, returning
+/// the invocations that ran.
 ///
 /// `halt_after` stops the run early. It exists so that the post-commit failure
 /// path is reachable in a test at all: every condition this interpreter can
@@ -592,16 +603,6 @@ impl std::error::Error for ExecutionFault {}
 /// intra-doc link, per this module's path-shared note — allocates from its own
 /// pre-commit plan immediately after the commit, so a missing allocation is a
 /// defect in the adapter rather than a route it should have refused.
-/// Contributor-loop width: the bound live extent when the route published one,
-/// otherwise the image's baked column count.
-#[must_use]
-pub fn contributor_columns(extents: &[RoutedExtentParameter], entry: &ScalarEntry) -> u64 {
-    extents
-        .first()
-        .copied()
-        .map_or_else(|| u64::from(entry.columns), RoutedExtentParameter::value)
-}
-
 pub fn execute(
     position: usize,
     entry: &ScalarEntry,
