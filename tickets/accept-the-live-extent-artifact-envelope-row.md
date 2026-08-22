@@ -1,7 +1,7 @@
 ---
 id: accept-the-live-extent-artifact-envelope-row
 title: Accept the live-extent artifact envelope row
-status: todo
+status: in-progress
 priority: p1
 dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes]
 related: [carry-live-extent-operands-through-the-artifact-envelope, bind-frozen-live-extent-bytes-at-declared-backend-transports]
@@ -9,6 +9,9 @@ scopes: [contracts/artifacts, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary]
+claimed_from: todo
+assignee: worker-envelope
+lease_expires_at: 1787425502
 ---
 ## User-visible outcome
 

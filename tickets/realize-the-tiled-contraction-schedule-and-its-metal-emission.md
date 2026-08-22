@@ -1,7 +1,7 @@
 ---
 id: realize-the-tiled-contraction-schedule-and-its-metal-emission
 title: Realize the tiled contraction schedule and its Metal emission
-status: deferred
+status: in-progress
 priority: p1
 dependencies: [admit-a-cooperative-tile-over-shared-operands, admit-guarded-output-tails-for-cooperative-contraction, admit-a-two-dimensional-cooperative-staging-relation, reclassify-language-model-work-as-a-conformance-track]
 related: [realize-the-strict-contraction-on-metal, realize-the-contraction-through-the-appendable-direct-path, integrate-the-contraction-vertical-into-the-runtime]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler, implementation/metal, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, metal, contraction, language-model, deferred, class-generic-capability]
+claimed_from: todo
+assignee: worker-tiled
+lease_expires_at: 1787425502
 ---
 ## User-visible outcome
 
@@ -40,6 +43,18 @@ The L3 `tiled` schedule preserves each thread's ascending left fold over its out
 ## Non-goals
 
 The split alternatives, the matrix-instruction route, any opaque call, and any cost model. [ADR 0076](../docs/decisions/0076-declare-target-honourable-numerical-realizations.md) forbids substituting a differently-attributed realization to make a number better, and the L3 record states the measured price of not doing it.
+
+## Released from deferred — 2026-08-22, its trigger fired on 2026-08-13
+
+The trigger below reads: *"It becomes work only when both cooperative-contraction tickets are `done`, because the retained six-cell population contains exact and partial output blocks and this ticket may not silently substitute the direct realization for either."* Verified at `5bbb4b87`: `admit-a-cooperative-tile-over-shared-operands` and `admit-guarded-output-tails-for-cooperative-contraction` are both **`status: done`**, and all four declared dependencies are `done`. They landed on 2026-08-13 — this sat deferred for nine days after becoming work.
+
+**This is the largest single unblock in the graph: 22 non-terminal dependents, 10 of them p1**, including the whole C1 chain (`realize-the-attention-contractions-on-metal` → `plan-the-materialized-attention-decomposition` → `integrate-the-attention-block-into-the-runtime` → prefill → decode → autoregressive loop → `prove-the-c1-complete-model-execution`). It is also the shared upstream gate behind roughly 32 deferred `scope-the-*-family` research nodes.
+
+**TAG CLAIM IS STALE — do not take it from the body below.** This ticket says to append the new `ReductionTopology` variant at tag **`0x36`**. Read at source: `TAG_REDUCTION_COOPERATIVE_WORKGROUP = 0x35`, `TAG_REDUCTION_COOPERATIVE_CONTRACTION = 0x37`, `TAG_REDUCTION_LIVE_CONTRACTION = 0x38` — so `0x37` and `0x38` are taken, and a graph sweep reports `0x36` is **reserved for `CooperativeContractionSplit`** under `decide-the-fixed-strided-contributor-membership-vocabulary`. **Derive the next genuinely free tag yourself at your base**; `admit-subgroup-bindings-into-the-schedule-vocabulary` carries the identical stale `0x36` claim, so two tickets would collide if both were taken literally.
+
+**Note on tag reasoning, learned the hard way 2026-08-22:** tag spaces in `crates/tiler-ir/src/schedule/model.rs` are **per-frame, not global** — `TAG_LINEAR_IDENTITY = 0x01` and `TAG_COVERAGE_PADDED = 0x01` coexist deliberately (the file documents it at anchor `overlap deliberately`, wrapped across two `///` lines). So "value X is used elsewhere" is not by itself a collision. Reason from the frame the tag is written into and from the family-run convention, not from a global scan.
+
+**Facts below predate many landings** — `tiler.kernel-program` v12→v13, `tiler.artifact-program` v20→v21, manifest (20,0)→(21,0), the retired contraction key, four module splits, and the index-layer gather with its realization law. Re-audit every Fact at your own base per the stale-Facts rule.
 
 ## Activation triggers
 
