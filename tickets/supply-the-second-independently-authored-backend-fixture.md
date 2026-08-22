@@ -1,7 +1,7 @@
 ---
 id: supply-the-second-independently-authored-backend-fixture
 title: Supply the second independently authored backend fixture
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [publish-the-backend-provider-conformance-suite]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance, backend-providers, evidence]
-claimed_from: todo
-assignee: worker-fixture
-lease_expires_at: 1787424892
 ---
 ## User-visible outcome
 

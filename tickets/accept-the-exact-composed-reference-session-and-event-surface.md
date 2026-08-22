@@ -1,17 +1,14 @@
 ---
 id: accept-the-exact-composed-reference-session-and-event-surface
 title: Accept the exact composed-reference session and event surface
-status: in-progress
+status: blocked
 priority: p1
-dependencies: []
+dependencies: [derive-staged-combine-structure-from-program-scope]
 related: [implement-the-composed-realization-evaluation-driver, define-the-composed-realization-driver-subject-bridge, decide-the-safe-cross-crate-composed-reference-boundary, accept-the-realization-witness-surface, accept-the-composed-realization-evaluation-surface]
 scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, conformance, reference, numerics]
-claimed_from: todo
-assignee: worker-session
-lease_expires_at: 1787427335
 ---
 ## User-visible outcome
 
