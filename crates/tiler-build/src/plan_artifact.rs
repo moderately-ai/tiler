@@ -45,8 +45,9 @@ use tiler_artifact::program::{
     BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey,
     CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
     FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject, PayloadId,
-    SelectedLoweringProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    VariantSpec, VerifiedArtifactProgram,
+    PhysicalImplementationProposalIdentity, PhysicalProposalKind, PhysicalRegionOccurrenceIdentity,
+    SelectedLoweringProvider, SelectedPhysicalImplementation, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::kernel::PlanDeterminismWitness;
@@ -112,6 +113,19 @@ pub enum PlanArtifactError {
     Verification(ArtifactVerificationError),
     /// The plan's delivered-realization evidence did not translate.
     Realization(RealizationTranslationError),
+    /// The compiler named a physical proposal kind this packaging cannot state.
+    ///
+    /// `tiler-compiler` keeps its proposal-body enumeration crate-private and
+    /// publishes a stable code instead, so this bridge cannot be compile-time
+    /// exhaustive over it. That is a deliberate fail-closed seam rather than an
+    /// oversight: a code this mapping does not know is a kind the artifact
+    /// vocabulary and manifest schema have not been reviewed for, and packaging
+    /// it under a *known* kind would attribute the region to an implementation
+    /// shape it does not have. The compiler's reserved `view` reaches here.
+    UnsupportedPhysicalProposalKind {
+        /// The stable code the compiler published.
+        kind: &'static str,
+    },
 }
 
 impl fmt::Display for PlanArtifactError {
@@ -129,6 +143,11 @@ impl fmt::Display for PlanArtifactError {
                     "delivered-realization translation failed: {error}"
                 )
             }
+            Self::UnsupportedPhysicalProposalKind { kind } => write!(
+                formatter,
+                "the compiler selected a physical proposal of kind `{kind}`, which this artifact \
+                 packaging does not admit",
+            ),
         }
     }
 }
@@ -139,6 +158,7 @@ impl Error for PlanArtifactError {
             Self::Build(error) => Some(error),
             Self::Verification(error) => Some(error),
             Self::Realization(error) => Some(error),
+            Self::UnsupportedPhysicalProposalKind { .. } => None,
         }
     }
 }
@@ -279,12 +299,37 @@ pub fn assemble_plan_artifact(
         });
     }
 
+    // Which physical authority produced each selected region, forwarded from
+    // the compiler's own iterator without omission or reconstruction. This
+    // function is the producer authority for that association: the artifact
+    // builder validates the run's shape, order, bounds, and offered authority,
+    // but cannot authenticate that an arbitrary caller copied every compiler
+    // row, and this is the caller that does.
+    //
+    // Order is preserved rather than sorted. `assemble_plan` already proved one
+    // selection per occurrence and sorted by whole occurrence bytes before a
+    // public plan existed, so sorting again here would be a second definition of
+    // a canonical order the compiler owns.
+    let mut selected_physical_implementations = Vec::new();
+    for selected in plan.selected_physical_providers() {
+        selected_physical_implementations.push(SelectedPhysicalImplementation {
+            region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(
+                selected.region_occurrence_identity(),
+            )?,
+            implementation_proposal: PhysicalImplementationProposalIdentity::from_bytes(
+                selected.implementation_proposal_identity(),
+            )?,
+            provider: selected.provider().clone(),
+            proposal_kind: physical_proposal_kind(selected.proposal_kind())?,
+        });
+    }
     let packaged_entries = u32::try_from(entries.len()).expect("a bounded entry table fits u32");
     let variant = builder.push_variant(
         program,
         VariantSpec {
             target_profile: profile.clone(),
             feasibility_rules: rules,
+            selected_physical_implementations,
             deferred_predicates,
             entries,
         },
@@ -315,6 +360,29 @@ pub fn assemble_plan_artifact(
         packaged_entries,
     )?)?;
     builder.build().map_err(PlanArtifactError::Verification)
+}
+
+/// Maps the compiler's stable proposal-kind code onto the artifact vocabulary.
+///
+/// A string match rather than an exhaustive enum match, and deliberately so:
+/// `tiler-compiler` keeps `PhysicalProposalKind` crate-private because three of
+/// its four variants have no out-of-crate spelling a caller could propose, so
+/// this cross-crate translation cannot be made compile-time total. It is
+/// therefore written fail-closed — an unknown code is a typed packaging refusal
+/// and is never defaulted onto a known kind — and this is the one documented
+/// exception to the exhaustiveness discipline the surrounding vocabularies keep.
+///
+/// The compiler's reserved `"view"` lands here rather than in a variant. It is
+/// rejected before selection today, so no currently constructible plan reaches
+/// this arm; admitting it needs a reviewed compiler/artifact vocabulary change,
+/// the artifact tag at `0x04`, and another owning artifact and manifest step.
+fn physical_proposal_kind(kind: &'static str) -> Result<PhysicalProposalKind, PlanArtifactError> {
+    match kind {
+        "scheduled-kernel" => Ok(PhysicalProposalKind::ScheduledKernel),
+        "kernel-subprogram" => Ok(PhysicalProposalKind::KernelSubprogram),
+        "opaque-call" => Ok(PhysicalProposalKind::OpaqueCall),
+        kind => Err(PlanArtifactError::UnsupportedPhysicalProposalKind { kind }),
+    }
 }
 
 fn target_profile(compilation: &Compilation) -> Result<TargetProfileRef, ArtifactBuildError> {

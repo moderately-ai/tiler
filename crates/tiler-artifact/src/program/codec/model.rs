@@ -39,9 +39,9 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, ExtentOperandData, InterfaceEntryData,
-    LaunchData, RoutingPolicy, SchemaVersion, SelectedLoweringProvider, StageDependencyData,
-    StageDependencyReason, VariantData, canonical_deferred_order, canonical_precondition_order,
-    encode_identity, stage_key,
+    LaunchData, RoutingPolicy, SchemaVersion, SelectedLoweringProvider,
+    SelectedPhysicalImplementation, StageDependencyData, StageDependencyReason, VariantData,
+    canonical_deferred_order, canonical_precondition_order, encode_identity, stage_key,
 };
 use super::super::realization::codec::{
     ArtifactCrossCheck, RealizationCodecError, validate_against_artifact,
@@ -483,6 +483,19 @@ pub(crate) struct VariantRow {
     pub(crate) guard: u32,
     pub(crate) profile: TargetProfileRef,
     pub(crate) feasibility_rules: FeasibilityRuleSetRef,
+    /// Which physical authority produced each selected region of this variant.
+    ///
+    /// Carried in the order the model states rather than canonicalized here:
+    /// the run is already compiler-canonical and both the builder and the
+    /// decoder prove strictly ascending occurrence bytes, so this projection
+    /// preserves it instead of establishing it a second way.
+    ///
+    /// Projection clones the row records and only increments the two identity
+    /// `Arc`s, which is the whole reason those identities are shared rather than
+    /// boxed: this clone happens while the verified source is still live, so a
+    /// boxed identity would deep-copy both byte runs immediately before manifest
+    /// encoding.
+    pub(crate) selected_physical_implementations: Vec<SelectedPhysicalImplementation>,
     pub(crate) deferred: Vec<DeferredPredicateData>,
     /// Additional requirements this variant's route places on a live device.
     ///
@@ -632,6 +645,10 @@ impl ArtifactEnvelope {
                 guard: expression_of[position(variant.guard)],
                 profile: variant.profile.clone(),
                 feasibility_rules: variant.feasibility_rules.clone(),
+                // Row records cloned, identity allocations shared.
+                selected_physical_implementations: variant
+                    .selected_physical_implementations
+                    .clone(),
                 deferred,
                 route_requirements,
                 entries,

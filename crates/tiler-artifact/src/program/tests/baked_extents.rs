@@ -4,6 +4,7 @@ use super::super::{
     AbiBinaryOp, AbiEvaluationError, AbiFactBinder, AbiRoot, ArtifactBuildError,
     ArtifactProgramBuilder, AvailabilityPhase, CompilationEnvironment, VerifiedArtifactProgram,
 };
+use super::offered_physical;
 use super::support::graphs::checked_coverage;
 use super::support::live::scale_bias_expression;
 use super::{
@@ -42,10 +43,13 @@ fn empty_extent_lists_do_not_move_previously_encodable_artifact_bytes() {
     // `tiler.artifact-program.v21` the published interface can spell the
     // symbolic axis such a row names — so the claim this pins is the narrower
     // one it always was: an *empty* extent list writes no bytes, and the domain
-    // at which that holds is the current one.
+    // at which that holds is the current one, which is now `v22` for the
+    // selected physical-implementation run. That run is written unconditionally
+    // and is not an extent list, so it moves every artifact's identity without
+    // touching what this asserts: an empty extent list still writes no bytes.
     assert!(
-        super::super::model::ARTIFACT_DOMAIN.ends_with(b"v21\0"),
-        "the sourced-interface step owns v21; empty extent lists still write no bytes",
+        super::super::model::ARTIFACT_DOMAIN.ends_with(b"v22\0"),
+        "the physical-selection step owns v22; empty extent lists still write no bytes",
     );
 }
 
@@ -72,7 +76,7 @@ fn packaging_a_kernel_specialized_on_a_bound_extent_is_refused() {
     let semantic = baked_semantic_program(14);
     let program = baked_dense_program_with_live_range(&semantic, 14);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -514,7 +518,7 @@ fn extent_precondition_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();

@@ -1,6 +1,7 @@
 //! Canonical form: round trip, determinism, and declaration-order independence.
 
 use super::super::super::expr::AbiRoot;
+use super::super::super::tests::offered_physical;
 use super::super::super::tests::{
     Formulas, SCALE_BITS, build_artifact, declare_realization, default_artifact, formulas,
     fused_program, lowering_provider, payload, selection, semantic_program, spare_provider,
@@ -38,7 +39,7 @@ fn an_encoded_envelope_round_trips_to_an_equal_model() {
         artifact
             .canonical_identity()
             .as_bytes()
-            .starts_with(b"tiler.artifact-program.v21\0")
+            .starts_with(b"tiler.artifact-program.v22\0")
     );
 }
 
@@ -72,7 +73,7 @@ fn the_framing_header_is_the_fixed_width_it_declares() {
         &bytes[HEADER_BYTES..HEADER_BYTES + MANIFEST_DOMAIN.len()],
         MANIFEST_DOMAIN,
     );
-    assert_eq!(MANIFEST_SCHEMA, (21, 0));
+    assert_eq!(MANIFEST_SCHEMA, (22, 0));
 }
 
 /// The canonicity backstop compares a derivation against bytes rather than
@@ -158,7 +159,7 @@ fn expression_assembly_order_does_not_change_the_bytes() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
 
     // The same formulas, minted through two different arena orders. Identity is
     // already order-independent because it writes one canonical arena and names

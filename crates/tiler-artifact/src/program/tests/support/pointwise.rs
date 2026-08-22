@@ -5,6 +5,7 @@ use super::super::super::{
     AbiRoot, ArtifactProgramBuilder, CompilationEnvironment, SelectedLoweringProvider,
     VerifiedArtifactProgram,
 };
+use super::artifacts::offered_physical;
 use super::artifacts::{declare_realization_at, formulas, lowering_subject, payload, variant};
 use super::graphs::{
     BIAS_BITS, SCALE_BITS, checked_coverage_under, input_shape, strict, strict_contract,
@@ -423,7 +424,8 @@ impl PointwiseWidth {
         let program = self.program(&semantic);
         let provider =
             ProviderIdentity::new("tiler-test", "pointwise-scale-bias", 1).expect("provider");
-        let environment = CompilationEnvironment::new([provider.clone()], []).expect("environment");
+        let environment = CompilationEnvironment::new([provider.clone()], offered_physical())
+            .expect("environment");
         let mut draft =
             ArtifactProgramBuilder::new(&semantic, environment).expect("artifact builder");
         draft

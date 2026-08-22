@@ -8,6 +8,7 @@ use super::super::super::keys::{
 use super::super::super::model::{
     ArtifactExecutionPolicy, LoweringCapabilitySubject, SchemaVersion,
 };
+use super::super::super::tests::offered_physical;
 use super::super::super::tests::{
     OTHER_SCALE_BITS, SCALE_BITS, declare_realization, declare_realization_over, default_artifact,
     formulas, fused_program, lowering_provider, payload, prepared_requirement, profile, selection,
@@ -165,7 +166,7 @@ pub(crate) fn guarded_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft
         .select_lowering_provider(selection(provider.clone()))
@@ -203,7 +204,8 @@ pub(crate) fn two_variant_artifact(forward: bool) -> VerifiedArtifactProgram {
     let first = fused_program(&semantic, SCALE_BITS);
     let second = fused_program(&semantic, OTHER_SCALE_BITS);
     let providers = [lowering_provider(1), lowering_provider(2)];
-    let environment = CompilationEnvironment::new(providers.iter().cloned(), []).unwrap();
+    let environment =
+        CompilationEnvironment::new(providers.iter().cloned(), offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let (left, right) = if forward { (0, 1) } else { (1, 0) };
     draft
@@ -303,7 +305,7 @@ pub(crate) fn artifact_with(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = declare(&mut draft).unwrap();

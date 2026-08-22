@@ -27,6 +27,7 @@ use super::expr::{
     AbiEvaluationError, AbiType, AvailabilityPhase, MAX_TARGET_PROPERTY_KEY_BYTES,
     TargetPropertyKeyError,
 };
+use super::keys::PhysicalRegionOccurrenceIdentity;
 use super::model::ARTIFACT_DOMAIN_LABEL;
 use super::realization::codec::RealizationCodecError;
 use super::requirement::{RouteRequirementError, RouteRequirementSubject};
@@ -77,6 +78,8 @@ pub enum ArtifactLimitKind {
     DeliveryPositions,
     /// Selected lowering-capability-provider count of one artifact program.
     SelectedLoweringProviders,
+    /// Selected physical-implementation row count of one plan variant.
+    SelectedPhysicalImplementations,
     /// Offered lowering-provider count of one compilation environment.
     OfferedLoweringProviders,
     /// Offered physical-provider count of one compilation environment.
@@ -129,6 +132,10 @@ pub enum ArtifactKeyKind {
     PayloadDigest,
     /// The opaque descriptor digest of one declared target profile.
     TargetProfileDescriptor,
+    /// The opaque cover-region occurrence identity of one selected physical row.
+    PhysicalRegionOccurrence,
+    /// The opaque implementation-proposal identity of one selected physical row.
+    PhysicalImplementationProposal,
 }
 
 impl fmt::Display for ArtifactKeyKind {
@@ -330,6 +337,78 @@ pub enum ArtifactBuildError {
     DuplicateSelectedLoweringProvider {
         /// Repeated provider identity.
         provider: Box<ProviderIdentity>,
+    },
+    /// A physical implementation was selected from a provider the compilation
+    /// environment never offered **in its physical role**.
+    ///
+    /// The sibling of [`Self::LoweringProviderNotOffered`], and separate for the
+    /// same reason the two offered sets are: a provider offered only to lower a
+    /// capability was never granted authority to implement a region, and an
+    /// artifact that could not tell those grants apart could not prove which one
+    /// admitted the work it packages.
+    PhysicalProviderNotOffered {
+        /// Rejected provider identity.
+        provider: Box<ProviderIdentity>,
+    },
+    /// A plan variant stated no selected physical implementation at all.
+    ///
+    /// Emptiness is refused rather than admitted as "this variant selected
+    /// nothing": every packaged variant executes stages, and a stage was
+    /// implemented by some physical authority. An empty run is an omitted
+    /// statement, and the fail-closed reading of an omitted provenance
+    /// statement is refusal rather than an artifact that attributes its work to
+    /// nobody.
+    EmptySelectedPhysicalImplementations,
+    /// A variant states more selected physical rows than it has executable entries.
+    ///
+    /// Equality is deliberately **not** required: one selected cover region may
+    /// flatten into several executable stages, so fewer rows than entries
+    /// preserves the accepted occurrence-to-stage association. More rows than
+    /// entries cannot be that population at all.
+    PhysicalSelectionCardinality {
+        /// Selected physical rows the variant states.
+        selected: usize,
+        /// Executable entries the variant declares.
+        entries: usize,
+    },
+    /// A candidate's own canonical bytes already prove its complete artifact
+    /// identity must exceed the governed whole-identity limit.
+    ///
+    /// **Not a second budget.** The physical-selection run is a strict subset of
+    /// canonical artifact identity, and the complete identity necessarily
+    /// carries non-physical bytes too, so a subset at or past the limit is a
+    /// proof about the whole rather than a new ceiling on the part. The refusal
+    /// is raised before the builder retains the candidate, because every such
+    /// candidate would be refused again by the reachable
+    /// [`ArtifactDiagnostic::IdentityLimit`] at `build` and retaining it until
+    /// then buys no supported artifact.
+    IdentityLowerBound {
+        /// Proved minimum canonical-identity bytes of the complete artifact.
+        minimum_bytes: usize,
+        /// The governed whole-identity byte limit this minimum already exceeds.
+        limit: usize,
+    },
+    /// Two selected physical rows name one cover-region occurrence.
+    ///
+    /// One occurrence has exactly one selected implementation. Provider,
+    /// proposal, and kind repetition across *different* occurrences is legal and
+    /// preserved; a repeated occurrence is a contradiction rather than
+    /// multiplicity.
+    DuplicatePhysicalRegionOccurrence {
+        /// Repeated cover-region occurrence identity.
+        occurrence: Box<PhysicalRegionOccurrenceIdentity>,
+    },
+    /// A selected physical run is not in strictly ascending occurrence-byte order.
+    ///
+    /// The compiler already sorts its selections by whole occurrence bytes, so
+    /// this preserves a canonical order it receives rather than sorting a
+    /// caller's statement. Sorting here would silently accept a run whose stated
+    /// order contradicts the authority that minted it.
+    NoncanonicalPhysicalRegionOccurrenceOrder {
+        /// Occurrence identity of the preceding row.
+        previous: Box<PhysicalRegionOccurrenceIdentity>,
+        /// Occurrence identity of the row that did not follow it.
+        current: Box<PhysicalRegionOccurrenceIdentity>,
     },
     /// An identical backend payload descriptor is already declared.
     DuplicatePayload,
@@ -830,6 +909,12 @@ impl Error for ArtifactBuildError {
             | Self::NoncanonicalKeyByte { .. }
             | Self::LoweringProviderNotOffered { .. }
             | Self::DuplicateSelectedLoweringProvider { .. }
+            | Self::PhysicalProviderNotOffered { .. }
+            | Self::EmptySelectedPhysicalImplementations
+            | Self::PhysicalSelectionCardinality { .. }
+            | Self::IdentityLowerBound { .. }
+            | Self::DuplicatePhysicalRegionOccurrence { .. }
+            | Self::NoncanonicalPhysicalRegionOccurrenceOrder { .. }
             | Self::DuplicatePayload
             | Self::IncompletePayloadProvenance { .. }
             | Self::OperandType { .. }

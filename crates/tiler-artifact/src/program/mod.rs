@@ -91,7 +91,9 @@
 //!     EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
 //!     HonouringMeans, LaunchSpec, LoweringCapabilitySubject, NumericalDimension,
 //!     NumericalObligationKey, PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
-//!     ScalarArithmeticSubject, SchemaVersion, SelectedLoweringProvider, SemanticOccurrence,
+//!     PhysicalImplementationProposalIdentity, PhysicalProposalKind,
+//!     PhysicalRegionOccurrenceIdentity, ScalarArithmeticSubject, SchemaVersion,
+//!     SelectedLoweringProvider, SelectedPhysicalImplementation, SemanticOccurrence,
 //!     TargetEvidenceDeclaration,
 //!     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! };
@@ -338,7 +340,12 @@
 //! # let program = plan.build()?;
 //! // Package that verified program as a one-variant artifact portfolio.
 //! let provider = ProviderIdentity::new("tiler", "elementwise-multiply", 1)?;
-//! let environment = CompilationEnvironment::new([provider.clone()], [])?;
+//! // A second identity for the *physical* role: the two grants are separate,
+//! // so a provider offered to lower a capability is not thereby offered to
+//! // implement a region.
+//! let implementer = ProviderIdentity::new("tiler", "scalar-host", 1)?;
+//! let environment =
+//!     CompilationEnvironment::new([provider.clone()], [implementer.clone()])?;
 //! let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
 //! artifact.select_lowering_provider(SelectedLoweringProvider {
 //!     provider,
@@ -381,6 +388,20 @@
 //!             key: FeasibilityRuleSetKey::new("tiler.feasibility.baseline")?,
 //!             revision: 1,
 //!         },
+//!         // Which physical authority produced the selected region, bound to
+//!         // the occurrence it produced. Required: an artifact that packaged
+//!         // work without saying who implemented it could not be told apart
+//!         // from one implemented by somebody else.
+//!         selected_physical_implementations: vec![SelectedPhysicalImplementation {
+//!             region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(
+//!                 b"tiler.occurrence.multiply",
+//!             )?,
+//!             implementation_proposal: PhysicalImplementationProposalIdentity::from_bytes(
+//!                 b"tiler.proposal.multiply.scheduled",
+//!             )?,
+//!             provider: implementer,
+//!             proposal_kind: PhysicalProposalKind::ScheduledKernel,
+//!         }],
 //!         deferred_predicates: Vec::new(),
 //!         entries: vec![EntrySpec {
 //!             bindings: vec![
@@ -633,21 +654,24 @@ pub use facts::{
 pub use handles::{AbiExprId, PayloadId, VariantId};
 pub use keys::{
     BackendEntryKey, BackendKey, CapabilityFamilyKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-    MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, MAX_TARGET_PROFILE_DESCRIPTOR_BYTES,
-    PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef,
+    MAX_GOVERNED_KEY_BYTES, MAX_OPAQUE_IDENTITY_BYTES, MAX_PHYSICAL_SELECTION_IDENTITY_BYTES,
+    MAX_TARGET_PROFILE_DESCRIPTOR_BYTES, PayloadDigest, PhysicalImplementationProposalIdentity,
+    PhysicalRegionOccurrenceIdentity, RepresentationKey, RouteFeatureKey,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
 };
 #[cfg(test)]
 pub(crate) use model::{
-    ARTIFACT_DOMAIN, DEFERRED_KEY_DOMAIN, PAYLOAD_KEY_DOMAIN, PROVIDER_KEY_DOMAIN, STAGE_KEY_DOMAIN,
+    ARTIFACT_DOMAIN, DEFERRED_KEY_DOMAIN, PAYLOAD_KEY_DOMAIN, PHYSICAL_SELECTION_KEY_DOMAIN,
+    PROVIDER_KEY_DOMAIN, STAGE_KEY_DOMAIN,
 };
 pub use model::{
     AbiExprRef, AbiExprView, ArtifactEnvelopeDigest, ArtifactExecutionPolicy, ArtifactInputRef,
     ArtifactOutputRef, ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind,
     BindingRef, BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
-    InterfaceComponentRef, LoweringCapabilitySubject, RecordedArtifactEnvelopeDigest,
-    RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion, SelectedLoweringProvider,
-    StageDependencyReason, VariantRef, VerifiedArtifactProgram,
+    InterfaceComponentRef, LoweringCapabilitySubject, PhysicalProposalKind,
+    RecordedArtifactEnvelopeDigest, RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion,
+    SelectedLoweringProvider, SelectedPhysicalImplementation, StageDependencyReason, VariantRef,
+    VerifiedArtifactProgram,
 };
 pub use realization::codec::{
     ArtifactCrossCheck, OrderedSubject as RealizationOrderedSubject, RealizationCodecError,
@@ -769,6 +793,23 @@ pub const MAX_OFFERED_LOWERING_PROVIDERS: usize = 4_096;
 /// separate name: a refusal must tell a caller *which* offered role it
 /// overran, and the two bounds may move apart without one editing the other.
 pub const MAX_OFFERED_PHYSICAL_PROVIDERS: usize = 4_096;
+/// Maximum selected physical implementations admitted by one plan variant.
+///
+/// **Defined as [`MAX_VARIANT_ENTRIES`], not equal to it by coincidence.** The
+/// selected run is structurally bounded by the executable-entry table — every
+/// selected cover region contributes at least one entry — so this follows that
+/// table rather than standing as a second capacity authority that could drift
+/// from it. The separate name exists so a refusal tells a caller *which*
+/// received collection it overran.
+///
+/// The current compiler production path is far tighter: its governed request
+/// budget admits twelve regions, and a program whose flattened stages exceed
+/// that is refused before a public plan alternative exists. Twelve is producer
+/// evidence and deliberately not this bound — direct artifact construction is
+/// supported, and a verified program whose entry table legally holds thirteen
+/// or more stages must not be refused by an artifact limit borrowed from a
+/// compiler request policy this crate neither imports nor owns.
+pub const MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS: usize = MAX_VARIANT_ENTRIES;
 /// Maximum deferred feasibility predicates admitted by one plan variant.
 pub const MAX_DEFERRED_PREDICATES: usize = 64;
 /// Maximum live-device route requirements admitted by one plan variant.

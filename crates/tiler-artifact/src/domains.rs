@@ -89,7 +89,7 @@ impl DomainContainer {
     /// domains".
     pub(crate) const PROOF_SIDECAR: usize = 4;
     /// Governed domains the artifact program's identity encoding admits.
-    pub(crate) const PROGRAM_IDENTITY: usize = 8;
+    pub(crate) const PROGRAM_IDENTITY: usize = 9;
 }
 
 /// One governed domain separator admitted by this crate.
@@ -132,6 +132,8 @@ pub(crate) enum GovernedDomain {
     ProgramProviderKey,
     /// Separator of one deferred predicate's canonical key.
     ProgramDeferredKey,
+    /// Separator of one selected physical implementation's canonical key.
+    ProgramPhysicalSelectionKey,
     /// Separator opening a delivered-realization record's canonical bytes.
     ProgramDeliveredRealization,
     /// Separator opening one core route requirement's canonical bytes.
@@ -163,6 +165,7 @@ impl GovernedDomain {
         Self::ProgramPayloadKey,
         Self::ProgramProviderKey,
         Self::ProgramDeferredKey,
+        Self::ProgramPhysicalSelectionKey,
         Self::ProgramDeliveredRealization,
         Self::ProgramRouteRequirement,
         Self::ProgramTargetEnvironment,
@@ -189,6 +192,7 @@ impl GovernedDomain {
             Self::ProgramPayloadKey => program::PAYLOAD_KEY_DOMAIN,
             Self::ProgramProviderKey => program::PROVIDER_KEY_DOMAIN,
             Self::ProgramDeferredKey => program::DEFERRED_KEY_DOMAIN,
+            Self::ProgramPhysicalSelectionKey => program::PHYSICAL_SELECTION_KEY_DOMAIN,
             Self::ProgramDeliveredRealization => program::DELIVERED_REALIZATION_DOMAIN,
             Self::ProgramRouteRequirement => program::ROUTE_REQUIREMENT_DOMAIN,
             Self::ProgramTargetEnvironment => program::TARGET_ENVIRONMENT_COMPATIBILITY_DOMAIN,
@@ -216,11 +220,12 @@ impl GovernedDomain {
             Self::SidecarManifestDigest => b"tiler.proof-sidecar.manifest-digest.v1\0",
             Self::SidecarPayloadDigest => b"tiler.proof-sidecar.payload-digest.v1\0",
             Self::SidecarIdentity => b"tiler.proof-sidecar.identity.v1\0",
-            Self::ProgramArtifact => b"tiler.artifact-program.v21\0",
+            Self::ProgramArtifact => b"tiler.artifact-program.v22\0",
             Self::ProgramStageKey => b"tiler.artifact-program.stage.v4\0",
             Self::ProgramPayloadKey => b"tiler.artifact-program.payload.v1\0",
             Self::ProgramProviderKey => b"tiler.artifact-program.provider.v3\0",
             Self::ProgramDeferredKey => b"tiler.artifact-program.deferred.v2\0",
+            Self::ProgramPhysicalSelectionKey => b"tiler.artifact-program.physical-selection.v1\0",
             Self::ProgramDeliveredRealization => {
                 b"tiler.artifact-program.delivered-realization.v3\0"
             }
@@ -250,6 +255,7 @@ impl GovernedDomain {
             | Self::ProgramPayloadKey
             | Self::ProgramProviderKey
             | Self::ProgramDeferredKey
+            | Self::ProgramPhysicalSelectionKey
             | Self::ProgramDeliveredRealization
             | Self::ProgramRouteRequirement
             | Self::ProgramTargetEnvironment => DomainContainer::ProgramIdentity,

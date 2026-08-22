@@ -90,6 +90,17 @@ pub enum MetalPlanBuildError {
     /// offering no policy subject to bind the packaged entries to — neither of
     /// which the artifact builder ever sees.
     ArtifactRealization(RealizationTranslationError),
+    /// The compiler named a physical proposal kind artifact packaging cannot state.
+    ///
+    /// Its own variant for the reason [`Self::ArtifactRealization`] has one: the
+    /// artifact builder never sees this refusal. It happens in the neutral
+    /// bridge, where the compiler's stable proposal-kind code is translated into
+    /// the artifact vocabulary, and a code that vocabulary has not been reviewed
+    /// for is refused rather than defaulted onto a known kind.
+    ArtifactPhysicalProposalKind {
+        /// The stable code the compiler published.
+        kind: &'static str,
+    },
     /// The complete expansion-cache subject could not be composed.
     CacheSubject(SubjectRefusal),
     /// Metal compilation failed inside the cache miss closure.
@@ -170,6 +181,11 @@ impl fmt::Display for MetalPlanBuildError {
                 formatter,
                 "delivered-realization translation failed: {error}",
             ),
+            Self::ArtifactPhysicalProposalKind { kind } => write!(
+                formatter,
+                "the compiler selected a physical proposal of kind `{kind}`, which this artifact \
+                 packaging does not admit",
+            ),
             Self::CacheSubject(error) => {
                 write!(formatter, "Metal cache subject was refused: {error}")
             }
@@ -190,7 +206,10 @@ impl fmt::Display for MetalPlanBuildError {
 impl Error for MetalPlanBuildError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            Self::NoDeclaredFamily => None,
+            // Neither carries a cause: an empty family declaration and an
+            // unadmitted proposal kind are both refusals this crate states
+            // itself rather than forwarding from a boundary below it.
+            Self::NoDeclaredFamily | Self::ArtifactPhysicalProposalKind { .. } => None,
             Self::DeclaredProfile(error) => Some(error),
             Self::Emission(error) => Some(error),
             Self::Preparation(error) | Self::CacheCompilation(error) => Some(error),
@@ -419,6 +438,9 @@ impl From<PlanArtifactError> for MetalPlanBuildError {
             PlanArtifactError::Build(error) => Self::ArtifactBuild(error),
             PlanArtifactError::Verification(error) => Self::ArtifactVerification(error),
             PlanArtifactError::Realization(error) => Self::ArtifactRealization(error),
+            PlanArtifactError::UnsupportedPhysicalProposalKind { kind } => {
+                Self::ArtifactPhysicalProposalKind { kind }
+            }
         }
     }
 }
@@ -1499,6 +1521,20 @@ mod tests {
     /// [`assemble_plan_artifact`]: crate::assemble_plan_artifact
     #[test]
     fn the_standard_metal_path_publishes_its_recorded_identities() {
+        // **Hex step after the packaged physical-selection run.** The
+        // `tiler.artifact-program.v22` / manifest `22.0` step folds each
+        // variant's selected physical-implementation run — which physical
+        // authority produced each selected region — into artifact identity and
+        // the manifest. Both identities move, and the cache subject with them,
+        // which is the ADR 0072 omission the step closes: before it, two plans
+        // admitted by different physical providers or different implementation
+        // proposals shared this fixture's bytes and therefore its cache key.
+        // The superseded pair was
+        // `5b55dde1e8aab459509c2ce4248c711a6bc6820e7859e6525a4d9a33b70f2160` /
+        // `c6f105fc9dd11f76e7d10a1fcc67f42c660e1b99b3c623f5070f487804f4c2f7`
+        // at 91,945 bytes; the 3,296-byte descriptor holds, because the target
+        // profile does not move at this step.
+        //
         // **Hex step after the packaged symbolic interface.** The
         // `tiler.kernel-program.v13` / `tiler.artifact-program.v21` / manifest
         // `21.0` step folds the program's complete shape-environment subject
@@ -1543,9 +1579,9 @@ mod tests {
         // `da08d9006f071e38244d0ea765f563dce425cb934057d847a0f03bd88b5aa5b8`
         // at the same 77,096 bytes.
         const ARTIFACT_IDENTITY: &str =
-            "5b55dde1e8aab459509c2ce4248c711a6bc6820e7859e6525a4d9a33b70f2160";
+            "c4bd45a76391c31a527fed11e90825c3e83ae6a4debebc697fbe33c5bb5bf295";
         const CACHE_SUBJECT: &str =
-            "c6f105fc9dd11f76e7d10a1fcc67f42c660e1b99b3c623f5070f487804f4c2f7";
+            "e616606566196ae1b1db99ba242d4729fc34ea2de0e5ee8acb91d5c4fcfbc87f";
         // **Hex step after the feasibility rule-set key v5 → v6.** Descriptor
         // length and fixed content stay at the workgroup-tree-width-policy
         // values: silent profiles write no subgroup section, and the key
@@ -1576,6 +1612,20 @@ mod tests {
         // realization record's evidence rows, each of which frames that same
         // descriptor and ends in the schema-4 source whose context now carries
         // its framed selection.
+        // **94,305 after the packaged physical-selection run.** 91,945 + 2,360,
+        // and the delta is the complete run and nothing else. This fixture
+        // publishes one variant carrying one selected row, so the run is
+        // `1 + 8` for its tag and `u64` count, plus that row's `8`-byte length
+        // frame, its `45`-byte row-key domain, its four length-framed fields —
+        // `8 + 1,243` occurrence identity, `8 + 984` implementation-proposal
+        // identity, `8 + 5` provider namespace, `8 + 29` provider name — plus
+        // the fixed `u32` revision and the one kind tag: `9 + 8 + 45 + 1,251 +
+        // 992 + 13 + 37 + 4 + 1 = 2,360`. Unlike the entries below it, this one
+        // does **not** multiply by an embedding count: the run is folded once
+        // per variant, and the manifest embeds the identical bytes the identity
+        // folds rather than a second spelling of them. A delta that does not
+        // factor as `variants * (9 + rows * (66 + occurrence + proposal +
+        // namespace + name))` is a second change riding along, not this one.
         // **91,945 after the packaged symbolic interface.** 91,891 + 54, and it
         // factors as `51 + 3`. Fifty-one is the framed empty shape-environment
         // subject the kernel-program identity now folds, carried once in this
@@ -1602,7 +1652,7 @@ mod tests {
         // folded through the kernel-program and stage subjects at their
         // embedding multiplicities, read off the move rather than derived,
         // which is one notch weaker and is stated rather than blurred.
-        const FIXED_CONTENT_BYTES: usize = 91_945;
+        const FIXED_CONTENT_BYTES: usize = 94_305;
 
         let directory = scratch("golden");
         let cache = ExpansionCache::open(directory.join("cache"));
@@ -1676,9 +1726,9 @@ mod tests {
     #[test]
     fn the_authority_ledger_mirrors_the_live_standard_metal_pins() {
         const ARTIFACT_IDENTITY: &str =
-            "5b55dde1e8aab459509c2ce4248c711a6bc6820e7859e6525a4d9a33b70f2160";
+            "c4bd45a76391c31a527fed11e90825c3e83ae6a4debebc697fbe33c5bb5bf295";
         const CACHE_SUBJECT: &str =
-            "c6f105fc9dd11f76e7d10a1fcc67f42c660e1b99b3c623f5070f487804f4c2f7";
+            "e616606566196ae1b1db99ba242d4729fc34ea2de0e5ee8acb91d5c4fcfbc87f";
         let ledger = include_str!(
             "../../../docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md"
         );
@@ -1696,7 +1746,7 @@ mod tests {
             "the live pin paragraph does not name CACHE_SUBJECT",
         );
         assert!(
-            today.contains("fixed content is 91,945 bytes"),
+            today.contains("fixed content is 94,305 bytes"),
             "the live pin paragraph does not name FIXED_CONTENT_BYTES",
         );
         // Keyed on the stating phrase and not on the bare digits. The paragraph

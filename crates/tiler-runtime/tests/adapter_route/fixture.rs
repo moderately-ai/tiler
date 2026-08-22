@@ -110,13 +110,15 @@ use tiler_artifact::program::{
     HonouringMeans, LaunchSpec, LoweringCapabilitySubject, MaterializationRounding,
     NumericalDimension, NumericalObligationKey, NumericalPermission, PayloadContent,
     PayloadMetadata, PayloadPlanDeterminismRefusal, PayloadPlanDeterminismVerifier,
-    PayloadPlatform, PayloadProvenance, PolicyLocus, ProvenanceIdentity,
+    PayloadPlatform, PayloadProvenance, PhysicalImplementationProposalIdentity,
+    PhysicalProposalKind, PhysicalRegionOccurrenceIdentity, PolicyLocus, ProvenanceIdentity,
     RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey, RouteRequirement,
     ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
-    SelectedLoweringProvider, SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration,
-    TargetEnvironmentDescriptor, TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode,
-    TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-    TargetPropertyKey, ToolComponent, VariantSpec, overlapping_behaviour,
+    SelectedLoweringProvider, SelectedPhysicalImplementation, SemanticOccurrence, SubnormalMode,
+    TargetEnvironmentDeclaration, TargetEnvironmentDescriptor, TargetEnvironmentDescriptorSchema,
+    TargetEnvironmentReasonCode, TargetEvidenceDeclaration, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, TargetPropertyKey, ToolComponent, VariantSpec,
+    overlapping_behaviour,
 };
 use tiler_artifact::program::{BackendPayloadDescriptor, ValidatedTargetEnvironmentDeclaration};
 use tiler_ir::index::{
@@ -158,6 +160,46 @@ use tiler_ir::semantic::{
     F32Multiply, InputKey, OpKey, OutputKey, ProviderIdentity, SemanticProgram,
     SemanticProgramBuilder, StrictSerialF32Sum, add_f32_op, constant_f32_op, multiply_f32_op,
 };
+
+/// The provider this fixture grants **physical** authority to.
+///
+/// A different identity from the lowering provider on purpose: the two grants
+/// are separate, and a fixture that reused one identity could satisfy a
+/// cross-role check by accident.
+fn physical_implementer() -> ProviderIdentity {
+    ProviderIdentity::new("tiler-test", "scalar-host-implementer", 1).expect("a provider")
+}
+
+/// The physical role every artifact this fixture assembles is offered.
+fn offered_physical() -> [ProviderIdentity; 1] {
+    [physical_implementer()]
+}
+
+/// A canonical run of `rows` selections over distinct ascending occurrences.
+///
+/// The occurrence spelling is fixed-width so that byte order and ordinal order
+/// agree; the canonical rule is over *bytes*, so a variable-width spelling would
+/// order `10` before `9` and fail the rule this run exists to satisfy.
+fn physical_run(rows: usize) -> Vec<SelectedPhysicalImplementation> {
+    (0..u16::try_from(rows).expect("a bounded entry table fits u16"))
+        .map(|ordinal| {
+            let mut occurrence = b"tiler-test.occurrence.".to_vec();
+            occurrence.extend_from_slice(&ordinal.to_be_bytes());
+            let mut proposal = b"tiler-test.proposal.".to_vec();
+            proposal.extend_from_slice(&ordinal.to_be_bytes());
+            SelectedPhysicalImplementation {
+                region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(occurrence)
+                    .expect("a nonempty occurrence identity"),
+                implementation_proposal: PhysicalImplementationProposalIdentity::from_bytes(
+                    proposal,
+                )
+                .expect("a nonempty proposal identity"),
+                provider: physical_implementer(),
+                proposal_kind: PhysicalProposalKind::ScheduledKernel,
+            }
+        })
+        .collect()
+}
 use tiler_ir::shape::{Axis, Extent, Shape};
 use tiler_runtime::load::ExecutionEnvironment;
 
@@ -954,7 +996,8 @@ pub fn try_assemble_portfolio_over(
     // it, and which backend emits them, are physical choices below it.
     let provider =
         ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
-    let environment = CompilationEnvironment::new([provider.clone()], []).expect("an environment");
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical())
+        .expect("an environment");
     let mut draft = ArtifactProgramBuilder::new(semantic, environment).expect("an artifact draft");
     draft
         .select_lowering_provider(SelectedLoweringProvider {
@@ -1164,6 +1207,10 @@ fn push_member(
                     .expect("a governed rule-set key"),
                 revision: 1,
             },
+            // One selected region per packaged stage: the ordinary shape, and
+            // the one that exercises multiplicity for the multi-stage fixtures
+            // rather than only for the single-stage ones.
+            selected_physical_implementations: physical_run(spec.entries.len()),
             deferred_predicates: spec.deferred_predicates.clone(),
             entries: spec
                 .entries
@@ -1447,7 +1494,8 @@ pub fn assemble_two_delivery_claimed() -> Fixture {
     let semantic = semantic_program();
     let provider =
         ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
-    let compilation = CompilationEnvironment::new([provider.clone()], []).expect("an environment");
+    let compilation = CompilationEnvironment::new([provider.clone()], offered_physical())
+        .expect("an environment");
     let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).expect("an artifact draft");
     draft
         .select_lowering_provider(SelectedLoweringProvider {
@@ -1500,6 +1548,7 @@ pub fn assemble_two_delivery_claimed() -> Fixture {
                         .expect("a governed rule-set key"),
                     revision: 1,
                 },
+                selected_physical_implementations: physical_run(1),
                 deferred_predicates: Vec::new(),
                 entries: vec![EntrySpec {
                     bindings: vec![

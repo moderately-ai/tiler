@@ -13,6 +13,8 @@ use super::super::super::{
     TargetEnvironmentDescriptor, TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode,
     ToolComponent, ValidatedTargetEnvironmentDeclaration, VariantId,
 };
+use super::artifacts::offered_physical;
+use super::artifacts::physical_run;
 use super::artifacts::{
     declare_realization, formulas, lowering_provider, profile, rules, selection, variant,
 };
@@ -193,7 +195,7 @@ pub(crate) fn with_claim_draft(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let compilation = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let compilation = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let content = claim_payload_content(b"fused", CLAIM_OBJECT);
@@ -273,7 +275,7 @@ pub(crate) fn two_entry_claim(
     let semantic = semantic_program();
     let program = partial_window_program(&semantic);
     let provider = lowering_provider(1);
-    let compilation = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let compilation = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
 
@@ -332,6 +334,7 @@ pub(crate) fn two_entry_claim(
             VariantSpec {
                 target_profile: profile(),
                 feasibility_rules: rules(),
+                selected_physical_implementations: physical_run(1),
                 deferred_predicates: Vec::new(),
                 entries,
             },

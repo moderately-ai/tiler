@@ -7,6 +7,7 @@ use super::super::super::keys::{BackendEntryKey, BackendKey, RepresentationKey};
 use super::super::super::model::{
     ArtifactExecutionPolicy, BindingKind, BindingTarget, SchemaVersion,
 };
+use super::super::super::tests::offered_physical;
 use super::super::super::tests::{
     SCALE_BITS, declare_realization, default_artifact, formulas, fused_program, lowering_provider,
     profile, selection, semantic_program, strict_affine_u4_dequantize_artifact, variant,
@@ -139,7 +140,7 @@ fn a_recovered_builder_rebuilds_the_artifact_byte_for_byte() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     // Every declaration but the provider selection, so the refusal below is one
     // correctable diagnostic and every table `build` takes is already populated

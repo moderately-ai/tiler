@@ -1,6 +1,7 @@
 //! Canonical identity is deterministic and ignores every declaration order.
 
 use super::super::{AbiBinaryOp, AbiRoot, ArtifactProgramBuilder, CompilationEnvironment};
+use super::offered_physical;
 use super::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, declare_realization, declare_realization_over,
     default_artifact, formulas, fused_program, lowering_provider, payload, selection,
@@ -24,7 +25,8 @@ fn identity_ignores_payload_and_provider_declaration_order() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let providers = [lowering_provider(1), lowering_provider(2)];
-    let environment = CompilationEnvironment::new(providers.iter().cloned(), []).unwrap();
+    let environment =
+        CompilationEnvironment::new(providers.iter().cloned(), offered_physical()).unwrap();
 
     let alternate = fused_program(&semantic, OTHER_SCALE_BITS);
 
@@ -66,7 +68,7 @@ fn identity_ignores_expression_assembly_order() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
 
     let assemble = |reversed: bool| {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
@@ -102,7 +104,8 @@ fn identity_ignores_expression_assembly_order() {
 #[test]
 fn the_expression_arena_is_canonically_deduplicated() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let first = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();
     let second = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();

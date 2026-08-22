@@ -125,9 +125,11 @@
 //! to find.
 
 use std::fmt;
+use std::sync::Arc;
 
 use tiler_ir::kernel::MAX_KERNEL_IDENTITY_BYTES;
 
+use super::MAX_ARTIFACT_IDENTITY_BYTES;
 use super::error::{ArtifactBuildError, ArtifactKeyKind};
 
 /// Maximum UTF-8 byte length of one governed artifact key.
@@ -159,6 +161,19 @@ pub const MAX_OPAQUE_IDENTITY_BYTES: usize = 1_024;
 /// digest bound. `tiler_compiler::feasibility` owns the equal governing mint
 /// bound; neither crate depends on the other, so a change requires checking both.
 pub const MAX_TARGET_PROFILE_DESCRIPTOR_BYTES: usize = 64 * 1_024;
+/// Maximum byte length of one received physical-selection identity.
+///
+/// Deliberately *equal to* [`MAX_ARTIFACT_IDENTITY_BYTES`] and defined from it
+/// rather than beside it, because it is not a second budget: an occurrence or
+/// proposal identity is a strict framed subset of the complete canonical
+/// artifact identity, so a value past that ceiling could not be published under
+/// any artifact and this refuses it at the boundary that received it instead of
+/// after the builder has retained it.
+///
+/// It is **not** a claim about the compiler's minting bound. Neither
+/// `tiler-compiler` type publishes one, so this bounds what the artifact admits
+/// and says nothing about what the compiler can produce.
+pub const MAX_PHYSICAL_SELECTION_IDENTITY_BYTES: usize = MAX_ARTIFACT_IDENTITY_BYTES;
 
 /// Whether one byte is admitted by the governed-key alphabet.
 ///
@@ -290,6 +305,53 @@ macro_rules! opaque_identity {
     };
 }
 
+/// Declares an opaque identity whose bytes are **shared** rather than boxed.
+///
+/// Identical to [`opaque_identity!`] in public surface, equality, ordering, and
+/// hashing; the storage differs and only the storage. The choice is decided by
+/// the publication path rather than by taste:
+/// `codec::model::ArtifactEnvelope::project` borrows the verified
+/// `ArtifactProgramData` and must build an *owned* row while the verified value
+/// stays live, so every identity in a projected row is cloned immediately
+/// before manifest encoding. A boxed identity deep-copies both byte runs at
+/// that point and transiently doubles the largest payload this row carries;
+/// `Arc<[u8]>` replaces that copy with one atomic increment and shares the
+/// immutable bytes. These runs can be tens of MiB, so the copy dominates the
+/// refcount cost on the path the row exists to travel.
+///
+/// It retains no spare capacity, exactly as `Box<[u8]>` does not: `Arc::from`
+/// over a slice allocates the exact length.
+macro_rules! shared_opaque_identity {
+    ($name:ident, $kind:expr, $limit:expr, $limit_doc:literal, $($docs:literal),+ $(,)?) => {
+        $(#[doc = $docs])+
+        ///
+        /// The bytes are treated as opaque: this crate compares and encodes
+        /// them, and never re-derives them locally.
+        #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+        pub struct $name(Arc<[u8]>);
+
+        impl $name {
+            /// Wraps opaque identity bytes derived by another authority.
+            ///
+            /// # Errors
+            ///
+            /// Returns [`ArtifactBuildError::EmptyKey`] for empty bytes, or
+            #[doc = $limit_doc]
+            pub fn from_bytes(value: impl AsRef<[u8]>) -> Result<Self, ArtifactBuildError> {
+                let value = value.as_ref();
+                validate_opaque(value, $kind, $limit)?;
+                Ok(Self(Arc::from(value)))
+            }
+
+            /// Returns the opaque identity bytes.
+            #[must_use]
+            pub fn as_bytes(&self) -> &[u8] {
+                &self.0
+            }
+        }
+    };
+}
+
 governed_key!(
     BackendKey,
     ArtifactKeyKind::Backend,
@@ -364,6 +426,34 @@ opaque_identity!(
     "profile is the one that can explain the refusal. [`MAX_TARGET_PROFILE_DESCRIPTOR_BYTES`]",
     "is what this crate will hold, and it still refuses past it, because it",
     "validates what it is handed rather than trusting where it came from.",
+);
+
+shared_opaque_identity!(
+    PhysicalRegionOccurrenceIdentity,
+    ArtifactKeyKind::PhysicalRegionOccurrence,
+    MAX_PHYSICAL_SELECTION_IDENTITY_BYTES,
+    "[`ArtifactBuildError::KeyTooLong`] beyond [`MAX_PHYSICAL_SELECTION_IDENTITY_BYTES`].",
+    "The whole canonical identity of the cover-region occurrence a physical",
+    "implementation was selected for.",
+    "",
+    "The occurrence side of the compiler-checked binding, not the scheduled",
+    "body's reusable structural identity: two equal bodies at two graph sites are",
+    "two occurrences and keep two rows. `tiler-compiler` mints these bytes and",
+    "this crate never parses them into graph-local parts.",
+);
+shared_opaque_identity!(
+    PhysicalImplementationProposalIdentity,
+    ArtifactKeyKind::PhysicalImplementationProposal,
+    MAX_PHYSICAL_SELECTION_IDENTITY_BYTES,
+    "[`ArtifactBuildError::KeyTooLong`] beyond [`MAX_PHYSICAL_SELECTION_IDENTITY_BYTES`].",
+    "The whole canonical identity of the admitted implementation proposal.",
+    "",
+    "`tiler-compiler`'s frontier mints this only after host verification, folding",
+    "the structural body subject, host-stamped provider, proposal kind,",
+    "applicability, derived boundary contract, and deferred feasibility evidence.",
+    "A caller forwards these opaque bytes; reconstructing the identity from the",
+    "readable provider and kind beside it would make this crate a second",
+    "authority for another crate's private grammar.",
 );
 
 /// The declared target profile a plan variant was assessed against.

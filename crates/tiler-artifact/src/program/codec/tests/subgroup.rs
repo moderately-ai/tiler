@@ -176,6 +176,16 @@ fn every_present_subgroup_subject_round_trips_without_authority_loss() {
             &width_32.canonical_identity().unwrap(),
         )
         .as_bytes(),
+        // Rebaselined again at the `tiler.artifact-program.v21 -> v22` step
+        // (each variant's selected physical-implementation run): the run is
+        // written unconditionally between the feasibility-rule revision and the
+        // deferred-predicate run by the one encoder `encode_identity` and the
+        // manifest share, so every artifact identity moves — including this one,
+        // whose subject is a subgroup width and not a provenance row. That is
+        // the same unconditional-cost trade the `v21` note below records.
+        // Pre-recompute failure observed left = 9d 78 36 6c ... (the new
+        // digest), right = the retired 29 34 e6 62 ... pin.
+        //
         // Rebaselined at the `tiler.artifact-program.v20 -> v21` step (the
         // per-axis sourced interface boundary): the interface run gains an
         // unconditional source tag per axis and `push_interface` is folded by
@@ -184,9 +194,9 @@ fn every_present_subgroup_subject_round_trips_without_authority_loss() {
         // accepted for. Pre-recompute failure observed left = 29 34 e6 62 ...
         // (the new digest), right = the retired 04 d9 a0 5b ... pin.
         &[
-            0x29, 0x34, 0xe6, 0x62, 0x05, 0xbd, 0x60, 0x94, 0xe5, 0x6e, 0x80, 0xf8, 0xe5, 0x6d,
-            0x16, 0xb8, 0x14, 0x9a, 0xc1, 0xcf, 0xf3, 0xec, 0xd3, 0x69, 0x30, 0x85, 0x0d, 0xa6,
-            0x02, 0x62, 0xbf, 0x88
+            0x9d, 0x78, 0x36, 0x6c, 0xc0, 0xa5, 0x6c, 0xc5, 0x00, 0xa9, 0x19, 0xf2, 0x4a, 0xff,
+            0x00, 0xb2, 0xa8, 0xeb, 0x42, 0xdb, 0x17, 0xe0, 0x76, 0x98, 0x2a, 0xc2, 0x81, 0x83,
+            0xd1, 0x40, 0xc1, 0x8f
         ],
         "the first present-subgroup identity has an exact digest pin",
     );

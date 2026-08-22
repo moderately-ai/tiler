@@ -50,8 +50,10 @@ use tiler_artifact::program::{
     LaunchSpec, LoweringCapabilitySubject, MaterializationRounding, NumericalDimension,
     NumericalObligationKey, NumericalPermission, PayloadContent, PayloadEntryMapping,
     PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus, ProvenanceIdentity,
-    RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
-    ScalarArithmeticSubject, SchemaVersion, SelectedLoweringProvider, SemanticOccurrence,
+    PhysicalImplementationProposalIdentity, PhysicalProposalKind,
+    PhysicalRegionOccurrenceIdentity, RecordedArtifactIdentityError,
+    RecordedArtifactProgramIdentity, RepresentationKey, ScalarArithmeticSubject, SchemaVersion,
+    SelectedLoweringProvider, SelectedPhysicalImplementation, SemanticOccurrence,
     TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
     ToolComponent, VariantSpec, VerifiedArtifactProgram, overlapping_behaviour,
 };
@@ -291,9 +293,14 @@ fn assemble(
         revision: compilation.feasibility_rule_set_revision(),
     };
 
+    // Two roles, stated independently. This call was still on the one-argument
+    // constructor the role separation replaced, which is why this spike did not
+    // build at that landing; it is brought current here rather than left behind
+    // a second API step.
     let environment = CompilationEnvironment::new(
         plan.selected_capabilities()
             .map(|selected| selected.provider().clone()),
+        compilation.offered_physical_providers().iter().cloned(),
     )
     .map_err(|_| VerticalError::Package("the offered providers do not compose"))?;
     let mut builder = ArtifactProgramBuilder::new(semantic, environment)
@@ -436,6 +443,40 @@ fn assemble(
             VariantSpec {
                 target_profile: profile_ref.clone(),
                 feasibility_rules: rules,
+                // Forwarded from the compiler's own iterator, in the order it
+                // states: the selections are already sorted by whole occurrence
+                // bytes before a public plan exists.
+                selected_physical_implementations: plan
+                    .selected_physical_providers()
+                    .map(|selected| {
+                        Ok(SelectedPhysicalImplementation {
+                            region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(
+                                selected.region_occurrence_identity(),
+                            )
+                            .map_err(|_| {
+                                VerticalError::Package("an occurrence identity is unbounded")
+                            })?,
+                            implementation_proposal:
+                                PhysicalImplementationProposalIdentity::from_bytes(
+                                    selected.implementation_proposal_identity(),
+                                )
+                                .map_err(|_| {
+                                    VerticalError::Package("a proposal identity is unbounded")
+                                })?,
+                            provider: selected.provider().clone(),
+                            proposal_kind: match selected.proposal_kind() {
+                                "scheduled-kernel" => PhysicalProposalKind::ScheduledKernel,
+                                "kernel-subprogram" => PhysicalProposalKind::KernelSubprogram,
+                                "opaque-call" => PhysicalProposalKind::OpaqueCall,
+                                _ => {
+                                    return Err(VerticalError::Package(
+                                        "an unadmitted physical proposal kind",
+                                    ));
+                                }
+                            },
+                        })
+                    })
+                    .collect::<Result<_, _>>()?,
                 // Empty, and that is the measured CPU result rather than an
                 // omission: this profile declares its workgroup bound as an
                 // available compile-time fact, so the plan defers no

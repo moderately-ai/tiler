@@ -7,6 +7,7 @@ use super::super::{
     RouteRequirementError, RouteRequirementSubject, RouteResourceDimension,
     RouteResourceRequirement,
 };
+use super::offered_physical;
 use super::{
     SCALE_BITS, declare_realization, formulas, fused_program, lowering_provider, payload,
     route_feature, route_resource, selection, semantic_program, variant,
@@ -126,7 +127,7 @@ fn two_route_requirements_naming_one_subject_are_refused() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -179,11 +180,13 @@ fn a_route_requirement_needs_a_variant_this_builder_minted() {
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     let mut first = {
-        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+        let environment =
+            CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
         ArtifactProgramBuilder::new(&semantic, environment).unwrap()
     };
     let mut second = {
-        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+        let environment =
+            CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
         ArtifactProgramBuilder::new(&semantic, environment).unwrap()
     };
     for draft in [&mut first, &mut second] {

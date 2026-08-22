@@ -5,6 +5,8 @@ use super::super::{
     BackendEntryRef, BindingKind, BindingSpec, CompilationEnvironment, EntrySpec, LaunchSpec,
     TargetPropertyKey, VariantSpec,
 };
+use super::offered_physical;
+use super::physical_run;
 use super::support::graphs::checked_coverage;
 use super::{
     CANONICAL_NAN, SCALE_BITS, build_artifact, formulas, fused_program, live_extent_program,
@@ -312,7 +314,7 @@ fn a_live_operand_over_a_fixed_semantic_axis_refuses_at_artifact_construction() 
     );
 
     let live = live_extent_program(&semantic);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -338,7 +340,7 @@ fn a_live_contraction_operand_over_a_fixed_semantic_axis_refuses() {
     let semantic = live_contraction_semantic();
     let program = live_contraction_program(&semantic);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -348,6 +350,7 @@ fn a_live_contraction_operand_over_a_fixed_semantic_axis_refuses() {
             VariantSpec {
                 target_profile: profile(),
                 feasibility_rules: rules(),
+                selected_physical_implementations: physical_run(1),
                 deferred_predicates: Vec::new(),
                 entries: vec![EntrySpec {
                     bindings: vec![

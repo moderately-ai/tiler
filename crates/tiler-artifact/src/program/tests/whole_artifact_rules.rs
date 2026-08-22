@@ -4,6 +4,7 @@ use super::super::ScalarArithmeticSubject;
 use super::super::{
     AbiRoot, ArtifactBuildError, ArtifactDiagnostic, ArtifactProgramBuilder, CompilationEnvironment,
 };
+use super::offered_physical;
 use super::support::artifacts::partial_window_variant;
 use super::{
     OTHER_SCALE_BITS, SCALE_BITS, declare_realization, declare_realization_over, formulas,
@@ -19,7 +20,7 @@ use super::{
 fn rejects_an_empty_portfolio() {
     let semantic = semantic_program();
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     // A record with no entry binding, because there is no packaged entry to
@@ -45,7 +46,8 @@ fn rejects_an_empty_portfolio() {
 fn rejects_an_artifact_that_selected_no_provider() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
-    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
@@ -78,7 +80,7 @@ fn rejects_an_expression_no_use_site_reaches() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -102,7 +104,7 @@ fn rejects_a_payload_no_entry_realizes() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -133,7 +135,7 @@ fn packages_one_payload_per_delivery_position() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let first = draft.push_payload(payload(0xa1)).unwrap();
@@ -179,7 +181,8 @@ fn delivery_order_and_count_are_both_artifact_identity() {
     let provider = lowering_provider(1);
 
     let build = |positions: &[u8]| {
-        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+        let environment =
+            CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
         draft
             .select_lowering_provider(selection(provider.clone()))
@@ -214,7 +217,7 @@ fn rejects_an_entry_realized_at_no_delivery_position() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -238,7 +241,7 @@ fn rejects_an_entry_disagreeing_about_delivery_positions() {
     let semantic = semantic_program();
     let program = partial_window_program(&semantic);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let first = draft.push_payload(payload(0xa1)).unwrap();
@@ -269,7 +272,7 @@ fn rejects_a_payload_reached_from_two_delivery_positions() {
     let semantic = semantic_program();
     let program = partial_window_program(&semantic);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let first = draft.push_payload(payload(0xa1)).unwrap();
@@ -304,7 +307,7 @@ fn rejects_one_payload_at_two_positions_of_one_entry() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -331,7 +334,7 @@ fn rejects_two_entries_claiming_one_backend_entry() {
     let first = fused_program(&semantic, SCALE_BITS);
     let second = fused_program(&semantic, OTHER_SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();

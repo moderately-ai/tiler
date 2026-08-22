@@ -4,9 +4,11 @@ use tiler_artifact::program::{
     ArtifactBuildError, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey,
     BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey, CompilationEnvironment,
     DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
-    LoweringCapabilitySubject, PayloadContent, PayloadId, RecordedArtifactProgramIdentity,
-    SchemaVersion, SelectedLoweringProvider, TargetProfileDescriptorDigest, TargetProfileKey,
-    TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
+    LoweringCapabilitySubject, PayloadContent, PayloadId,
+    PhysicalImplementationProposalIdentity, PhysicalProposalKind,
+    PhysicalRegionOccurrenceIdentity, RecordedArtifactProgramIdentity, SchemaVersion,
+    SelectedLoweringProvider, SelectedPhysicalImplementation, TargetProfileDescriptorDigest,
+    TargetProfileKey, TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_build::realization;
 use tiler_compiler::session::{Compilation, PlanAlternative};
@@ -216,14 +218,23 @@ fn assemble_with(
     cpu: &ProducedCpu,
     cpu_probe: Option<PreparedEntryProbe>,
 ) -> Result<VerifiedArtifactProgram, ArtifactBuildError> {
+    // Both compilations' physical grants, because this one artifact packages a
+    // variant from each: an environment offering only one backend's physical
+    // providers would refuse the other's selected rows for authority it was
+    // never given rather than for anything under test here.
     let environment = CompilationEnvironment::new(
         plans
             .metal_compilation
             .offered_lowering_providers()
             .iter()
             .cloned(),
-    [],
-)?;
+        plans
+            .metal_compilation
+            .offered_physical_providers()
+            .iter()
+            .chain(plans.cpu_compilation.offered_physical_providers())
+            .cloned(),
+    )?;
     let mut draft = ArtifactProgramBuilder::new(semantic, environment)?;
     select_capabilities(&mut draft, plans.metal_plan)?;
 
@@ -368,6 +379,29 @@ fn push_plan_variant(
                 key: FeasibilityRuleSetKey::new(compilation.feasibility_rule_set_key())?,
                 revision: compilation.feasibility_rule_set_revision(),
             },
+            // Forwarded from the compiler's own iterator, in the order it
+            // states: the selections are already sorted by whole occurrence
+            // bytes before a public plan exists.
+            selected_physical_implementations: plan
+                .selected_physical_providers()
+                .map(|selected| SelectedPhysicalImplementation {
+                    region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(
+                        selected.region_occurrence_identity(),
+                    )
+                    .expect("the compiler mints a bounded occurrence identity"),
+                    implementation_proposal: PhysicalImplementationProposalIdentity::from_bytes(
+                        selected.implementation_proposal_identity(),
+                    )
+                    .expect("the compiler mints a bounded proposal identity"),
+                    provider: selected.provider().clone(),
+                    proposal_kind: match selected.proposal_kind() {
+                        "scheduled-kernel" => PhysicalProposalKind::ScheduledKernel,
+                        "kernel-subprogram" => PhysicalProposalKind::KernelSubprogram,
+                        "opaque-call" => PhysicalProposalKind::OpaqueCall,
+                        kind => panic!("this spike packages no proposal of kind `{kind}`"),
+                    },
+                })
+                .collect(),
             deferred_predicates,
             entries,
         },

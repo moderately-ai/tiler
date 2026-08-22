@@ -18,6 +18,8 @@
 //! Metal compilation.
 
 use tiler_artifact::program::{
+    PhysicalImplementationProposalIdentity, PhysicalProposalKind,
+    PhysicalRegionOccurrenceIdentity, SelectedPhysicalImplementation,
     AbiBinaryOp, AbiExprId, AbiRoot, ApproximationEnvelope, ArtifactBuildError,
     ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef, BackendKey,
     BindingKind, BindingSpec, CANONICAL_DIMENSIONS, CapabilityFamilyKey, CompilationEnvironment,
@@ -177,8 +179,8 @@ fn assemble(
     let environment = CompilationEnvironment::new(
         plan.selected_capabilities()
             .map(|selected| selected.provider().clone()),
-    [],
-)
+        compilation.offered_physical_providers().iter().cloned(),
+    )
     .expect("the offered providers compose an environment");
     let mut builder =
         ArtifactProgramBuilder::new(semantic, environment).expect("a builder identity remains");
@@ -234,6 +236,30 @@ fn assemble(
             VariantSpec {
                 target_profile: profile.clone(),
                 feasibility_rules: rules,
+                // Forwarded from the compiler's own iterator, in the order
+                // it states: the selections are already sorted by whole
+                // occurrence bytes before a public plan exists.
+                selected_physical_implementations: plan
+                    .selected_physical_providers()
+                    .map(|selected| SelectedPhysicalImplementation {
+                        region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(
+                            selected.region_occurrence_identity(),
+                        )
+                        .expect("the compiler mints a bounded occurrence identity"),
+                        implementation_proposal:
+                            PhysicalImplementationProposalIdentity::from_bytes(
+                                selected.implementation_proposal_identity(),
+                            )
+                            .expect("the compiler mints a bounded proposal identity"),
+                        provider: selected.provider().clone(),
+                        proposal_kind: match selected.proposal_kind() {
+                            "scheduled-kernel" => PhysicalProposalKind::ScheduledKernel,
+                            "kernel-subprogram" => PhysicalProposalKind::KernelSubprogram,
+                            "opaque-call" => PhysicalProposalKind::OpaqueCall,
+                            kind => panic!("this harness packages no proposal of kind `{kind}`"),
+                        },
+                    })
+                    .collect(),
                 deferred_predicates: Vec::new(),
                 entries,
             },

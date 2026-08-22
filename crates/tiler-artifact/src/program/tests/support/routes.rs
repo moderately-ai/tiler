@@ -5,6 +5,7 @@ use super::super::super::{
     ArtifactProgramBuilder, BackendKey, CompilationEnvironment, RouteFeatureKey, RouteRequirement,
     RouteResourceDimension, RouteResourceRequirement, VerifiedArtifactProgram,
 };
+use super::artifacts::offered_physical;
 use super::artifacts::{
     declare_realization, formulas, lowering_provider, payload, selection, variant,
 };
@@ -45,7 +46,7 @@ pub(crate) fn requiring_artifact(requirements: &[RouteRequirement]) -> VerifiedA
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();

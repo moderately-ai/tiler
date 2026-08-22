@@ -119,7 +119,9 @@
 //! #     FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans,
 //! #     LaunchSpec, LoweringCapabilitySubject, NumericalDimension, NumericalObligationKey,
 //! #     PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
-//! #     ScalarArithmeticSubject, SchemaVersion, SelectedLoweringProvider, SemanticOccurrence,
+//! #     PhysicalImplementationProposalIdentity, PhysicalProposalKind,
+//! #     PhysicalRegionOccurrenceIdentity, ScalarArithmeticSubject, SchemaVersion,
+//! #     SelectedLoweringProvider, SelectedPhysicalImplementation, SemanticOccurrence,
 //! #     TargetEvidenceDeclaration,
 //! #     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! # };
@@ -363,7 +365,12 @@
 //! # let program = plan.build()?;
 //! # // Package that verified program as a one-variant artifact portfolio.
 //! # let provider = ProviderIdentity::new("tiler", "elementwise-multiply", 1)?;
-//! # let environment = CompilationEnvironment::new([provider.clone()], [])?;
+//! # // A second identity for the *physical* role: the two grants are separate,
+//! # // so a provider offered to lower a capability is not thereby offered to
+//! # // implement a region.
+//! # let implementer = ProviderIdentity::new("tiler", "scalar-host", 1)?;
+//! # let environment =
+//! #     CompilationEnvironment::new([provider.clone()], [implementer.clone()])?;
 //! # let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
 //! # artifact.select_lowering_provider(SelectedLoweringProvider {
 //! #     provider,
@@ -404,6 +411,20 @@
 //! #             key: FeasibilityRuleSetKey::new("tiler.feasibility.baseline")?,
 //! #             revision: 1,
 //! #         },
+//! #         // Which physical authority produced the selected region, bound to
+//! #         // the occurrence it produced. Required: an artifact that packaged
+//! #         // work without saying who implemented it could not be told apart
+//! #         // from one implemented by somebody else.
+//! #         selected_physical_implementations: vec![SelectedPhysicalImplementation {
+//! #             region_occurrence: PhysicalRegionOccurrenceIdentity::from_bytes(
+//! #                 b"tiler.occurrence.multiply",
+//! #             )?,
+//! #             implementation_proposal: PhysicalImplementationProposalIdentity::from_bytes(
+//! #                 b"tiler.proposal.multiply.scheduled",
+//! #             )?,
+//! #             provider: implementer,
+//! #             proposal_kind: PhysicalProposalKind::ScheduledKernel,
+//! #         }],
 //! #         deferred_predicates: Vec::new(),
 //! #         entries: vec![EntrySpec {
 //! #             bindings: vec![

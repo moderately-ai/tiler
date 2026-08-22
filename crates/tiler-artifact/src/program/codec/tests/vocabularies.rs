@@ -109,7 +109,7 @@ const EXCEPTIONAL_ASSUMPTIONS: [ExceptionalValueAssumption; EXCEPTIONAL_ASSUMPTI
 /// them could collide with one in another, and a check confined to the envelope
 /// would report separation it had not established.
 /// `crate::domains::no_governed_domain_of_this_crate_prefixes_another` checks the
-/// union of this crate's nineteen and is the authority for the property; this
+/// union of this crate's twenty and is the authority for the property; this
 /// test is the envelope-local half. Across crates, the accepted artifact ABI
 /// contract establishes the no-prefix property by a spelling-and-terminator
 /// argument over the observed IR population. `tiler-artifact` depends on

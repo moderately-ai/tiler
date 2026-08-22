@@ -13,8 +13,8 @@
 use super::super::expr::ExprNode;
 use super::super::model::{
     INPUT_EXTENT_BLOCK_TAG, abi_type_tag, element_type_tag, push_binding_target,
-    push_component_role, push_numerical, push_resources, push_shape, push_sourced_extents,
-    push_storage_encoding, storage_scalar_tag,
+    push_component_role, push_numerical, push_resources, push_selected_physical_implementation_run,
+    push_shape, push_sourced_extents, push_storage_encoding, storage_scalar_tag,
 };
 use super::super::model::{address_space_tag, buffer_access_tag};
 use super::super::requirement::RouteRequirement;
@@ -253,7 +253,37 @@ pub(super) const CANONICAL_ENCODING: (u16, u16) = (1, 0);
 /// axis's interface symbol must agree with the binding that environment roots
 /// there — so the only way the two spellings of one boundary could disagree is
 /// refused rather than resolved by precedence.
-pub(super) const MANIFEST_SCHEMA: (u16, u16) = (21, 0);
+///
+/// **`22.0` carries each variant's selected physical-implementation run.**
+///
+/// Between the feasibility-rule revision and the deferred-predicate count, each
+/// variant now writes a one-byte run tag, a `u64` row count, and that many
+/// length-framed row keys. This is the ADR 0072 omission it closes: until `21.0`
+/// a manifest recorded which provider *lowered* a capability and never which
+/// physical authority *implemented* a region, so two plans admitted by different
+/// physical providers or different implementation proposals encoded to the same
+/// bytes and therefore to the same cache subject.
+///
+/// A major step rather than an appended field, for the reason the `16.0`,
+/// `19.0`, and `21.0` steps were: the run lands at a fixed *interior* position
+/// and is written unconditionally, so a `21.0` reader consumes the run tag and
+/// count as the deferred-predicate count and loses framing for everything after
+/// it — recovering a different artifact rather than failing. Schema is checked
+/// before component schemas or variants, so the two readers refuse each other
+/// by name: a `21.0` reader rejects these bytes as
+/// `UnsupportedManifestSchema { major: 22, minor: 0 }` and this reader rejects a
+/// `21.0` manifest as `UnsupportedManifestSchema { major: 21, minor: 0 }`. No
+/// legacy branch and no defaulted empty run is added.
+///
+/// Artifact identity moves with it: `push_selected_physical_implementation_run`
+/// is the one encoder both this manifest and `encode_identity` call, so
+/// `ARTIFACT_DOMAIN` steps to `v22`. The component schemas do **not** move —
+/// this adds provenance to the manifest and no executable program, expression,
+/// routing, or target-requirement vocabulary — and neither does
+/// `PROVIDER_KEY_DOMAIN`, because the selected *lowering* row's grammar is
+/// untouched. The run is unconditional and non-empty, so no required-feature key
+/// is added either.
+pub(super) const MANIFEST_SCHEMA: (u16, u16) = (22, 0);
 
 /// Versioned domain tag opening the canonical manifest bytes.
 ///
@@ -770,6 +800,14 @@ fn encode_variants(
         push_slice(bytes, variant.profile.descriptor.as_bytes());
         push_slice(bytes, variant.feasibility_rules.key.as_str().as_bytes());
         bytes.extend_from_slice(&variant.feasibility_rules.revision.to_be_bytes());
+        // The same run encoder canonical artifact identity calls, at the same
+        // position. The manifest embeds each complete row key rather than
+        // writing the six row fields a second way, so the two byte streams
+        // cannot drift into two grammars.
+        push_selected_physical_implementation_run(
+            bytes,
+            &variant.selected_physical_implementations,
+        );
         push_len(bytes, variant.deferred.len());
         for predicate in &variant.deferred {
             bytes.extend_from_slice(&predicate.predicate.to_be_bytes());

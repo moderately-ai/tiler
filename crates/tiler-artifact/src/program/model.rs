@@ -52,7 +52,8 @@ use super::expr::{
 use super::handles::PayloadId;
 use super::keys::{
     BackendEntryKey, BackendKey, CapabilityFamilyKey, FeasibilityRuleSetRef, PayloadDigest,
-    RepresentationKey, TargetProfileRef,
+    PhysicalImplementationProposalIdentity, PhysicalRegionOccurrenceIdentity, RepresentationKey,
+    TargetProfileRef,
 };
 use super::realization::DeliveredRealizationRecord;
 use super::requirement::{RouteRequirement, push_requirements};
@@ -318,11 +319,34 @@ use super::requirement::{RouteRequirement, push_requirements};
 /// grammars are untouched — the same reasoning the `v15` and `v19` notes above
 /// record for the records they trail.
 ///
+/// `v22` folds each variant's selected physical-implementation run: the tagged,
+/// counted run of occurrence-bound rows written between the feasibility-rule
+/// revision and the deferred-predicate run. This is the ADR 0072 omission it
+/// closes — until `v21` an artifact recorded which provider *lowered* a
+/// capability and never which physical authority *implemented* a region, so two
+/// plans admitted by different physical providers or different implementation
+/// proposals shared artifact bytes and therefore shared an expansion-cache
+/// subject. That is a wrong identity rather than a compatibility question.
+///
+/// The step is required rather than cosmetic in exactly the way that decides
+/// one: the run is written unconditionally at a fixed interior position, so a
+/// `v21` reader handed these bytes reads the run tag and count as the
+/// deferred-predicate count and loses framing for everything after it. It
+/// recovers a different artifact rather than failing, which is the condition
+/// this separator exists to prevent.
+///
+/// The nested domains below do not step for it. [`PHYSICAL_SELECTION_KEY_DOMAIN`]
+/// is new and carries its own `v1`; [`PROVIDER_KEY_DOMAIN`] is untouched because
+/// the selected *lowering* row's grammar is unchanged; [`STAGE_KEY_DOMAIN`],
+/// [`PAYLOAD_KEY_DOMAIN`], [`DEFERRED_KEY_DOMAIN`], `tiler.kernel-program`, and
+/// the semantic subjects are all folded here by reference through their own
+/// separators, so their values move only when their own grammars do.
+///
 /// Crate-visible because [`RecordedArtifactProgramIdentity::from_bytes`] admits
 /// bytes by `starts_with` on this separator, so a governed domain that prefixed
 /// it would let another subject's bytes be accepted as an artifact identity.
 /// `crate::domains` enumerates it and checks that no such domain exists.
-pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v21\0";
+pub(crate) const ARTIFACT_DOMAIN: &[u8] = b"tiler.artifact-program.v22\0";
 
 /// [`ARTIFACT_DOMAIN`] without its terminator, for rendering in a diagnostic.
 ///
@@ -384,6 +408,25 @@ pub(crate) const PAYLOAD_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.payload.v1
 pub(crate) const PROVIDER_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.provider.v3\0";
 /// Versioned domain separator of one deferred predicate's canonical key.
 pub(crate) const DEFERRED_KEY_DOMAIN: &[u8] = b"tiler.artifact-program.deferred.v2\0";
+/// Versioned domain separator of one selected physical implementation's key.
+///
+/// Its own separator rather than the enclosing artifact domain, for the reason
+/// [`PROVIDER_KEY_DOMAIN`] has one: the row key is length-framed and written
+/// whole into both canonical artifact identity and the manifest, and the decoder
+/// reads it back through a bounded nested cursor that requires this exact
+/// prefix. A row compared or carried on its own has to be self-describing.
+pub(crate) const PHYSICAL_SELECTION_KEY_DOMAIN: &[u8] =
+    b"tiler.artifact-program.physical-selection.v1\0";
+
+/// Tag opening one variant's selected physical-implementation run.
+///
+/// Written unconditionally, because the run is required and non-empty. Its tag
+/// space is this run position inside the variant grammar and nothing else, so
+/// the value repeating a tag used in another frame is not a collision; what
+/// would be one is a second meaning at *this* position. `0x01` is the only
+/// admitted value and every other byte is the codec's
+/// `TagSubject::PhysicalSelectionRun` unknown-tag refusal.
+pub(super) const PHYSICAL_SELECTION_RUN_TAG: u8 = 0x01;
 
 /// Width of the canonical length prefix [`push_len`] writes.
 ///
@@ -722,6 +765,243 @@ impl SelectedLoweringProvider {
     }
 }
 
+/// The body kind of one admitted physical implementation proposal.
+///
+/// The artifact's own closed vocabulary, not `tiler-compiler`'s enumeration.
+/// That one is crate-private there and carries a fourth reserved `View`
+/// variant its own selection path rejects, so publishing it would let a direct
+/// artifact caller assert a selected state no compiler can produce.
+///
+/// `#[non_exhaustive]` so that admitting a fourth kind later — which requires a
+/// reviewed compiler/artifact vocabulary decision and another owning artifact
+/// and manifest version step — lands additively for an external reader that
+/// classifies provenance. The seam does not widen the present population: the
+/// value set is exactly these three.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum PhysicalProposalKind {
+    /// A checked scheduled kernel over one bounded index region.
+    ScheduledKernel,
+    /// An ordered chain of dispatches realizing one region subject.
+    KernelSubprogram,
+    /// An opaque physical call naming an already-checked registration.
+    OpaqueCall,
+}
+
+impl PhysicalProposalKind {
+    /// Every proposal kind this artifact vocabulary admits.
+    ///
+    /// Sized from the type, so a widened enum is a build error at this array
+    /// rather than a population that silently stops covering its domain. Test
+    /// visibility only: the inhabitants are an enumeration the public surface
+    /// does not owe a reader, and `crate::lib` keeps `variant_count` behind
+    /// `cfg(test)` rather than widening this crate's nightly surface for it.
+    #[cfg(test)]
+    pub(super) const ALL: [Self; std::mem::variant_count::<Self>()] = [
+        Self::ScheduledKernel,
+        Self::KernelSubprogram,
+        Self::OpaqueCall,
+    ];
+
+    /// Returns the stable wire tag of this kind.
+    ///
+    /// Wildcard-free, so a widened enum fails to compile here rather than
+    /// acquiring a tag by accident.
+    pub(super) const fn tag(self) -> u8 {
+        match self {
+            Self::ScheduledKernel => 0x01,
+            Self::KernelSubprogram => 0x02,
+            Self::OpaqueCall => 0x03,
+        }
+    }
+
+    /// Returns the kind one wire tag names, or `None` for any other byte.
+    ///
+    /// `0x04` is **reserved** for a future reviewed `View` and is never reusable
+    /// for another meaning: `tiler-compiler` has that fourth kind today and
+    /// rejects its body before selection, so no currently constructible selected
+    /// row may carry it and the decoder must refuse it by name rather than
+    /// silently reading it as something else.
+    pub(super) const fn from_tag(tag: u8) -> Option<Self> {
+        match tag {
+            0x01 => Some(Self::ScheduledKernel),
+            0x02 => Some(Self::KernelSubprogram),
+            0x03 => Some(Self::OpaqueCall),
+            _ => None,
+        }
+    }
+}
+
+/// One cover-region occurrence's selected physical implementation, as packaged.
+///
+/// The ADR 0072 statement the artifact could not previously make: *which
+/// physical authority produced this region*, bound to the occurrence it
+/// produced and to the exact proposal that was admitted. Every field is
+/// received whole from `tiler-compiler` and none is re-derived here.
+///
+/// Multiplicity and association are meaning. Provider, proposal, and kind
+/// repetition across **different** occurrences is legal and preserved; one
+/// occurrence appears exactly once. Nothing is reduced to an artifact-global
+/// provider set, an iterator position, a backend entry, or a payload
+/// association — each of those loses the occurrence-to-proposal binding this
+/// row exists to carry.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct SelectedPhysicalImplementation {
+    /// Whole canonical identity of the cover-region occurrence.
+    pub region_occurrence: PhysicalRegionOccurrenceIdentity,
+    /// Whole canonical identity of the admitted implementation proposal.
+    pub implementation_proposal: PhysicalImplementationProposalIdentity,
+    /// Identity and revision of the provider whose proposal was admitted.
+    pub provider: ProviderIdentity,
+    /// Body kind of the admitted proposal.
+    pub proposal_kind: PhysicalProposalKind,
+}
+
+impl SelectedPhysicalImplementation {
+    /// Derives this selection's canonical content key.
+    ///
+    /// Destructured irrefutably, so a field added to this record fails to
+    /// compile here rather than silently leaving artifact identity.
+    /// [`ProviderIdentity`] is another crate's type and is read through its
+    /// accessors instead; that crate owns the same obligation for its own
+    /// fields.
+    ///
+    /// The provider revision is written as a fixed-width big-endian `u32` with
+    /// **no** length prefix, exactly as
+    /// [`SelectedLoweringProvider::canonical_key`] writes its own; the four
+    /// variable byte runs use the shared `push_slice` framing. There is no row
+    /// terminator, presentation text, iterator ordinal, or padding byte.
+    #[cfg(test)]
+    pub(super) fn canonical_key(&self) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(self.canonical_key_bytes());
+        self.push_canonical_key(&mut bytes);
+        bytes
+    }
+
+    /// Appends this selection's canonical content key to `bytes`.
+    ///
+    /// The sole writer of the row grammar. Destructured irrefutably, so a field
+    /// added to this record fails to compile here rather than silently leaving
+    /// artifact identity. [`ProviderIdentity`] is another crate's type and is
+    /// read through its accessors instead; that crate owns the same obligation
+    /// for its own fields.
+    ///
+    /// The provider revision is written as a fixed-width big-endian `u32` with
+    /// **no** length prefix, exactly as
+    /// [`SelectedLoweringProvider::canonical_key`] writes its own; the four
+    /// variable byte runs use the shared `push_slice` framing. There is no row
+    /// terminator, presentation text, iterator ordinal, or padding byte.
+    ///
+    /// Writing into the caller's buffer rather than returning one is what keeps
+    /// a multi-MiB identity from being copied twice on the publication path:
+    /// the run encoder needs the key's length before its bytes, and
+    /// [`Self::canonical_key_bytes`] supplies that arithmetically.
+    pub(super) fn push_canonical_key(&self, bytes: &mut Vec<u8>) {
+        let Self {
+            region_occurrence,
+            implementation_proposal,
+            provider,
+            proposal_kind,
+        } = self;
+        let before = bytes.len();
+        bytes.extend_from_slice(PHYSICAL_SELECTION_KEY_DOMAIN);
+        push_slice(bytes, region_occurrence.as_bytes());
+        push_slice(bytes, implementation_proposal.as_bytes());
+        push_slice(bytes, provider.namespace().as_bytes());
+        push_slice(bytes, provider.name().as_bytes());
+        bytes.extend_from_slice(&provider.revision().to_be_bytes());
+        bytes.push(proposal_kind.tag());
+        debug_assert_eq!(
+            bytes.len() - before,
+            self.canonical_key_bytes(),
+            "the physical row encoder and its sizing helper are one definition",
+        );
+    }
+
+    /// Returns the exact byte length of this row's canonical key.
+    ///
+    /// Derived from the field lengths rather than by encoding and measuring,
+    /// because its callers are a capacity reservation and a ceiling proof that
+    /// both run *before* the bytes exist — deriving it the other way would copy
+    /// a possibly multi-MiB identity to learn how long it is. The
+    /// `debug_assert_eq!` in [`Self::push_canonical_key`] is what holds the two
+    /// to one definition rather than inspection.
+    ///
+    /// Saturating: every addend is the length of an already-allocated run, so
+    /// the sum cannot overflow on a host holding the row, and a saturated total
+    /// is still a truthful minimum for the ceiling proof that reads it.
+    pub(super) fn canonical_key_bytes(&self) -> usize {
+        let Self {
+            region_occurrence,
+            implementation_proposal,
+            provider,
+            proposal_kind: _,
+        } = self;
+        PHYSICAL_SELECTION_KEY_DOMAIN
+            .len()
+            .saturating_add(framed(region_occurrence.as_bytes().len()))
+            .saturating_add(framed(implementation_proposal.as_bytes().len()))
+            .saturating_add(framed(provider.namespace().len()))
+            .saturating_add(framed(provider.name().len()))
+            .saturating_add(size_of::<u32>())
+            .saturating_add(size_of::<u8>())
+    }
+
+    /// Returns the exact bytes this row contributes to an enclosing run.
+    ///
+    /// The row key plus its enclosing `u64` length frame.
+    fn framed_key_bytes(&self) -> usize {
+        LENGTH_BYTES.saturating_add(self.canonical_key_bytes())
+    }
+}
+
+/// Writes one variant's complete selected physical-implementation run.
+///
+/// The single definition of these bytes. Canonical artifact identity and the
+/// manifest both call this rather than restating the row fields, so the two
+/// cannot drift into two grammars that agree only by inspection.
+///
+/// The rows are already compiler-canonical and are written **as stated**: the
+/// builder and the decoder each prove strictly ascending occurrence bytes, so
+/// sorting here would silently repair a run whose stated order contradicts the
+/// authority that minted it.
+pub(super) fn push_selected_physical_implementation_run(
+    bytes: &mut Vec<u8>,
+    rows: &[SelectedPhysicalImplementation],
+) {
+    let before = bytes.len();
+    bytes.push(PHYSICAL_SELECTION_RUN_TAG);
+    push_len(bytes, rows.len());
+    for row in rows {
+        // The length first, then the bytes straight into this buffer: framing a
+        // returned `Vec` here would copy every identity a second time on the
+        // one path this encoder exists to serve.
+        push_len(bytes, row.canonical_key_bytes());
+        row.push_canonical_key(bytes);
+    }
+    debug_assert_eq!(
+        bytes.len() - before,
+        selected_physical_implementation_run_bytes(rows),
+        "the physical-selection run encoder and its sizing helper are one definition",
+    );
+}
+
+/// Returns the exact bytes one selected physical-implementation run occupies.
+///
+/// Saturating rather than checked: every addend is a real allocated length, so
+/// the sum cannot overflow `usize` on a host that is already holding the rows,
+/// and a saturated total is still a truthful *minimum* for the only caller that
+/// compares it against a ceiling. `push_selected_physical_implementation_run`'s
+/// `debug_assert_eq!` is what keeps this equal to what is actually written.
+pub(super) fn selected_physical_implementation_run_bytes(
+    rows: &[SelectedPhysicalImplementation],
+) -> usize {
+    rows.iter()
+        .fold(size_of::<u8>() + LENGTH_BYTES, |total, row| {
+            total.saturating_add(row.framed_key_bytes())
+        })
+}
+
 /// One backend payload the artifact's executable entries are realized by.
 ///
 /// The neutral layer names a payload by governed keys, its schema, its exact
@@ -1006,6 +1286,13 @@ pub(super) struct VariantData {
     pub(super) guard: u32,
     pub(super) profile: TargetProfileRef,
     pub(super) feasibility_rules: FeasibilityRuleSetRef,
+    /// Which physical authority produced each selected region of this variant.
+    ///
+    /// Non-empty, in strictly ascending occurrence-byte order, and never more
+    /// numerous than [`Self::entries`]. Held at the position identity and the
+    /// manifest write it, so the stored order and the encoded order are one
+    /// fact rather than two kept in agreement.
+    pub(super) selected_physical_implementations: Vec<SelectedPhysicalImplementation>,
     pub(super) deferred: Vec<DeferredPredicateData>,
     /// Additional requirements this variant's route places on a live device.
     ///
@@ -1696,6 +1983,19 @@ impl<'a> VariantRef<'a> {
     #[must_use]
     pub fn feasibility_rules(self) -> &'a FeasibilityRuleSetRef {
         &self.data().feasibility_rules
+    }
+
+    /// Returns which physical authority produced each selected region.
+    ///
+    /// Non-empty, in canonical occurrence order, with every row preserved. There
+    /// is deliberately no artifact-global physical-provider accessor and no
+    /// association to an entry or payload: collapsing the run to a provider set
+    /// would lose the occurrence-to-proposal binding, and associating it with an
+    /// entry would assert a correspondence the compiler does not state — one
+    /// selected cover region may flatten into several executable stages.
+    #[must_use]
+    pub fn selected_physical_implementations(self) -> &'a [SelectedPhysicalImplementation] {
+        &self.data().selected_physical_implementations
     }
 
     /// Returns the additional live-device requirements of this variant's route.
@@ -3204,6 +3504,10 @@ fn push_variant(
     push_slice(bytes, variant.profile.descriptor.as_bytes());
     push_slice(bytes, variant.feasibility_rules.key.as_str().as_bytes());
     bytes.extend_from_slice(&variant.feasibility_rules.revision.to_be_bytes());
+    // The shared run encoder, at the one position the manifest also writes it.
+    // Called rather than restated: two spellings of these bytes is exactly the
+    // drift that would let an identity and a manifest describe two artifacts.
+    push_selected_physical_implementation_run(bytes, &variant.selected_physical_implementations);
     // Already in canonical order, so this writes rather than sorts: the order
     // was fixed before the arena was numbered, because the numbering depends on
     // it. Distinctness is still proven, since equal keys would make the order

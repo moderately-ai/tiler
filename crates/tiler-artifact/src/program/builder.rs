@@ -48,16 +48,18 @@ use super::model::{
     ArtifactExecutionPolicy, ArtifactProgramData, ArtifactSchema, BackendEntryRef,
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTargetData, DeferredPredicateData,
     EntryData, ExtentOperandData, InterfaceComponentData, InterfaceEntryData, LaunchData,
-    RoutingPolicy, SchemaVersion, SelectedLoweringProvider, StoredBackendEntry, VariantData,
-    VerifiedArtifactProgram, encode_identity, packaged_entry_positions,
+    RoutingPolicy, SchemaVersion, SelectedLoweringProvider, SelectedPhysicalImplementation,
+    StoredBackendEntry, VariantData, VerifiedArtifactProgram, encode_identity,
+    packaged_entry_positions, selected_physical_implementation_run_bytes,
 };
 use super::realization::DeliveredRealizationRecord;
 use super::requirement::RouteRequirement;
 use super::{
-    MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_LAUNCH_PRECONDITIONS,
-    MAX_OFFERED_LOWERING_PROVIDERS, MAX_OFFERED_PHYSICAL_PROVIDERS, MAX_ROUTE_REQUIREMENTS,
-    MAX_SELECTED_LOWERING_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_IDENTITY_BYTES, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS,
+    MAX_DEFERRED_PREDICATES, MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS,
+    MAX_LAUNCH_PRECONDITIONS, MAX_OFFERED_LOWERING_PROVIDERS, MAX_OFFERED_PHYSICAL_PROVIDERS,
+    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_LOWERING_PROVIDERS, MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS,
+    MAX_VARIANT_ENTRIES,
 };
 
 /// The complete frozen sets of providers offered to one compilation, held in
@@ -140,6 +142,16 @@ impl CompilationEnvironment {
     /// offered here, which is the whole point of keeping the sets apart.
     fn offers_lowering(&self, provider: &ProviderIdentity) -> bool {
         self.offered_lowering_providers.contains(provider)
+    }
+
+    /// Whether this environment granted `provider` **physical** authority.
+    ///
+    /// The sibling of [`Self::offers_lowering`], and separate for the same
+    /// reason: a provider present only in the lowering set was never granted
+    /// authority to implement a region, and answering from a union would let a
+    /// cross-role selection pass.
+    fn offers_physical(&self, provider: &ProviderIdentity) -> bool {
+        self.offered_physical_providers.contains(provider)
     }
 }
 
@@ -248,6 +260,20 @@ pub struct VariantSpec {
     pub target_profile: TargetProfileRef,
     /// Feasibility rule set the variant was assessed under.
     pub feasibility_rules: FeasibilityRuleSetRef,
+    /// Which physical authority produced each selected region of the variant.
+    ///
+    /// **Required and non-empty**, and a field rather than a later mutator: a
+    /// physical selection is known at plan-assembly time, unlike a route
+    /// requirement that genuinely arises after backend emission. An optional
+    /// field would be fail-open — an omitted provenance statement and a variant
+    /// that genuinely selected nothing would be the same artifact — and a
+    /// separate setter would create a partial draft state whose missing run
+    /// only whole-artifact verification could catch.
+    ///
+    /// Preserved as stated: strictly ascending by whole occurrence bytes, no
+    /// more numerous than [`Self::entries`], with one row per occurrence and
+    /// nothing deduplicated by provider, proposal, kind, or complete row.
+    pub selected_physical_implementations: Vec<SelectedPhysicalImplementation>,
     /// Deferred feasibility predicates, each with its query authority.
     pub deferred_predicates: Vec<DeferredPredicateSpec>,
     /// Executable entries, one per stage of the variant's program.
@@ -284,6 +310,16 @@ pub struct ArtifactProgramBuilder {
     expression_phases: Vec<AvailabilityPhase>,
     expression_interface_only: Vec<bool>,
     variants: Vec<VariantData>,
+    /// Exact canonical-identity bytes the accepted physical-selection runs occupy.
+    ///
+    /// A running total over accepted variants only, so a refused `push_variant`
+    /// leaves it exactly where it found it. Its one reader proves, before a
+    /// candidate is retained, that the complete artifact identity this builder
+    /// could still derive must already exceed
+    /// [`MAX_ARTIFACT_IDENTITY_BYTES`].
+    /// This is not a second byte budget: the run is a strict subset of that one
+    /// governed identity, and the proof is about the whole.
+    physical_identity_bytes: usize,
     /// The delivered-realization record a producer declared, if it has yet.
     ///
     /// The one `Option` in the wiring, and it is the *draft's* state rather than
@@ -327,6 +363,7 @@ impl ArtifactProgramBuilder {
             interface,
             environment,
             providers: Vec::new(),
+            physical_identity_bytes: 0,
             payloads: Vec::new(),
             payload_content: Vec::new(),
             expressions: Vec::new(),
@@ -778,6 +815,15 @@ impl ArtifactProgramBuilder {
             });
         }
         limit(stages, MAX_VARIANT_ENTRIES, ArtifactLimitKind::Entries)?;
+        // The physical-selection run, validated whole before one byte of it or
+        // of anything after it is committed. Its refusal precedence is fixed and
+        // is the order below: emptiness, absolute count, count against the entry
+        // table, the canonical-identity lower bound, occurrence duplication and
+        // order, then offered-physical authority in row order. Everything here
+        // reads `spec` and the frozen environment, so a refusal drops the
+        // consumed spec and leaves the builder — its variants, its running byte
+        // total, its ABI arena, and its delivery positions — exactly as found.
+        let physical_bytes = self.check_selected_physical(&spec)?;
         // The program's own ABI, replayed onto this builder's arena. Every
         // expression below is taken from it rather than restated by a caller,
         // which is what makes a variant's runtime ABI *be* its program's rather
@@ -830,11 +876,15 @@ impl ArtifactProgramBuilder {
                 .first()
                 .map_or(0, |entry| entry.implementation.payloads.len())
         ];
+        // Committed only with the accepted variant, which is what makes the
+        // running total a fact about retained rows rather than about attempts.
+        self.physical_identity_bytes = physical_bytes;
         self.variants.push(VariantData {
             program: program.clone(),
             guard,
             profile: spec.target_profile,
             feasibility_rules: spec.feasibility_rules,
+            selected_physical_implementations: spec.selected_physical_implementations,
             deferred,
             route_requirements: Vec::new(),
             entries,
@@ -1328,6 +1378,89 @@ impl ArtifactProgramBuilder {
             return Err(ArtifactBuildError::NonInterfaceRoot { use_site });
         }
         Ok(node)
+    }
+
+    /// Proves one candidate variant's physical-selection run, mutating nothing.
+    ///
+    /// Returns the builder's prospective retained physical-contribution total so
+    /// that the caller commits it with the accepted variant and discards it
+    /// otherwise. Every refusal below is decidable from the spec and the frozen
+    /// environment alone, which is what lets the whole run be decided before the
+    /// ABI arena is touched.
+    fn check_selected_physical(&self, spec: &VariantSpec) -> Result<usize, ArtifactBuildError> {
+        let rows = &spec.selected_physical_implementations;
+        if rows.is_empty() {
+            return Err(ArtifactBuildError::EmptySelectedPhysicalImplementations);
+        }
+        limit(
+            rows.len(),
+            MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS,
+            ArtifactLimitKind::SelectedPhysicalImplementations,
+        )?;
+        // Fewer rows than entries is legal and expected: one selected cover
+        // region may flatten into several executable stages. More rows than
+        // entries cannot be the occurrence-to-nonempty-stage population the
+        // compiler boundary describes, whatever the counts are.
+        if rows.len() > spec.entries.len() {
+            return Err(ArtifactBuildError::PhysicalSelectionCardinality {
+                selected: rows.len(),
+                entries: spec.entries.len(),
+            });
+        }
+        // The exact canonical bytes this candidate would add, plus the
+        // already-retained runs, plus the one byte the complete identity must
+        // carry outside the physical subset. A sum that cannot be represented
+        // records `MAX_ARTIFACT_IDENTITY_BYTES + 1`, which is still a *proved
+        // minimum* and so still truthful: an unrepresentable exact sum is
+        // certainly past a 64 MiB ceiling.
+        let contribution = self
+            .physical_identity_bytes
+            .checked_add(selected_physical_implementation_run_bytes(rows));
+        let minimum_bytes = contribution
+            .and_then(|total| total.checked_add(1))
+            .unwrap_or(MAX_ARTIFACT_IDENTITY_BYTES.saturating_add(1));
+        if minimum_bytes > MAX_ARTIFACT_IDENTITY_BYTES {
+            return Err(ArtifactBuildError::IdentityLowerBound {
+                minimum_bytes,
+                limit: MAX_ARTIFACT_IDENTITY_BYTES,
+            });
+        }
+        // The run arrives compiler-canonical and is checked rather than sorted:
+        // sorting would silently repair a statement that contradicts the
+        // authority that minted it. Strictly ascending, so equality is the
+        // duplicate refusal and inversion is the order refusal.
+        for pair in rows.windows(2) {
+            let previous = &pair[0].region_occurrence;
+            let current = &pair[1].region_occurrence;
+            match previous.as_bytes().cmp(current.as_bytes()) {
+                std::cmp::Ordering::Less => {}
+                std::cmp::Ordering::Equal => {
+                    return Err(ArtifactBuildError::DuplicatePhysicalRegionOccurrence {
+                        occurrence: Box::new(current.clone()),
+                    });
+                }
+                std::cmp::Ordering::Greater => {
+                    return Err(
+                        ArtifactBuildError::NoncanonicalPhysicalRegionOccurrenceOrder {
+                            previous: Box::new(previous.clone()),
+                            current: Box::new(current.clone()),
+                        },
+                    );
+                }
+            }
+        }
+        // Read in row order so the refusal names the first unauthorized row a
+        // caller stated rather than an arbitrary one. Consults the physical set
+        // only: a provider offered to lower a capability was never granted
+        // authority to implement a region.
+        for row in rows {
+            if !self.environment.offers_physical(&row.provider) {
+                return Err(ArtifactBuildError::PhysicalProviderNotOffered {
+                    provider: Box::new(row.provider.clone()),
+                });
+            }
+        }
+        Ok(contribution.expect("the checked sum is Some on every path that reaches here"))
     }
 
     fn check_deferred(

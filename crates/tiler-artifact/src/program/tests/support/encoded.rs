@@ -6,6 +6,8 @@ use super::super::super::{
     EntrySpec, LaunchSpec, PayloadDigest, RepresentationKey, SchemaVersion,
     SelectedLoweringProvider, VariantSpec, VerifiedArtifactProgram,
 };
+use super::artifacts::offered_physical;
+use super::artifacts::physical_run;
 use super::artifacts::{declare_realization, lowering_subject, profile, rules};
 use super::graphs::{strict, strict_contract};
 use tiler_ir::index::{
@@ -441,7 +443,8 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
     let program = strict_affine_u4_dequantize_program(&semantic);
     let provider =
         ProviderIdentity::new("tiler-test", "strict-affine-u4-dequantize", 1).expect("provider");
-    let environment = CompilationEnvironment::new([provider.clone()], []).expect("environment");
+    let environment =
+        CompilationEnvironment::new([provider.clone()], offered_physical()).expect("environment");
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).expect("artifact builder");
     draft
         .select_lowering_provider(SelectedLoweringProvider {
@@ -468,6 +471,7 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
             VariantSpec {
                 target_profile: profile(),
                 feasibility_rules: rules(),
+                selected_physical_implementations: physical_run(1),
                 deferred_predicates: Vec::new(),
                 entries: vec![EntrySpec {
                     bindings: (0..4)
