@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, publish-occurrence-bound-selected-physical-implementation-evidence, replace-flat-selected-lowering-capability-keys-with-structured-subjects, decide-the-artifact-physical-selection-provenance-surface, separate-the-compilation-environment-roles-and-rename-the-lowering-providers]
 related: [disclose-offered-and-selected-physical-provider-sets-separately, reconcile-the-operation-identity-and-governed-key-grammars]
-scopes: [implementation/artifact, implementation/build, contracts/artifacts, contracts/decisions]
+scopes: [implementation/artifact, implementation/build, contracts/artifacts, contracts/decisions, implementation/frontend, implementation/runtime, research/artifacts, research/cache, research/runtime, research/target-profiles]
 shared_scopes: [project/tickets]
 paths: [.ticketsplease/decision-queue.md]
 tags: [backend-providers, provenance, artifact, identity, schema, public-boundary]
@@ -13,6 +13,15 @@ claimed_from: todo
 assignee: worker-provenance2
 lease_expires_at: 1787435006
 ---
+## Six scopes added as scheduling metadata — 2026-08-22
+
+`tkt guard --base 1fb3675c` reported the branch under-declared `implementation/frontend`, `implementation/runtime`, `research/artifacts`, `research/cache`, `research/runtime`, and `research/target-profiles`. All six are forced by the authorized work rather than chosen, so they are added and explained here under `AGENTS.md`'s "adding scopes required by authorized work is scheduling metadata" rule. None widens the outcome.
+
+- **`implementation/frontend`** — `crates/tiler/src/route/tests.rs` restates the artifact-identity domain separator as a deliberately self-detecting constant, and `crates/tiler/tests/workspace_unsafe_sites.rs` holds the workspace's exact private declarative-macro population. The identity step moves the first; the new `shared_opaque_identity!` macro must be pinned in the second, which is a workspace invariant that fails loudly rather than a style preference.
+- **`implementation/runtime`** — `crates/tiler-runtime/tests/adapter_route/fixture.rs` owns both `VariantSpec` literals and both environment constructions for that integration binary. A required public field reaches every construction site by definition.
+- **`research/target-profiles`** — the standard Metal identity, cache subject, and fixed-content pins move, and `docs/research/target-profiles/first-macos-metal-compile-profile-authority-ledger.md` is **build-checked**: `the_authority_ledger_mirrors_the_live_standard_metal_pins` reads it through `include_str!` and fails if the document keeps yesterday's numbers. `spikes/target-profiles/scalar-cpu-vertical` is in the same scope.
+- **`research/artifacts`, `research/cache`, `research/runtime`** — the six spike construction sites under `spikes/artifacts/`, `spikes/cache/`, and `spikes/runtime/`. Spikes are not workspace members and do not gate, but the required field reaches them too and leaving them behind a second API step is what left one of them non-compiling before this ticket.
+
 ## Implementation Fact audit at `1fb3675c` — 2026-08-22
 
 Every Fact re-read in source at the exact implementation base `1fb3675c0ccfca68f62c5d810bd01c2fb5f31c13` before any production edit. The base includes the role-separation and rename landing at `72663521`, which the audit below supersedes several Facts against. Read in full first: repository `AGENTS.md`; this ticket; the complete accepted packet [`decide-the-artifact-physical-selection-provenance-surface`](decide-the-artifact-physical-selection-provenance-surface.md); and the artifact construction, identity, envelope, codec, decode, view, budget, limit, refusal, domain-census, production-assembly, and compiler-projection paths.
