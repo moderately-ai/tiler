@@ -384,6 +384,14 @@ impl ContractionF32PlanWitness {
         // split, its combiner.
         let realization = covering.kernel().numerical();
         if let Some(split) = split {
+            // Unwatched, and deliberately recorded as such: no test in the
+            // workspace reaches this branch, so replacing this call with
+            // `StagedRole::Unstaged` leaves the suite green. That is a coverage
+            // gap rather than dead code — nothing at program scope reads an
+            // occurrence's operation family, so a hand-built program can pair a
+            // contraction with a split whose combiner stages, even though no
+            // production path emits one. `admit-reassociated-contraction-schedule-alternatives`
+            // owns landing the split-path tests, this refusal among them.
             let combiner_staging = staged_role(split.combiner().kernel(), join)?;
             // The combiner folds one partial per partition, so that — not `K` —
             // is the sequence its staging must leave intact.
@@ -571,6 +579,57 @@ impl StagedRole {
 /// second unread or omits it.
 /// `a_cooperative_workgroup_kernel_cannot_cover_a_contraction_occurrence` in
 /// this crate's program tests watches that wall and fails if it ever moves.
+///
+/// # Why the unjoined refusal must stay broad
+///
+/// Under [`RegionJoin::Unjoined`] the predicate is the presence of staging
+/// alone. That is the whole rule and not a conservative approximation of a
+/// narrower one, because the narrower one is not statable here.
+///
+/// There is no such thing at this layer as staging that carries no combine
+/// structure. A verified kernel declares non-empty staging exactly when its
+/// region declares a cooperative tile: `verify_cooperative` in `crate::kernel`
+/// refuses a kernel that stages without one, at the anchor `must declare
+/// nothing, or the kernel`, and checks the declarations against the tile
+/// otherwise; and `cooperative_tile` yields a tile only for
+/// [`ReductionTopology::CooperativeWorkgroup`] and
+/// [`ReductionTopology::CooperativeContraction`]. Those two *are* what staging
+/// means, and only the second leaves the left chain intact. So the question is
+/// not whether the staging is structural but which of the two it is.
+///
+/// Program scope cannot answer that. A staging row carries an ordinal, an
+/// element type, an address space, and a slot count, none of which names a
+/// topology; and neither the slot count nor the number of rows is one either,
+/// because `CooperativeTile::staging` is a plain `Vec<WorkgroupStaging>` that
+/// the tile vocabulary never ties to a topology. The execution binding is the
+/// field that looks like it discriminates — `CooperativeContraction` requires
+/// [`ExecutionBinding::BlockedWorkgroup`] and never defaults it — but it does
+/// not reach the signature: `verify_signature`
+/// derives one `GlobalInvocationIndex` for the blocked and global-linear
+/// bindings from a single shared match arm, then appends `LocalInvocationIndex`
+/// for either cooperative tile, so the two present identical builtins.
+/// `a_staged_contraction_and_a_staged_reduction_agree_on_program_scope_builtins`
+/// in this crate's program tests watches that.
+///
+/// What is left to narrow on is the reachability wall above, and narrowing on
+/// it would be fail-open twice over. [`ContractionF32PlanWitness::from_program`]
+/// is a public constructor over any [`VerifiedKernelProgram`], so a hand-built
+/// program is not bound by what the frontier happens to emit; and the wall is a
+/// property of the current fold gate rather than a record the program carries,
+/// so widening the frontier would silently turn the refusal into a left chain
+/// for a round-structured fold. That is the wrong tree this module exists to
+/// prevent, and it is strictly worse than the over-refusal it would replace.
+///
+/// **Reconsideration trigger.** Reopen when program scope carries a
+/// *declarative* statement of the topology — a topology tag on the staging row,
+/// the scheduled region itself, or any other field a reader can check rather
+/// than infer. A newly discriminating derived field does not qualify on its
+/// own: correlation the encoding does not promise is what this refusal declines
+/// to bet on. Until then the remedy for an over-refused caller is
+/// [`ContractionF32PlanWitness::from_program_and_regions`], which supplies the
+/// missing record instead of guessing at it.
+///
+/// [`ExecutionBinding::BlockedWorkgroup`]: crate::schedule::ExecutionBinding::BlockedWorkgroup
 fn staged_role(
     kernel: &VerifiedKernel,
     join: RegionJoin<'_>,
