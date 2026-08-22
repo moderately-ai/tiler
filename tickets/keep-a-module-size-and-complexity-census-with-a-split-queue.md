@@ -1,7 +1,7 @@
 ---
 id: keep-a-module-size-and-complexity-census-with-a-split-queue
 title: Keep a module size and complexity census with a split queue
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [split-the-schedule-builder-into-cohesive-submodules, split-the-compiler-target-module-into-cohesive-submodules, split-the-artifact-program-test-monoliths-into-focused-modules, split-the-compiler-request-module-before-the-contributor-source-carrier, split-the-index-refinement-module-into-cohesive-submodules, split-the-compiler-pipeline-test-monolith-by-orchestration-phase, split-the-kernel-test-monolith-into-focused-modules, split-the-schedule-builder-test-monolith-into-focused-modules, split-the-compiler-request-test-monolith-into-focused-modules, split-the-ir-program-test-monolith-into-focused-modules, lift-the-inline-test-modules-that-dominate-their-files]
@@ -9,9 +9,6 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [maintainability, census]
-claimed_from: todo
-assignee: worker-census2
-lease_expires_at: 1787419795
 ---
 ## User-visible outcome
 
