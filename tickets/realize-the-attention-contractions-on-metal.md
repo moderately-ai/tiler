@@ -123,6 +123,28 @@ Rows reached, and why these:
 
 **A second wrong derivation of mine, also recorded in place.** The perturbation test first moved an operand by one unit in the last place, copying the projection harness's phrasing that this is "the smallest change the fold can observe at all". It is not transferable: one ULP of an operand enters the sum multiplied by the other operand, so its contribution falls *below* the accumulator's own ULP and is rounded away. Observed at both `head_dim = 128` (96 outputs bit-identical) and at a contracted extent of four (24 outputs bit-identical) — so shrinking the fold does not fix it, because the fold's magnitude does not fall proportionally with its length. The projection harness's `k = 4` cell flips a bit by luck of its operands, not by a property its instrument has. `PERTURBATION_OFFSET` documents the derivation and perturbs by a whole unit, which discriminates the same defects deterministically.
 
+### Both attention contractions emit Metal, and both goldens compile
+
+**Fact — the `direct` realization of both structures emits MSL at rank four, and nothing needed widening for that either.** `crates/tiler-metal/goldens/contraction_attention_score.metal` and `contraction_attention_value.metal` are the first goldens whose iteration space carries four axes; every other contracts a rank-two output. Both are registered in `golden_compilation.rs`, so `every_checked_in_golden_is_compiled_by_this_module` makes registration non-optional.
+
+**Both were compiled and linked by the qualified Apple toolchain, not only byte-compared.** Run under `DEVELOPER_DIR=/Applications/Xcode.app`, which answers `metalfe-32023.883` — the ledger value. **Stating the invocation matters here**: on this host `xcode-select -p` is `/Applications/Xcode-beta.app/Contents/Developer`, so a bare `xcrun --sdk macosx metal --version` answers `32023.921` instead, and a toolchain fact recorded from the bare form would name a compiler the repository does not compile with.
+
+Three properties of the emitted bodies are pinned, each because a body that got it wrong would still look plausible:
+
+- **No fused multiply-add on the accumulation path.** ADR 0015's contraction permission is Forbidden here and the compiler flag is not sufficient on its own — the L3 spike measured `simdgroup_multiply_accumulate` fusing under `-ffp-contract=off` — so the property is asserted on the emitted text, with a positive half requiring the separate product and sum statements to actually be present.
+- **The accumulator is seeded from the first product, never `+0.0`.** Visible as a fold whose loop opens at `1` over a seed computed from contributor zero, which is the profile's declared no-seed rule and the case the L3 record's `negative_zero_seed` counterexample distinguishes.
+- **The grouped-query repetition is free, not materialized.** The key operand's address chain is isolated per read and required to recover the group without recovering `r`. This is the assertion that separates the free index from a *correct-but-materialized* alternative, which is the sharp case: a kernel that broadcasts the key across `r` computes exactly the same numbers.
+
+**The two structures differ in exactly one parameter in the fixture**, which is deliberate: they agree on operand 0, on the output, and on the contracted set, and differ only in whether operand 1 reads its contracted axis last or in the middle. Writing the fixture twice would let that one difference drift into an unrelated one, and a lowering that read axis sources positionally rather than by role would produce one of these kernels for both.
+
+### Perturbations for the Metal half, with the failure text each produced
+
+| Guard | Perturbation | What it said |
+| --- | --- | --- |
+| the golden compile actually reaches the new fixtures | a syntax error injected into the score golden's key address | `golden contraction_attention_score.metal must compile: offline metal failed [...Metal.xctoolchain/usr/bin/metal] (exit code 1): kernel.metal:70:29: error: expected expression` — which is what shows the Apple compiler reaches this fixture rather than the harness self-skipping |
+| the free-index property | the key operand rebuilt as `[g, r, s, d]`, materialized across the repetition — the correct-but-materialized twin | `key read 0 recovers the repetition index by dividing by 15, so the key operand is being read per repetition rather than shared across it` |
+| golden registration | two goldens added without updating the array length | `error[E0308]: mismatched types ... expected an array with a size of 11, found one with a size of 13` |
+
 ### Identity consequences, derived on this tree
 
 | Domain | Moves? | Derivation |
@@ -130,10 +152,12 @@ Rows reached, and why these:
 | `tiler.schedule.v7` | **no** | No encoder byte was touched; no `ReductionTopology` variant, tag, or field was added or reordered. The reduction-topology tag run is unchanged at `0x31`-`0x35`, `0x37`, `0x38`, and **`0x36` was not taken** — it stays reserved for `CooperativeContractionSplit`. |
 | `tiler.kernel-program`, `tiler.artifact-program`, manifest pair | **no** | Nothing in `tiler-ir/src/kernel` or the artifact layer was edited. |
 | Target-profile declaration/descriptor `v11` | **no** | No profile row, policy family, or key was added. No tile-width authority was declared. |
-| Every landed Metal golden | **no** | `tiler-metal` was not edited; no golden added or changed. |
-| Public surface | **no additions** | Both new files are test-only — one `#[cfg(test)] mod`, one `tests/` integration target. The only non-test edit in the diff is the three-line module declaration in `governed.rs`. |
+| Every *landed* Metal golden | **no** | Unchanged byte for byte; **two goldens added**, which is an addition rather than a movement. See the correction below. |
+| Public surface | **no additions** | Every new file is test-only — one `#[cfg(test)] mod`, one `tests/` integration target, two `goldens/` fixtures, and test-module fixtures in `tiler-metal`. The only non-test edits are the three-line module declaration in `governed.rs` and the golden registration in `golden_compilation.rs`. |
 
-**Nothing that was expected not to move, moved.** The whole delivery is test-only plus one module declaration, which is why every identity domain above is derived to be unchanged rather than re-pinned.
+**Correction — this table's first revision was written before the Metal half of this lane existed, and said `tiler-metal` was not edited.** True when written, false now: the lane went on to emit both attention contractions and pin them as goldens. The row above states the accurate relation — no landed golden's bytes moved, and two were added. `GOLDENS` grew from 11 entries to 13, and its hand-written array length made that a `rustc` error until updated, which is the good direction; `every_checked_in_golden_is_compiled_by_this_module` is what makes registration non-optional rather than a convention.
+
+**Nothing that was expected not to move, moved.** No identity domain steps: the delivery adds test-only fixtures and two new goldens, and changes no encoder, schema, profile row, or production path.
 
 ## Remainder — enumerated and filed, not attempted
 

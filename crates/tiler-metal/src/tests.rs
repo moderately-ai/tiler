@@ -939,6 +939,199 @@ pub(crate) fn contraction_kernel() -> VerifiedKernel {
         .expect("bounded contraction fixture lowers")
 }
 
+/// The two attention contractions' extents, small enough to read in a golden
+/// and still carrying all five indices at distinct-enough widths to tell apart.
+const ATTENTION_GROUPS: u64 = 2;
+const ATTENTION_REPEATS: u64 = 2;
+const ATTENTION_QUERIES: u64 = 3;
+const ATTENTION_KEYS: u64 = 5;
+const ATTENTION_HEAD_DIM: u64 = 4;
+
+/// Builds the `direct` realization of one attention contraction at rank four.
+///
+/// Shared by both structures because they differ in exactly one thing — how
+/// operand 1 reads `(g, s, d)` — and writing the fixture twice would let that
+/// one difference drift into an unrelated one. The score structure reads the
+/// contracted axis last, `(g, s, d)` with `d` contracted; the value structure
+/// reads it in the middle, `(g, s, d)` with `s` contracted and `d` free. That is
+/// the sharpest identity hazard in the workload, and here it is the only
+/// parameter that differs between the two kernels.
+fn attention_contraction_region(
+    id: RegionId,
+    left: &Shape,
+    right: &Shape,
+    output: &Shape,
+    contracted: Shape,
+    left_sources: Vec<ContractionAxisSource>,
+    right_sources: Vec<ContractionAxisSource>,
+) -> VerifiedScheduledRegion {
+    let output_elements = element_count(output).unwrap();
+    let mut builder = ScheduledRegionBuilder::new(id);
+    builder.iteration_shape(output.clone()).unwrap();
+    for (ordinal, (operand, sources)) in [(left, left_sources), (right, right_sources)]
+        .into_iter()
+        .enumerate()
+    {
+        let witness = u32::try_from(ordinal).unwrap();
+        builder
+            .push_access(Access {
+                tensor: TensorRole::Input,
+                component_role: None,
+                mode: AccessMode::Read,
+                map: LogicalAccess::ContractionOperand {
+                    operand_shape: operand.clone(),
+                    output_shape: output.clone(),
+                    contracted_shape: contracted.clone(),
+                    sources,
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                },
+                bounds: BoundsWitnessId::new(witness),
+                ownership: None,
+            })
+            .unwrap();
+        builder
+            .push_bounds_proof(BoundsProof {
+                id: BoundsWitnessId::new(witness),
+                tensor: TensorRole::Input,
+                component_role: None,
+                kind: BoundsProofKind::LinearRange {
+                    element_count: element_count(operand).unwrap(),
+                },
+            })
+            .unwrap();
+    }
+    builder
+        .push_access(Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        })
+        .unwrap();
+    builder
+        .push_bounds_proof(BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .ownership_proof(OwnershipProof {
+            id: OwnershipWitnessId::new(0),
+            tensor: TensorRole::Output,
+            kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                output_count: output_elements,
+            },
+        })
+        .unwrap();
+    builder
+        .program(RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: contracted.clone(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+                canonical_nan_bits: NAN_BITS,
+            },
+            numerical: numerical(NAN_BITS),
+        })
+        .unwrap();
+    builder
+        .schedule(KernelSchedule {
+            reduction: ReductionTopology::Contraction {
+                contracted_shape: contracted,
+                order: ContributorOrder::OriginalAxisLexicographic,
+                permits_reassociation: false,
+                permits_permutation: false,
+            },
+            ..linear_schedule(output_elements)
+        })
+        .unwrap();
+    builder.build().unwrap()
+}
+
+/// The score contraction `grtd,gsd->grts`: query against key, contracting the
+/// head lane.
+///
+/// `r` — the grouped-query repetition — is in the query operand and the result
+/// and **never in the key operand**. That is what makes the eight key heads
+/// readable by sixteen query heads with no materialization, and it is visible in
+/// the emitted body as a key address that never divides by the `r` extent.
+pub(crate) fn attention_score_kernel() -> VerifiedKernel {
+    let region = attention_contraction_region(
+        RegionId::new(9),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            ATTENTION_QUERIES,
+            ATTENTION_HEAD_DIM,
+        ]),
+        &Shape::from_dims([ATTENTION_GROUPS, ATTENTION_KEYS, ATTENTION_HEAD_DIM]),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            ATTENTION_QUERIES,
+            ATTENTION_KEYS,
+        ]),
+        Shape::from_dims([ATTENTION_HEAD_DIM]),
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Output { position: 1 },
+            ContractionAxisSource::Output { position: 2 },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Output { position: 3 },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+    );
+    lower_scheduled_region(&region).expect("the score contraction lowers")
+}
+
+/// The value contraction `grts,gsd->grtd`: probabilities against values,
+/// contracting the key position.
+///
+/// The contracted axis sits *between* two free axes of operand 1 here, where the
+/// score structure has it last. The two structures agree on operand 0, on the
+/// output, and on the contracted set, and differ only in that ordering — so a
+/// lowering that read axis sources positionally rather than by role would
+/// produce one of these kernels for both.
+pub(crate) fn attention_value_kernel() -> VerifiedKernel {
+    let region = attention_contraction_region(
+        RegionId::new(9),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            ATTENTION_QUERIES,
+            ATTENTION_KEYS,
+        ]),
+        &Shape::from_dims([ATTENTION_GROUPS, ATTENTION_KEYS, ATTENTION_HEAD_DIM]),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            ATTENTION_QUERIES,
+            ATTENTION_HEAD_DIM,
+        ]),
+        Shape::from_dims([ATTENTION_KEYS]),
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Output { position: 1 },
+            ContractionAxisSource::Output { position: 2 },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Contracted { position: 0 },
+            ContractionAxisSource::Output { position: 3 },
+        ],
+    );
+    lower_scheduled_region(&region).expect("the value contraction lowers")
+}
+
 /// The single-workgroup tree realization of a `[2, 6] -> [2]` strict sum.
 ///
 /// Three participants per workgroup, each folding two contributors into its own
@@ -1521,6 +1714,125 @@ fn contraction_matches_its_golden_source() {
         "contraction_strict_tensor.metal",
         include_str!("../goldens/contraction_strict_tensor.metal"),
         &emit_one(&contraction_kernel()),
+    );
+}
+
+/// The score contraction's emitted body, pinned.
+#[test]
+fn attention_score_matches_its_golden_source() {
+    assert_golden(
+        "contraction_attention_score.metal",
+        include_str!("../goldens/contraction_attention_score.metal"),
+        &emit_one(&attention_score_kernel()),
+    );
+}
+
+/// The value contraction's emitted body, pinned.
+#[test]
+fn attention_value_matches_its_golden_source() {
+    assert_golden(
+        "contraction_attention_value.metal",
+        include_str!("../goldens/contraction_attention_value.metal"),
+        &emit_one(&attention_value_kernel()),
+    );
+}
+
+/// Neither attention kernel carries a fused multiply-add on its accumulation
+/// path.
+///
+/// ADR 0015's contraction permission is Forbidden under this profile, and the
+/// compiler flag is not sufficient on its own — the L3 spike measured
+/// `simdgroup_multiply_accumulate` fusing under `-ffp-contract=off`. The
+/// per-statement emission rule is what holds the line, so the property is
+/// asserted on the emitted text: every product is its own statement and every
+/// accumulation is its own statement.
+#[test]
+fn neither_attention_kernel_emits_a_fused_multiply_add_on_its_accumulation_path() {
+    for (id, source) in [
+        ("score", emit_one(&attention_score_kernel())),
+        ("value", emit_one(&attention_value_kernel())),
+    ] {
+        for spelling in ["fma(", "fma (", "multiply_accumulate", "mad("] {
+            assert!(
+                !source.contains(spelling),
+                "{id}: the accumulation path must carry no `{spelling}`",
+            );
+        }
+        // And the positive half: the fold really is a separate multiply and a
+        // separate add, so the absence above is a property of this body rather
+        // than of a body that computes nothing.
+        let products = source.matches(" * ").count();
+        let sums = source.matches(" + ").count();
+        assert!(
+            products >= 2 && sums >= 1,
+            "{id}: expected separate product and sum statements, saw {products} and {sums}",
+        );
+    }
+}
+
+/// The score kernel's key operand address never reads the repetition index.
+///
+/// This is the grouped-query repetition being *free* rather than materialized,
+/// asserted on the emitted body rather than inferred from the structure. The
+/// output is `[g, r, t, s]` with `r` at extent two; the key operand is
+/// `[g, s, d]` and must be addressed from `g` and `s` alone. A lowering that
+/// broadcast the key across `r` would still compute the right numbers and would
+/// read `r` to do it, so this is the assertion that separates the free index
+/// from a correct-but-materialized alternative.
+///
+/// Checked on the key read's *own* address chain rather than on a global count.
+///
+/// The emitter materializes each divisor as its own constant statement, so the
+/// discriminating text is `= 15ul;` — the `t * s` divisor that isolates `r` from
+/// the linear output index — and not an inline `/ 15ul`. The chain is isolated
+/// by taking, for each key read, the statements since the preceding query read;
+/// a global count would also pass if the key chain recovered `r` and the query
+/// chain happened not to.
+#[test]
+fn the_score_kernels_key_address_is_independent_of_the_repetition_index() {
+    let source = emit_one(&attention_score_kernel());
+
+    // Isolating `r` needs `v0 / (t * s)` followed by a remainder modulo `r`.
+    let repetition_divisor = ATTENTION_QUERIES * ATTENTION_KEYS;
+    let group_divisor = ATTENTION_REPEATS * ATTENTION_QUERIES * ATTENTION_KEYS;
+
+    // Each key read's address chain: the statements between the query read that
+    // precedes it and the key read itself.
+    let chains: Vec<&str> = source
+        .match_indices("b1[")
+        .map(|(key_at, _)| {
+            let query_at = source[..key_at]
+                .rfind("b0[")
+                .expect("every key read follows a query read in this body");
+            &source[query_at..key_at]
+        })
+        .collect();
+    assert_eq!(
+        chains.len(),
+        2,
+        "this body reads the key twice: the seeding product and the loop body",
+    );
+
+    for (ordinal, chain) in chains.iter().enumerate() {
+        assert!(
+            chain.contains(&format!("= {group_divisor}ul;")),
+            "key read {ordinal} must recover the group by dividing by {group_divisor}: {chain}",
+        );
+        assert!(
+            !chain.contains(&format!("= {repetition_divisor}ul;")),
+            "key read {ordinal} recovers the repetition index by dividing by \
+             {repetition_divisor}, so the key operand is being read per repetition rather \
+             than shared across it: {chain}",
+        );
+    }
+
+    // The positive control: the *query* chain does recover `r`, so the absence
+    // above is a property of the key operand rather than of an emitter that
+    // never divides by this quantity at all.
+    assert!(
+        source.contains(&format!("= {repetition_divisor}ul;")),
+        "the query operand must recover the repetition index by dividing by \
+         {repetition_divisor}; if nothing does, the assertions above are vacuous",
     );
 }
 
