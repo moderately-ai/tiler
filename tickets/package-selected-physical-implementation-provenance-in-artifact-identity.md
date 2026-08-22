@@ -13,6 +13,36 @@ claimed_from: todo
 assignee: worker-provenance2
 lease_expires_at: 1787435006
 ---
+## Implementation Fact audit at `1fb3675c` — 2026-08-22
+
+Every Fact re-read in source at the exact implementation base `1fb3675c0ccfca68f62c5d810bd01c2fb5f31c13` before any production edit. The base includes the role-separation and rename landing at `72663521`, which the audit below supersedes several Facts against. Read in full first: repository `AGENTS.md`; this ticket; the complete accepted packet [`decide-the-artifact-physical-selection-provenance-surface`](decide-the-artifact-physical-selection-provenance-surface.md); and the artifact construction, identity, envelope, codec, decode, view, budget, limit, refusal, domain-census, production-assembly, and compiler-projection paths.
+
+**Verified.** Facts 3, 4, 5, 6, 8, 9, and 10 hold at this base with their anchors resolving in the files they name. Fact 7 as repaired on 2026-08-22 also holds: `ARTIFACT_DOMAIN` was `tiler.artifact-program.v21` and the artifact program's `MANIFEST_SCHEMA` was `(21, 0)`, so the owning step this ticket performs is **v21 to v22 and 21.0 to 22.0**, which is what landed.
+
+**Fact 1 and Fact 2 are stale as written and are superseded by this ticket's own rename note rather than by a new claim.** Fact 1 describes one `available` provider set and a one-argument `new`; at this base `CompilationEnvironment` holds `offered_lowering_providers` and `offered_physical_providers`, takes a two-argument `new`, and exposes a private `offers_lowering`. Fact 2's `select_provider` is `select_lowering_provider`. Both were already recorded as moved by the `## Note from the rename lane`, so this is a re-verification and not a repair.
+
+**Fact 1's file citation is correct but has acquired a near-miss.** It names `crates/tiler-artifact/src/program/builder.rs`, where `CompilationEnvironment` still lives. A `crates/tiler-artifact/src/program/environment.rs` now exists beside it and declares three *unrelated* `pub fn new` constructors, so a reader searching by filename rather than by symbol lands in the wrong file with something that looks like the right thing. The anchor `pub struct CompilationEnvironment` remains the authority.
+
+**The census is repaired again; two of its figures were wrong at this base and one of them was wrong in the dangerous direction.**
+
+- `VariantSpec` literals are **17 across 15 files**, not the 15 across 13 the previous census recorded. The recorded command `rg -n '^\s*VariantSpec \{' crates prototypes spikes --glob '*.rs'` is anchored to line-start whitespace and therefore **cannot match a literal inside a doc comment**, where the line begins `//!`. The two it silently drops are `crates/tiler-artifact/src/program/mod.rs:375` and `crates/tiler-artifact/src/proof/mod.rs:398`, and both are *compiled* doctests that broke on the new required field. An anchored pattern that cannot reach part of its population is the failure mode `AGENTS.md` records under "Verify that a check reaches its subject at all"; the count was not merely low, it was low in the direction that hides work.
+- `CompilationEnvironment::new` is **81 calls across 35 source files**, not 72 across 34.
+- `push_variant` call expressions remain **67**, matching the previous census.
+
+Counts are matched lines from `rg -n … | wc -l`. Reproduce at this base:
+
+```sh
+rg -n 'VariantSpec \{' crates prototypes spikes --glob '*.rs'
+rg -n 'CompilationEnvironment::new\(' crates prototypes spikes --glob '*.rs' | wc -l
+rg -n '\.push_variant\(' crates prototypes spikes --glob '*.rs' | wc -l
+```
+
+**The three packet corrections carried in the dispatch brief were re-verified here rather than restated.** The packet's `v18`→`v19` step is stale and the base is `v21`/`21.0`, as above. The packet's section 1 requires renaming "built **and decoded** `selected_providers()` accessors", and there is still no decoded subject: `crates/tiler-artifact/src/program/codec/view.rs` contains **zero** occurrences of the string `provider` at this base and no `pub fn …provider` exists anywhere under `codec/`, so none was invented. `selected_provider_identities` is a *physical*-provider helper in `crates/tiler-compiler/tests/external_physical_provider.rs` and correctly keeps its name.
+
+**The accepted packet and the tree do not disagree about the surface.** The insertion seam re-verified here: `program::model::push_variant`, `codec::encode::encode_variants`, and `codec::decode::parse_variants` all still place the feasibility-rule key and its fixed `u32` revision immediately before the deferred-predicate run, which is where the physical run now goes in all three. The compiler's three stable proposal-kind strings are still `scheduled-kernel`, `kernel-subprogram`, and `opaque-call`, with `View` still rejected before selection.
+
+**One deliberate deviation from the packet's literal wording, recorded rather than worked around.** The packet says `PhysicalProposalKind` "declares exactly `const ALL: [Self; variant_count::<Self>()]`". `crates/tiler-artifact/src/lib.rs` gates the `variant_count` feature on `cfg(test)`, stating that the enumerations are test-local and that an unconditional declaration "would widen this crate's nightly surface for nothing". `ALL` is therefore declared `#[cfg(test)] pub(super)`, which keeps the packet's actual requirement — the population is sized from the type, so a widened enum is a build error at the array — without widening the crate's nightly surface. Nothing about the public surface changes.
+
 ## Re-audit at the implementation base — 2026-08-22
 
 Every Fact below was re-read in source at

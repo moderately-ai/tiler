@@ -76,8 +76,8 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     ArtifactEnvelopeDigest, BackendPayloadDescriptor, BindingData, BindingKind, BindingTarget,
     BindingTargetData, CanonicalArtifactProgramIdentity, DeferredPredicateData,
-    InterfaceComponentData, InterfaceEntryData, RoutingPolicy, StageDependencyData,
-    StageDependencyReason, VerifiedArtifactProgram,
+    InterfaceComponentData, InterfaceEntryData, RoutingPolicy, SelectedPhysicalImplementation,
+    StageDependencyData, StageDependencyReason, VerifiedArtifactProgram,
 };
 use super::super::realization::DeliveredRealizationRecord;
 use super::super::requirement::RouteRequirement;
@@ -588,6 +588,23 @@ impl<'a> DecodedVariant<'a> {
     #[must_use]
     pub fn feasibility_rules(self) -> &'a FeasibilityRuleSetRef {
         &self.data().feasibility_rules
+    }
+
+    /// Returns which physical authority produced each selected region.
+    ///
+    /// Non-empty, in canonical occurrence order, with every row preserved; a
+    /// decode proved all three before this view existed. The same owned row type
+    /// the builder takes, deliberately, rather than a second public view record:
+    /// one shape means an artifact decoded from bytes and one built in this
+    /// process compare as equal values rather than through a translation.
+    ///
+    /// Provider, proposal, and kind may repeat across **different** occurrences
+    /// and that repetition is meaning. There is no artifact-global
+    /// physical-provider accessor and no association to an entry or payload:
+    /// either would answer a question this row does not state.
+    #[must_use]
+    pub fn selected_physical_implementations(self) -> &'a [SelectedPhysicalImplementation] {
+        &self.data().selected_physical_implementations
     }
 
     /// Returns the plan-determinism scope claimed at one delivery position.
@@ -1332,6 +1349,12 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
             | ArtifactCodecError::InvalidTargetEnvironment { .. }
             | ArtifactCodecError::InvalidShape { .. }
             | ArtifactCodecError::InvalidAlignment { .. }
+            // A wrong row-key domain and bytes left inside a row key are both
+            // framing failures rather than invalid statements: the outer frame
+            // resolved, and what refused is that the bytes inside it are not
+            // this subject, or are this subject plus something unaccounted for.
+            | ArtifactCodecError::BadPhysicalSelectionDomain
+            | ArtifactCodecError::TrailingPhysicalSelectionKeyBytes { .. }
             | ArtifactCodecError::UnknownTag { .. } => Self::Malformed { detail },
 
             ArtifactCodecError::ManifestDigestMismatch

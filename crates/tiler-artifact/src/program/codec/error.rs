@@ -141,6 +141,18 @@ pub(crate) enum TagSubject {
     PayloadPlatform,
     /// The source kind of one declared interface axis: a literal or a symbol.
     InterfaceExtentSource,
+    /// Presence of one variant's selected physical-implementation run.
+    ///
+    /// The run is unconditional, so exactly one tag value is admitted; every
+    /// other byte is refused here rather than being read as a count.
+    PhysicalSelectionRun,
+    /// The body kind of one selected physical implementation.
+    ///
+    /// `0x04` is refused through this subject and stays reserved for a future
+    /// reviewed `View`: `tiler-compiler` already has that fourth kind and
+    /// rejects its body before selection, so admitting the tag would let a
+    /// forged manifest assert a selected state no compiler can produce.
+    PhysicalProposalKind,
 }
 
 impl fmt::Display for TagSubject {
@@ -184,6 +196,13 @@ pub(crate) enum OrderedSubject {
     ProvenanceComponent,
     /// The recorded target obligations of one carried backend payload.
     TargetObligation,
+    /// The selected physical implementations of one plan variant.
+    ///
+    /// Ordered by whole cover-region occurrence bytes, strictly ascending. The
+    /// order is the compiler's and is re-proven here rather than re-established,
+    /// because these bytes may have been written by a producer this process
+    /// never ran.
+    SelectedPhysicalImplementation,
 }
 
 impl fmt::Display for OrderedSubject {
@@ -257,6 +276,15 @@ pub(crate) enum CodecLimitKind {
     TargetEnvironmentDescriptorBytes,
     /// Selected lowering-capability-provider count.
     SelectedLoweringProviders,
+    /// Selected physical-implementation row count of one plan variant.
+    ///
+    /// There is deliberately no companion *byte* budget for these rows.
+    /// `read_header` has already refused a manifest over
+    /// [`Self::ManifestBytes`] before variant parsing, and both framed
+    /// identities and the complete run are strict subsets of those admitted
+    /// bytes, so a per-identity or aggregate physical-byte limit would name a
+    /// refusal no admitted stream can reach.
+    SelectedPhysicalImplementations,
     /// Deferred feasibility predicate count of one plan variant.
     DeferredPredicates,
     /// Live-device route-requirement count of one plan variant.
@@ -774,6 +802,21 @@ pub(crate) enum ArtifactCodecError {
         /// Value type of the branch taken otherwise.
         if_false: AbiType,
     },
+    /// A selected physical-implementation row key opened with the wrong domain.
+    ///
+    /// The row key is length-framed and self-describing, so a reader that
+    /// resolved the frame still has to prove the bytes inside it are *this*
+    /// subject and not another framed key that happens to fit.
+    BadPhysicalSelectionDomain,
+    /// A selected physical-implementation row key had bytes left after its fields.
+    ///
+    /// The key is parsed inside a bounded nested cursor, so trailing bytes are a
+    /// second statement hidden inside one row rather than a framing error the
+    /// outer stream would notice.
+    TrailingPhysicalSelectionKeyBytes {
+        /// Count of unconsumed bytes inside the row key.
+        remaining: usize,
+    },
     /// A text run was not valid UTF-8.
     InvalidText,
     /// A governed artifact key was rejected by its own validating constructor.
@@ -929,6 +972,8 @@ impl Error for ArtifactCodecError {
             | Self::ExpressionOperandOrder { .. }
             | Self::ExpressionOperandType { .. }
             | Self::ExpressionSelectBranchType { .. }
+            | Self::BadPhysicalSelectionDomain
+            | Self::TrailingPhysicalSelectionKeyBytes { .. }
             | Self::InvalidText => None,
         }
     }

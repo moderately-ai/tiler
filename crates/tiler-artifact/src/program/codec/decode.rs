@@ -45,20 +45,23 @@ use super::super::expr::{
 };
 use super::super::keys::{
     BackendEntryKey, BackendKey, CapabilityFamilyKey, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
-    PayloadDigest, RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef,
+    PayloadDigest, PhysicalImplementationProposalIdentity, PhysicalRegionOccurrenceIdentity,
+    RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest, TargetProfileKey,
+    TargetProfileRef,
 };
 use super::super::model::{
     ArtifactSchema, BINDING_TARGET_INTERNAL, BINDING_TARGET_PROGRAM_INPUT,
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
-    LaunchData, LoweringCapabilitySubject, RoutingPolicy, SOURCED_EXTENT_LITERAL,
+    LaunchData, LoweringCapabilitySubject, PHYSICAL_SELECTION_KEY_DOMAIN,
+    PHYSICAL_SELECTION_RUN_TAG, PhysicalProposalKind, RoutingPolicy, SOURCED_EXTENT_LITERAL,
     SOURCED_EXTENT_SYMBOL, SUBGROUP_REQUIREMENT_BLOCK_TAG, SchemaVersion, SelectedLoweringProvider,
-    StageDependencyData, StageDependencyReason, address_space_from_tag,
-    approximation_envelope_from_tag, buffer_access_from_tag, element_type_from_tag,
-    exceptional_assumption_from_tag, index_arithmetic_from_tag, memory_ordering_from_tag,
-    permission_from_tag, storage_scalar_from_tag, subgroup_transfer_from_tag, subnormal_from_tag,
-    synchronization_kind_from_tag, synchronization_scope_from_tag,
+    SelectedPhysicalImplementation, StageDependencyData, StageDependencyReason,
+    address_space_from_tag, approximation_envelope_from_tag, buffer_access_from_tag,
+    element_type_from_tag, exceptional_assumption_from_tag, index_arithmetic_from_tag,
+    memory_ordering_from_tag, permission_from_tag, storage_scalar_from_tag,
+    subgroup_transfer_from_tag, subnormal_from_tag, synchronization_kind_from_tag,
+    synchronization_scope_from_tag,
 };
 use super::super::realization::DeliveredRealizationRecord;
 use super::super::realization::codec::decode as decode_realization;
@@ -70,7 +73,7 @@ use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
     MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_LAUNCH_PRECONDITIONS,
     MAX_ROUTE_FEATURE_PAYLOAD_BYTES, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_LOWERING_PROVIDERS,
-    MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
+    MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS, MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
 };
 use super::encode::{
     CANONICAL_ENCODING, ENVELOPE_FORMAT, HEADER_BYTES, IDENTITY_DIGEST_DOMAIN, MAGIC,
@@ -840,6 +843,7 @@ fn parse_variants(
                 .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?,
             revision: cursor.u32()?,
         };
+        let selected_physical_implementations = parse_selected_physical_run(cursor)?;
         let deferred = cursor.vec(
             MAX_DEFERRED_PREDICATES,
             CodecLimitKind::DeferredPredicates,
@@ -907,6 +911,20 @@ fn parse_variants(
         let entries = cursor.vec(MAX_VARIANT_ENTRIES, CodecLimitKind::Entries, |cursor| {
             parse_entry(cursor, expressions, payloads)
         })?;
+        // The first point the relation is decidable, and therefore where it is
+        // decided: the run was read long before the entry table it is measured
+        // against. Applied ahead of the deferred cross-reference, execution
+        // order, and dependency checks so a variant whose stated selections
+        // cannot describe its stated entries is refused as that contradiction
+        // rather than as whichever later rule happened to trip.
+        if selected_physical_implementations.len() > entries.len() {
+            return Err(ArtifactCodecError::ModelRule {
+                cause: Box::new(ArtifactBuildError::PhysicalSelectionCardinality {
+                    selected: selected_physical_implementations.len(),
+                    entries: entries.len(),
+                }),
+            });
+        }
         for predicate in &deferred {
             if position(predicate.entry) >= entries.len() {
                 return Err(ArtifactCodecError::MissingReference {
@@ -936,6 +954,7 @@ fn parse_variants(
             guard,
             profile,
             feasibility_rules,
+            selected_physical_implementations,
             deferred,
             route_requirements,
             entries,
@@ -945,6 +964,106 @@ fn parse_variants(
         });
     }
     Ok(variants)
+}
+
+/// Reads one variant's selected physical-implementation run.
+///
+/// Every reachable refusal happens before the offending row joins the vector,
+/// so a refused row never leaves a partially decoded variant behind: the tag
+/// and the count precede any allocation, and each row is completed and ordered
+/// against its predecessor before it is pushed.
+///
+/// There is deliberately **no** byte budget here, per identity or in aggregate.
+/// `read_header` refused a manifest over `MAX_MANIFEST_BYTES` before
+/// `parse_manifest` received these borrowed bytes, and both framed identities
+/// and the complete run are strict subsets of them, so such a limit would
+/// declare a refusal no admitted stream can reach.
+fn parse_selected_physical_run(
+    cursor: &mut Cursor<'_>,
+) -> Result<Vec<SelectedPhysicalImplementation>, ArtifactCodecError> {
+    let tag = cursor.u8()?;
+    if tag != PHYSICAL_SELECTION_RUN_TAG {
+        return Err(ArtifactCodecError::UnknownTag {
+            subject: TagSubject::PhysicalSelectionRun,
+            tag,
+        });
+    }
+    // Bounded before the vector is reserved, so a forged count cannot make this
+    // reader allocate for rows that are not there.
+    let count = cursor.count(
+        MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS,
+        CodecLimitKind::SelectedPhysicalImplementations,
+    )?;
+    if count == 0 {
+        return Err(ArtifactCodecError::ModelRule {
+            cause: Box::new(ArtifactBuildError::EmptySelectedPhysicalImplementations),
+        });
+    }
+    let mut rows: Vec<SelectedPhysicalImplementation> = Vec::with_capacity(count);
+    for _ in 0..count {
+        let row = parse_selected_physical_row(cursor)?;
+        if let Some(previous) = rows.last() {
+            match previous
+                .region_occurrence
+                .as_bytes()
+                .cmp(row.region_occurrence.as_bytes())
+            {
+                std::cmp::Ordering::Less => {}
+                std::cmp::Ordering::Equal => {
+                    return Err(ArtifactCodecError::DuplicateItem {
+                        subject: OrderedSubject::SelectedPhysicalImplementation,
+                    });
+                }
+                std::cmp::Ordering::Greater => {
+                    return Err(ArtifactCodecError::NonCanonicalOrder {
+                        subject: OrderedSubject::SelectedPhysicalImplementation,
+                    });
+                }
+            }
+        }
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
+/// Reads one outer-framed selected physical-implementation row key.
+///
+/// The row travels as the *complete* canonical key the identity encoder writes,
+/// framed by its length, so this opens a bounded nested cursor over exactly
+/// those bytes. Requiring the row domain inside that frame is what stops another
+/// framed key of the right length being read as this subject, and requiring the
+/// nested cursor to be empty afterwards is what stops a second statement hiding
+/// inside one row.
+fn parse_selected_physical_row(
+    cursor: &mut Cursor<'_>,
+) -> Result<SelectedPhysicalImplementation, ArtifactCodecError> {
+    let key = cursor.slice()?;
+    let mut row = Cursor::new(key);
+    if row.take(PHYSICAL_SELECTION_KEY_DOMAIN.len())? != PHYSICAL_SELECTION_KEY_DOMAIN {
+        return Err(ArtifactCodecError::BadPhysicalSelectionDomain);
+    }
+    let region_occurrence = PhysicalRegionOccurrenceIdentity::from_bytes(row.slice()?)
+        .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?;
+    let implementation_proposal = PhysicalImplementationProposalIdentity::from_bytes(row.slice()?)
+        .map_err(|cause| ArtifactCodecError::InvalidGovernedKey { cause })?;
+    let provider = row.provider()?;
+    let kind_tag = row.u8()?;
+    let proposal_kind =
+        PhysicalProposalKind::from_tag(kind_tag).ok_or(ArtifactCodecError::UnknownTag {
+            subject: TagSubject::PhysicalProposalKind,
+            tag: kind_tag,
+        })?;
+    if row.remaining() != 0 {
+        return Err(ArtifactCodecError::TrailingPhysicalSelectionKeyBytes {
+            remaining: row.remaining(),
+        });
+    }
+    Ok(SelectedPhysicalImplementation {
+        region_occurrence,
+        implementation_proposal,
+        provider,
+        proposal_kind,
+    })
 }
 
 /// Reads one variant's live-device route requirements.

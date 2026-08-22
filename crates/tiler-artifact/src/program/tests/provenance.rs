@@ -3,6 +3,7 @@
 use super::super::{
     ArtifactProgramBuilder, AvailabilityPhase, CompilationEnvironment, SelectedLoweringProvider,
 };
+use super::offered_physical;
 use super::support::artifacts::lowering_subject;
 use super::support::graphs::{checked_coverage_over, checked_coverage_under, strict_contract};
 use super::support::kernels::fused_program_with_coverage;
@@ -170,7 +171,8 @@ fn a_reached_capability_revision_changes_identity() {
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     let build = |capability_revision: u32| {
-        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+        let environment =
+            CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
         draft
             .select_lowering_provider(SelectedLoweringProvider {
@@ -323,7 +325,8 @@ fn a_symbolic_semantic_program_publishes_its_symbol_by_name() {
     );
 
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider], []).expect("environment");
+    let environment =
+        CompilationEnvironment::new([provider], offered_physical()).expect("environment");
     assert!(
         ArtifactProgramBuilder::new(&symbolic, environment.clone()).is_ok(),
         "a symbolic interface extent has a published per-axis spelling",

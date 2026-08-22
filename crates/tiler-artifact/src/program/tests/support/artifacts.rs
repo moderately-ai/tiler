@@ -5,8 +5,10 @@ use super::super::super::{
     BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
     BindingSpec, CapabilityFamilyKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
     FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject, PayloadDigest, PayloadId,
-    RepresentationKey, SchemaVersion, SelectedLoweringProvider, TargetProfileDescriptorDigest,
-    TargetProfileKey, TargetProfileRef, TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
+    PhysicalImplementationProposalIdentity, PhysicalProposalKind, PhysicalRegionOccurrenceIdentity,
+    RepresentationKey, SchemaVersion, SelectedLoweringProvider, SelectedPhysicalImplementation,
+    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
+    VariantSpec, VerifiedArtifactProgram,
 };
 use super::super::super::{
     DeliveredRealizationBuilder, DeliveredRealizationRecord, DimensionBehaviour, EntryRealization,
@@ -36,6 +38,59 @@ pub(crate) fn lowering_provider(revision: u32) -> ProviderIdentity {
 
 pub(crate) fn spare_provider(revision: u32) -> ProviderIdentity {
     ProviderIdentity::new("tiler-test", "never-selected", revision).unwrap()
+}
+
+/// The provider every fixture here offers and selects in the **physical** role.
+///
+/// A different identity from [`lowering_provider`] on purpose: a fixture that
+/// used one identity for both roles could pass a cross-role check by accident,
+/// and the suite would stop being able to tell the two grants apart. The cases
+/// that *do* test one identity in both roles state it explicitly.
+pub(crate) fn physical_provider(revision: u32) -> ProviderIdentity {
+    ProviderIdentity::new("tiler-test", "scalar-host-implementer", revision).unwrap()
+}
+
+/// The physical role every artifact fixture in this suite is offered.
+///
+/// Every fixture packages a selected physical implementation, because the run
+/// is required, so every fixture environment must grant physical authority for
+/// exactly the provider those rows name.
+pub(crate) fn offered_physical() -> [ProviderIdentity; 1] {
+    [physical_provider(1)]
+}
+
+/// One cover-region occurrence identity, fixed-width so bytes order as ordinals.
+///
+/// The width is what makes the canonical rule testable: occurrence order is
+/// **byte** order, so a variable-width spelling would put `10` before `9` and a
+/// run built from ascending ordinals would fail the very rule it exists to
+/// satisfy.
+pub(crate) fn occurrence(ordinal: u16) -> PhysicalRegionOccurrenceIdentity {
+    let mut bytes = b"tiler-test.occurrence.".to_vec();
+    bytes.extend_from_slice(&ordinal.to_be_bytes());
+    PhysicalRegionOccurrenceIdentity::from_bytes(bytes).unwrap()
+}
+
+/// One implementation-proposal identity, distinct from any occurrence identity.
+pub(crate) fn proposal(ordinal: u16) -> PhysicalImplementationProposalIdentity {
+    let mut bytes = b"tiler-test.proposal.".to_vec();
+    bytes.extend_from_slice(&ordinal.to_be_bytes());
+    PhysicalImplementationProposalIdentity::from_bytes(bytes).unwrap()
+}
+
+/// One selected physical row over the occurrence at `ordinal`.
+pub(crate) fn physical_selection(ordinal: u16) -> SelectedPhysicalImplementation {
+    SelectedPhysicalImplementation {
+        region_occurrence: occurrence(ordinal),
+        implementation_proposal: proposal(ordinal),
+        provider: physical_provider(1),
+        proposal_kind: PhysicalProposalKind::ScheduledKernel,
+    }
+}
+
+/// A canonical run of `rows` selections over distinct ascending occurrences.
+pub(crate) fn physical_run(rows: u16) -> Vec<SelectedPhysicalImplementation> {
+    (0..rows).map(physical_selection).collect()
 }
 
 pub(crate) fn selection(provider: ProviderIdentity) -> SelectedLoweringProvider {
@@ -265,6 +320,8 @@ pub(crate) fn variant(formulas: &Formulas, payload: PayloadId, key: &[u8]) -> Va
     VariantSpec {
         target_profile: profile(),
         feasibility_rules: rules(),
+        // One entry, so one selected row is the whole admitted range here.
+        selected_physical_implementations: physical_run(1),
         deferred_predicates: Vec::new(),
         entries: vec![entry(formulas, payload, key)],
     }
@@ -277,10 +334,11 @@ pub(crate) fn build_artifact(
     selected: ProviderIdentity,
     available: &[ProviderIdentity],
 ) -> VerifiedArtifactProgram {
-    // The physical role is offered empty throughout this suite: no fixture here
-    // packages a selected physical implementation, so granting physical
-    // authority would be a claim the artifacts do not make.
-    let environment = CompilationEnvironment::new(available.iter().cloned(), []).unwrap();
+    // Both roles are granted: every fixture variant packages a selected physical
+    // implementation, so an empty physical set would refuse the artifact for the
+    // authority it was never given rather than for whatever is under test.
+    let environment =
+        CompilationEnvironment::new(available.iter().cloned(), offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(semantic, environment).unwrap();
     draft.select_lowering_provider(selection(selected)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -292,6 +350,52 @@ pub(crate) fn build_artifact(
     draft.build().unwrap()
 }
 
+/// Builds the canonical fixture with the two offered roles stated exactly.
+///
+/// Both roles are parameters so a case can widen one without widening the
+/// other, which is exactly what the independent-invariance evidence needs: a
+/// fixture taking one "environment" could not tell a lowering-role change from
+/// a physical-role one.
+pub(crate) fn build_artifact_with_roles(
+    offered_lowering: &[ProviderIdentity],
+    offered_physical_role: &[ProviderIdentity],
+) -> VerifiedArtifactProgram {
+    build_artifact_over(offered_lowering, offered_physical_role, physical_run(1))
+}
+
+/// Builds the canonical fixture carrying an exact selected physical run.
+pub(crate) fn build_artifact_with_rows(
+    rows: Vec<SelectedPhysicalImplementation>,
+) -> VerifiedArtifactProgram {
+    let providers: Vec<ProviderIdentity> = rows.iter().map(|row| row.provider.clone()).collect();
+    build_artifact_over(&[lowering_provider(1)], &providers, rows)
+}
+
+fn build_artifact_over(
+    offered_lowering: &[ProviderIdentity],
+    offered_physical_role: &[ProviderIdentity],
+    rows: Vec<SelectedPhysicalImplementation>,
+) -> VerifiedArtifactProgram {
+    let semantic = semantic_program();
+    let program = fused_program(&semantic, SCALE_BITS);
+    let environment = CompilationEnvironment::new(
+        offered_lowering.iter().cloned(),
+        offered_physical_role.iter().cloned(),
+    )
+    .unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    draft
+        .select_lowering_provider(selection(lowering_provider(1)))
+        .unwrap();
+    let descriptor = draft.push_payload(payload(0xa1)).unwrap();
+    let formulas = formulas(&mut draft);
+    let mut spec = variant(&formulas, descriptor, b"fused");
+    spec.selected_physical_implementations = rows;
+    draft.push_variant(&program, spec).unwrap();
+    declare_realization(&mut draft, &program);
+    draft.build().unwrap()
+}
+
 /// Builds the canonical fixture with exact selected operation subjects.
 pub(crate) fn artifact_with_selected_operations(
     operations: &[(&str, &str, u32)],
@@ -299,7 +403,7 @@ pub(crate) fn artifact_with_selected_operations(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     for (namespace, name, version) in operations {
         draft
@@ -347,6 +451,10 @@ pub(crate) fn partial_window_variant(payload: PayloadId) -> VariantSpec {
     VariantSpec {
         target_profile: profile(),
         feasibility_rules: rules(),
+        // Two rows over two entries: the fixture that carries multiplicity, so
+        // that occurrence order and the one-row-per-occurrence rule are
+        // exercised by the ordinary suite rather than only by their own cases.
+        selected_physical_implementations: physical_run(2),
         deferred_predicates: Vec::new(),
         entries: vec![entry(b"pointwise"), entry(b"reduction")],
     }
@@ -357,7 +465,7 @@ pub(crate) fn partial_window_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = partial_window_program(&semantic);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();

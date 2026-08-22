@@ -20,6 +20,7 @@ mod plan_determinism;
 mod provenance;
 mod recorded_identity;
 mod route_requirements;
+mod selected_physical_implementations;
 mod stage_keys;
 mod support;
 mod whole_artifact_rules;
@@ -29,13 +30,14 @@ mod whole_artifact_rules;
 // proof sidecar associates with a *real* verified artifact, and a second
 // hand-built one would be a second thing to keep correct.
 pub(super) use support::artifacts::{
-    Formulas, declare_realization, declare_realization_over, entry, formulas,
-    partial_window_artifact, payload, prepared_requirement, profile, rules, selection,
-    spare_provider, variant,
+    Formulas, declare_realization, declare_realization_over, entry, formulas, occurrence,
+    offered_physical, partial_window_artifact, payload, physical_provider, physical_run,
+    physical_selection, prepared_requirement, profile, proposal, rules, selection, spare_provider,
+    variant,
 };
 pub(crate) use support::artifacts::{
-    artifact_with_selected_operations, build_artifact, default_artifact, lowering_provider,
-    realization_record,
+    artifact_with_selected_operations, build_artifact, build_artifact_with_roles,
+    build_artifact_with_rows, default_artifact, lowering_provider, realization_record,
 };
 pub(super) use support::claims::{
     CLAIM_DESCRIPTOR, CLAIM_OBJECT, claim_declaration, claim_declaration_of, claim_payload_content,

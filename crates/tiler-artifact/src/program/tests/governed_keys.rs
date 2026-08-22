@@ -5,6 +5,7 @@ use super::super::{
     CapabilityFamilyKey, CompilationEnvironment, FeasibilityRuleSetKey, PayloadDigest,
     RepresentationKey, RouteFeatureKey, TargetProfileDescriptorDigest, TargetProfileKey,
 };
+use super::offered_physical;
 use super::{
     SCALE_BITS, declare_realization, formulas, fused_program, lowering_provider, payload,
     selection, semantic_program, variant,
@@ -204,7 +205,7 @@ fn an_artifact_encodes_an_entry_key_longer_than_the_digest_bound() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();

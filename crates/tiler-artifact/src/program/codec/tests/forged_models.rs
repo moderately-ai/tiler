@@ -6,6 +6,7 @@ use super::super::super::error::{
 use super::super::super::expr::{AbiRoot, AbiType, AbiValue, AvailabilityPhase, ExprNode};
 use super::super::super::facts::AbiFactBinder;
 use super::super::super::keys::BackendEntryKey;
+use super::super::super::tests::offered_physical;
 use super::super::super::tests::{
     ELEMENT_BYTES, SCALE_BITS, SCRATCH_OFFSET, declare_realization, default_artifact, formulas,
     fused_program, lowering_provider, partial_window_artifact, payload, prepared_requirement,
@@ -361,7 +362,7 @@ fn a_deferred_requirement_that_disagrees_with_its_predicate_is_rejected() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft
         .select_lowering_provider(selection(provider.clone()))

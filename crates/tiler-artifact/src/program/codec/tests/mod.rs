@@ -33,6 +33,7 @@ mod round_trip;
 mod route_requirements;
 mod section_descriptors;
 mod selected_lowering_providers;
+mod selected_physical_implementations;
 mod subgroup;
 mod support;
 mod vocabularies;

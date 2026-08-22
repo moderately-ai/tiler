@@ -2,6 +2,7 @@
 
 use super::super::super::keys::{BackendKey, PayloadDigest, RepresentationKey};
 use super::super::super::model::{ArtifactExecutionPolicy, SchemaVersion};
+use super::super::super::tests::offered_physical;
 use super::super::super::tests::{
     SCALE_BITS, declare_realization, default_artifact, formulas, fused_program, lowering_provider,
     profile, selection, semantic_program, variant,
@@ -53,7 +54,7 @@ fn twice_delivered_artifact(code: &[u8]) -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let carry = |draft: &mut ArtifactProgramBuilder, source: &[u8]| {

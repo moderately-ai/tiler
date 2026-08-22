@@ -182,7 +182,16 @@ fn bit_packed_u32_storage_is_refused() {
 /// nothing about the `v3` step was undone. This is exactly the chance the doc
 /// comment above warns about, which is why the count is measured and never
 /// derived, and why a reader must not "simplify" it to the arithmetic.
-const DIFFERING_CARRIER_POSITIONS: usize = 68;
+///
+/// The `tiler.artifact-program.v22` / manifest `22.0` step — each variant's
+/// selected physical-implementation run — took it to 67. Purely the chance
+/// term, and demonstrably so: the run carries no carrier tag, so it reaches
+/// neither tag pair, and [`DIFFERING_IDENTITY_POSITIONS`] below is unchanged at
+/// four across the same step. What moved is that both artifacts' identities and
+/// manifests moved together, so one more of the sixty-four digest bytes now
+/// coincides than did before. Pre-recompute failure observed left = 67 (the new
+/// measurement), right = the retired 68.
+const DIFFERING_CARRIER_POSITIONS: usize = 67;
 
 /// Byte positions at which the carrier-only fixture pair's *identities* differ.
 ///

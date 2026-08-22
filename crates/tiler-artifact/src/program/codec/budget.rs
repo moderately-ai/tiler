@@ -11,12 +11,14 @@
 //! reused rather than restated. A codec-local bound would be a second authority
 //! for the same limit, and the two would drift.
 
+use super::super::error::ArtifactBuildError;
 use super::super::model::BindingTargetData;
 use super::super::requirement::RouteRequirement;
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
     MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
-    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_LOWERING_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_LOWERING_PROVIDERS, MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS,
+    MAX_VARIANT_ENTRIES,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::model::{
@@ -109,6 +111,25 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
             MAX_VARIANT_ENTRIES,
             CodecLimitKind::Entries,
         )?;
+        // The count the decoder will check before it reserves the row vector,
+        // repeated here so a legally built artifact that no reader could admit
+        // fails to encode rather than producing bytes nothing accepts.
+        codec_limit(
+            variant.selected_physical_implementations.len(),
+            MAX_SELECTED_PHYSICAL_IMPLEMENTATIONS,
+            CodecLimitKind::SelectedPhysicalImplementations,
+        )?;
+        // The relational rule beside its absolute one, for the same reason: the
+        // decoder refuses a run that outnumbers the entry table, so an encoder
+        // that emitted one would write bytes it could not read back.
+        if variant.selected_physical_implementations.len() > variant.entries.len() {
+            return Err(ArtifactCodecError::ModelRule {
+                cause: Box::new(ArtifactBuildError::PhysicalSelectionCardinality {
+                    selected: variant.selected_physical_implementations.len(),
+                    entries: variant.entries.len(),
+                }),
+            });
+        }
         codec_limit(
             variant.deferred.len(),
             MAX_DEFERRED_PREDICATES,

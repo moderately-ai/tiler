@@ -5,6 +5,7 @@ use super::super::{
     CompilationEnvironment, DeferredPredicateSpec, PayloadId, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef,
 };
+use super::offered_physical;
 use super::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, declare_realization, entry, formulas, fused_program,
     lowering_provider, payload, prepared_requirement, profile, selection, semantic_program,
@@ -26,7 +27,8 @@ use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
 #[test]
 fn rejects_a_lowering_provider_the_environment_never_offered() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     assert_eq!(
         draft.select_lowering_provider(selection(lowering_provider(9))),
@@ -118,7 +120,7 @@ fn accepts_a_complete_prepared_entry_requirement() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft
         .select_lowering_provider(selection(provider.clone()))
@@ -265,7 +267,7 @@ fn rejects_a_duplicate_plan_variant() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
@@ -302,7 +304,8 @@ fn refuses_a_second_variant_declaring_a_different_target_profile() {
     let provider = lowering_provider(1);
 
     let assemble = |declared: TargetProfileRef| {
-        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+        let environment =
+            CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
         draft
             .select_lowering_provider(selection(provider.clone()))
@@ -343,7 +346,8 @@ fn refuses_a_second_variant_declaring_a_different_target_profile() {
 #[test]
 fn rejects_a_repeated_payload_descriptor() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.push_payload(payload(0xa1)).unwrap();
     assert_eq!(
@@ -355,7 +359,8 @@ fn rejects_a_repeated_payload_descriptor() {
 #[test]
 fn rejects_a_mistyped_expression_operand() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let number = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();
     assert_eq!(
@@ -391,7 +396,7 @@ fn with_default_draft<T>(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], offered_physical()).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
