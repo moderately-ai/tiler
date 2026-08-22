@@ -1,7 +1,7 @@
 ---
 id: refresh-the-deferred-triggers-whose-stated-reason-is-now-false
 title: Refresh the deferred triggers whose stated reason is now false
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repair-the-deferred-trigger-checks-that-cannot-report-a-firing, size-the-governed-key-census-from-the-type-across-the-deferred-pool]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [graph-hygiene, deferred-triggers]
-claimed_from: todo
-assignee: worker-refreshtrig
-lease_expires_at: 1787437174
 ---
 ## User-visible outcome
 
