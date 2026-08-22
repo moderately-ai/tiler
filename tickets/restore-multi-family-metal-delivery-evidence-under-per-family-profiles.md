@@ -1,7 +1,7 @@
 ---
 id: restore-multi-family-metal-delivery-evidence-under-per-family-profiles
 title: Restore multi-family Metal delivery evidence under per-family profiles
-status: todo
+status: in-progress
 priority: p3
 dependencies: [carry-required-compilation-selection-identity-on-compile-profile-contexts]
 related: [reseat-the-grid-and-cost-profile-rows-on-the-re-measured-records]
@@ -9,6 +9,9 @@ scopes: [implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [metal, artifacts, cache, fail-closed]
+claimed_from: todo
+assignee: worker-multifamily
+lease_expires_at: 1787415365
 ---
 ## Why this exists
 

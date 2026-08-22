@@ -1,7 +1,7 @@
 ---
 id: keep-the-ungated-spikes-compiling-against-the-workspace-api
 title: Keep the ungated spikes compiling against the workspace API
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [package-the-admitted-live-schedule-into-a-symbolic-kernel-program, keep-the-path-shared-route-gate-spike-compiling-or-make-its-breakage-loud]
@@ -9,6 +9,9 @@ scopes: [research/target-profiles, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [spikes, gates, correctness]
+claimed_from: todo
+assignee: worker-spikes
+lease_expires_at: 1787415365
 ---
 ## User-visible outcome
 
