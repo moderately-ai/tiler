@@ -525,14 +525,24 @@ fn cooperative_contraction_plan(
         }
     }
     let barrier = barrier.ok_or(shape)?;
+    // Resolved by the same rule as the visibility edges above, and for the same
+    // reason: a two-allocation tile that repeats carries one anti-dependency per
+    // staging, and neither `SynchronizationPoint::discharges_anti` nor the edge
+    // itself reads which allocation is rewritten, so one round boundary orders
+    // both. Matching on a single edge instead — as this did — refused every
+    // multi-round operand tile as an unlowerable shape, which is exactly the
+    // body the tiled contraction is: two staged tiles reloaded every round.
+    // Two boundaries would be a genuinely different body and are still refused.
     let anti = tile.anti_dependency_edges();
-    let round_barrier = match anti.as_slice() {
-        [] => None,
-        [edge] => {
-            Some(sole_discharging_barrier(&tile.anti_discharging_points(*edge)).ok_or(shape)?)
+    let mut round_barrier = None;
+    for edge in &anti {
+        let point = sole_discharging_barrier(&tile.anti_discharging_points(*edge)).ok_or(shape)?;
+        match &round_barrier {
+            None => round_barrier = Some(point),
+            Some(existing) if existing.point == point.point => {}
+            Some(_) => return Err(shape),
         }
-        _ => return Err(shape),
-    };
+    }
     if (tile.rounds > 1) != round_barrier.is_some() {
         return Err(shape);
     }
@@ -1674,22 +1684,50 @@ fn emit_cooperative_contraction(
             Ok(())
         };
 
-    let fold_tile = |builder: &mut KernelBuilder| -> Result<KernelValueId, KernelBuildError> {
-        let zero = builder.constant(KernelConstant::Index(0))?;
+    // One tile's contributors, folded into the *carried* accumulator rather than
+    // into a subtotal of their own. `carried` is `None` on the first round and
+    // the running accumulator on every later one, which is the whole difference
+    // between this schedule and a contiguous-interval split: `acc + (p0 + … +
+    // p15)` regroups the declared contributor sequence and consumes
+    // reassociation, while `((acc + p0) + …) + p15` is that sequence itself and
+    // consumes nothing. The L3 record attributes the measured `tiled` kernel
+    // uniquely to `strict_fold+ftz` and records it byte-identical to `direct` at
+    // every profile cell, which is only true of the second form — the reference
+    // text carries one `accumulator` across its `k0` loop and never restarts it.
+    // The regrouped form is a different realization with its own reserved
+    // vocabulary (`CooperativeContractionSplit`, schedule tag `0x36`), so
+    // emitting it here would give one topology two numerical meanings.
+    let fold_tile = |builder: &mut KernelBuilder,
+                     carried: Option<KernelValueId>|
+     -> Result<KernelValueId, KernelBuildError> {
         let left_base = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
         let right_base = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
-        let left_first = builder.binary(BinaryOp::IndexAdd, left_base, zero)?;
-        let right_first = builder.binary(BinaryOp::IndexAdd, right_base, zero)?;
-        let a0 = builder.staged_load(left_staging, left_first, contraction.consume_phase)?;
-        let b0 = builder.staged_load(right_staging, right_first, contraction.consume_phase)?;
-        let seed = builder.binary(BinaryOp::F32Multiply, a0, b0)?;
-        let seed = builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?;
-        if contraction.block <= 1 {
+        // The first round has no accumulator to continue, so its first product
+        // *is* the seed and the loop starts at one. `+0.0 + p` is not the same
+        // binary32 value as `p` when `p` is negative zero, so seeding from a
+        // literal zero would be a different computation rather than a tidier
+        // spelling of this one.
+        let (seed, start) = match carried {
+            None => {
+                let zero = builder.constant(KernelConstant::Index(0))?;
+                let left_first = builder.binary(BinaryOp::IndexAdd, left_base, zero)?;
+                let right_first = builder.binary(BinaryOp::IndexAdd, right_base, zero)?;
+                let a0 =
+                    builder.staged_load(left_staging, left_first, contraction.consume_phase)?;
+                let b0 =
+                    builder.staged_load(right_staging, right_first, contraction.consume_phase)?;
+                let seed = builder.binary(BinaryOp::F32Multiply, a0, b0)?;
+                let seed = builder.convert(ConvertOp::CanonicalizeF32Nan, seed)?;
+                (seed, 1)
+            }
+            Some(accumulator) => (accumulator, 0),
+        };
+        if start >= contraction.block {
             return Ok(seed);
         }
         let results = builder.serial_loop(
             SerialLoopSpec {
-                start: 1,
+                start,
                 end: contraction.block,
             },
             &[seed],
@@ -1718,7 +1756,7 @@ fn emit_cooperative_contraction(
     let k0 = builder.constant(KernelConstant::Index(0))?;
     emit_tile(builder, k0)?;
     builder.barrier(contraction.barrier.clone())?;
-    let seed = fold_tile(builder)?;
+    let seed = fold_tile(builder, None)?;
     let total =
         if contraction.rounds > 1 {
             let round_barrier = contraction.round_barrier.clone().ok_or(
@@ -1742,9 +1780,10 @@ fn emit_cooperative_contraction(
                     let k0 = builder.binary(BinaryOp::IndexMultiply, round, stride)?;
                     emit_tile(builder, k0)?;
                     builder.barrier(contraction.barrier.clone())?;
-                    let tile = fold_tile(builder)?;
-                    let folded = builder.binary(BinaryOp::F32Add, acc, tile)?;
-                    let folded = builder.convert(ConvertOp::CanonicalizeF32Nan, folded)?;
+                    // The accumulator enters the tile fold rather than meeting a
+                    // subtotal after it, so this round loop adds no combining
+                    // step of its own.
+                    let folded = fold_tile(builder, Some(acc))?;
                     Ok(vec![folded])
                 },
             )?;

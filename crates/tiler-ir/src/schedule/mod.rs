@@ -169,7 +169,8 @@ pub use contraction_topology::{
 pub use cooperative::{
     AntiDependencyEdge, ContributorArrival, CooperativePhase, CooperativeTile,
     LocalCoordinateSource, LocalCoordinates, ParticipantRange, ParticipantSpace, StagedElement,
-    StagedRead, StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging, workgroup_tree_tile,
+    StagedRead, StagedSpan, StagedWrite, VisibilityEdge, WorkgroupStaging, blocked_operand_tile,
+    workgroup_tree_tile,
 };
 pub use error::{
     BlockedWorkgroupRule, ContributorCoverageRule, ContributorError,

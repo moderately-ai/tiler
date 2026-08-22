@@ -5,7 +5,7 @@ status: in-progress
 priority: p1
 dependencies: [admit-a-cooperative-tile-over-shared-operands, admit-guarded-output-tails-for-cooperative-contraction, admit-a-two-dimensional-cooperative-staging-relation, reclassify-language-model-work-as-a-conformance-track]
 related: [realize-the-strict-contraction-on-metal, realize-the-contraction-through-the-appendable-direct-path, integrate-the-contraction-vertical-into-the-runtime]
-scopes: [implementation/ir, implementation/compiler, implementation/metal, contracts/navigation]
+scopes: [implementation/ir, implementation/compiler, implementation/metal, contracts/navigation, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, metal, contraction, language-model, deferred, class-generic-capability]

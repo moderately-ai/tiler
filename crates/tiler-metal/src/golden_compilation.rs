@@ -207,7 +207,7 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 10] = [
+const GOLDENS: [(&str, &str); 11] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
@@ -238,6 +238,18 @@ const GOLDENS: [(&str, &str); 10] = [
     (
         "contraction_strict_tensor.metal",
         include_str!("../goldens/contraction_strict_tensor.metal"),
+    ),
+    // The one fixture that composes threadgroup storage, a barrier, a round
+    // loop, and a guarded load in one entry point. Compiling it is what turns
+    // "the emitter writes a conditional operand read" into "the Metal compiler
+    // accepts two threadgroup allocations, a barrier inside a loop body, and a
+    // subscript reached only through a conditional operator" — and the last is
+    // the half most likely to be wrong in a way that still looks right, because
+    // a spelling that evaluated both arms would compile just as cleanly and read
+    // past the end of the operand on exactly this fixture's partial block.
+    (
+        "contraction_tiled_cooperative.metal",
+        include_str!("../goldens/contraction_tiled_cooperative.metal"),
     ),
     // The one fixture whose entry point declares threadgroup storage, reads a
     // local invocation coordinate, and carries a barrier. Compiling it is what

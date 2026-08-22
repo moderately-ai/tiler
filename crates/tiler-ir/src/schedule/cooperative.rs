@@ -938,3 +938,142 @@ pub fn workgroup_tree_tile(participants: u64) -> Option<CooperativeTile> {
         ..tile
     })
 }
+
+/// Builds the square blocked operand tile a tiled contraction stages.
+///
+/// **Labelled draft public boundary.** The sibling of [`workgroup_tree_tile`]
+/// for [`super::ReductionTopology::CooperativeContraction`], added so the one
+/// tile shape three layers construct — the schedule alternative, the kernel
+/// lowering's fixtures, and the backend's — is written once. Tom has accepted
+/// the topology and the binding it requires; this constructor's exact included
+/// and excluded surface is not yet his, so it stays a labelled draft.
+///
+/// # The relation, and why it is the inverse of the tree's
+///
+/// Every participant owns one output position and none of them combines
+/// another's partial, so `commit` is the whole participant run rather than a
+/// single ordinal, and there is no trailing participant axis. What the
+/// participants share is *operands*: participant `(m, n)` of a `block × block`
+/// workgroup stages one element of the left tile and one of the right, then
+/// every participant reads a whole row of the left staging and a whole column of
+/// the right. The right allocation is written transposed — stride `[1, block]`
+/// against the left's `[block, 1]` — which is what makes both reads contiguous
+/// runs of `block` slots rather than one strided walk.
+///
+/// # Rounds and the anti-dependency
+///
+/// `rounds` is the number of contracted tiles the fold walks, which the caller
+/// derives from the contracted extent and the tile width; the schedule verifier
+/// requires it to equal that quotient. A repeating tile rewrites both
+/// allocations every round, so it carries one anti-dependency per allocation and
+/// this constructor adds the single round boundary that discharges both — the
+/// edges do not name which allocation is rewritten, so one point answers both.
+/// A single-round tile carries neither and gets the phase boundary alone; adding
+/// a round boundary there would be the redundant point the synchronization
+/// authority refuses.
+///
+/// Returns `None` when `block` is below two — a lone participant stages values
+/// it reads back itself, which that same authority refuses — when `rounds` is
+/// zero, or when the participant run, the slot count, or the staged spans are
+/// unrepresentable.
+#[must_use]
+pub fn blocked_operand_tile(block: u64, rounds: u64) -> Option<CooperativeTile> {
+    if block < 2 || rounds == 0 {
+        return None;
+    }
+    let participants = block.checked_mul(block)?;
+    if participants > super::MAX_COOPERATIVE_PARTICIPANTS {
+        return None;
+    }
+    let range = ParticipantRange {
+        first: 0,
+        count: participants,
+    };
+    range.end()?;
+    // Rank two, deliberately: the blocked binding maps a workgroup-local `(m,
+    // n)` onto the output, and a rank-one space would leave every staged span
+    // reconstructing that pair from a linear ordinal.
+    let space = ParticipantSpace::new(&[block, block])?;
+    let left = StagingId::FIRST;
+    let right = StagingId::new(1);
+    let produce = PhaseId::FIRST;
+    let consume = PhaseId::new(1);
+    let staged = |id| WorkgroupStaging {
+        id,
+        element: StagedElement::F32,
+        slots: participants,
+        live_from: produce,
+        live_through: consume,
+    };
+    let tile = CooperativeTile {
+        coordinates: LocalCoordinates {
+            source: LocalCoordinateSource::LocalWorkgroupPosition,
+            participants: space,
+        },
+        rounds,
+        staging: vec![staged(left), staged(right)],
+        phases: vec![
+            CooperativePhase {
+                id: produce,
+                participation: range,
+                writes: vec![
+                    StagedWrite {
+                        staging: left,
+                        span: StagedSpan::new(&[block, 1], 0, 1)?,
+                    },
+                    StagedWrite {
+                        staging: right,
+                        span: StagedSpan::new(&[1, block], 0, 1)?,
+                    },
+                ],
+                reads: Vec::new(),
+            },
+            CooperativePhase {
+                id: consume,
+                participation: range,
+                writes: Vec::new(),
+                reads: vec![
+                    StagedRead {
+                        staging: left,
+                        // One contiguous row per output row, addressed by `m`
+                        // alone: every participant sharing a row reads the same
+                        // run, which is the sharing this tile exists for.
+                        span: StagedSpan::new(&[block, 0], 0, block)?,
+                    },
+                    StagedRead {
+                        staging: right,
+                        span: StagedSpan::new(&[0, block], 0, block)?,
+                    },
+                ],
+            },
+        ],
+        synchronization: Vec::new(),
+        commit: range,
+    };
+    let subject = required_subject(&tile.visibility_edges())?;
+    let convergence = ConvergenceEvidence::required_for_rounds(rounds);
+    let point = |id, placement| SynchronizationPoint {
+        id,
+        subject,
+        placement,
+        participants: range,
+        convergence,
+    };
+    let mut synchronization = vec![point(
+        SyncPointId::FIRST,
+        SynchronizationPlacement::PhaseBoundary {
+            preceding: produce,
+            following: consume,
+        },
+    )];
+    if rounds > 1 {
+        synchronization.push(point(
+            SyncPointId::new(1),
+            SynchronizationPlacement::RoundBoundary,
+        ));
+    }
+    Some(CooperativeTile {
+        synchronization,
+        ..tile
+    })
+}

@@ -1537,6 +1537,43 @@ impl KernelEmitter<'_> {
                 ));
                 Ok(())
             }
+            // A conditional operator, not an `if`/`else` pair over an
+            // uninitialized local and not a select over an unconditional load.
+            // MSL inherits C++'s rule that exactly one of the second and third
+            // operands is evaluated, so the subscript is unreachable when the
+            // guard is false — which is this operation's stated contract, that a
+            // false predicate performs no memory access. A select spelling
+            // (`select(inactive, b0[o], p)`, or a multiply by the guard) reads
+            // the element first and discards it, turning the one shape the
+            // operation exists to express into an out-of-range read on exactly
+            // the tail invocations it was added for.
+            //
+            // The statement carries no arithmetic operator, so the per-statement
+            // contraction rule this emitter maintains elsewhere has nothing to
+            // hold here: there is no product and no sum to fuse.
+            OperationView::GuardedLoad {
+                predicate,
+                buffer,
+                offset,
+                bounds,
+                inactive,
+            } => {
+                let [result] = results.as_slice() else {
+                    return Err(arity("guarded-load-result"));
+                };
+                let index = self.buffer_binding(buffer)?;
+                let predicate = self.name(predicate)?.to_owned();
+                let offset = self.name(offset)?.to_owned();
+                let inactive = self.name(inactive)?.to_owned();
+                let witness = bounds.get();
+                let value_type = self.value_type(*result)?;
+                let name = self.bind(*result)?;
+                self.line(&format!(
+                    "{value_type} {name} = {predicate} ? b{index}[{offset}] : {inactive};  \
+                     // bounds witness {witness} on the guarded path"
+                ));
+                Ok(())
+            }
             OperationView::Store {
                 buffer,
                 offset,
