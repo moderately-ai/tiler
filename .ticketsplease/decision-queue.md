@@ -210,6 +210,16 @@ A negative control was added for the admitted case: `a_literal_on_a_rooted_axis_
 
 **Coordinator judgement: this is a reading, not a departure, so it did not go back to Tom as a fresh decision.** Recorded here rather than buried in a worker report so it is visible and cheap to reverse — if Tom reads the clause the strong way, the consequence is that `v17`'s fixed-axis rooting must also be revisited, and that is the conversation to have, not a quiet re-implementation.
 
+### Item 24 follow-up — the accepted ADR 0108 packet carries a false tag premise, found 2026-08-22
+
+Recorded here because it is a defect **in an accepted record**, not in a worker's implementation, and because the packet it affects is now authorable.
+
+The ADR 0108 data-dependent packet states the current `LinearRange` / `ReductionDomain` bytes are `0x01` / `0x02` and assigns a new gather bounds proof `0x03`. Verified at source by the coordinator: the real values are `TAG_LINEAR_RANGE = 0x11` and `TAG_REDUCTION_DOMAIN = 0x12` (`crates/tiler-ir/src/schedule/model.rs`), attributed by `git log -S` to `912bb110` — **before the packet was written**, so this was false when written rather than stale. The file is nibble-partitioned (`0x0X` access maps, `0x1X` bounds proofs, `0x2X` scalar programs), and `0x03` is already `TAG_SCALAR_BROADCAST` in the access-map space. The correct fresh tag is **`0x13`**.
+
+Nothing has been implemented on the false premise — the index layer landed and the schedule layer did not — so **no identity was corrupted**. The correction is recorded on `decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary`, which must not restate `0x03` in any option it presents to Tom.
+
+**A second, genuinely undecided axis surfaced with it, and it is Tom's.** The packet spells the proof inline in `BoundsProofKind`. Measured: `BoundsProofKind` is 72 bytes; `GatherIndexBoundsProof` carries three `Shape`s, two `ResolvedValueType`s, a region identity and a domain vector, so inlining takes the enum to several hundred bytes that **every** variant pays, including the dominant `LinearRange`. Boxing is the natural remedy and re-spells an accepted public field — a stop condition. The dynamic-bounds packet now carries this as a required frontier axis with measured byte costs rather than assuming it away.
+
 ## 25. Host-evidence-to-profile composition model — ACCEPTED 2026-08-19 (model 2b, components 1–6)
 
 - Ticket: `decide-the-host-evidence-to-profile-composition-model` (`p2`, `awaiting-decision`); option-independent prerequisite `define-host-applicability-for-profiles-whose-rows-span-environments` (deferred, trigger-logged) filed.
