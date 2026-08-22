@@ -207,7 +207,7 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 11] = [
+const GOLDENS: [(&str, &str); 13] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
@@ -247,6 +247,25 @@ const GOLDENS: [(&str, &str); 11] = [
     // the half most likely to be wrong in a way that still looks right, because
     // a spelling that evaluated both arms would compile just as cleanly and read
     // past the end of the operand on exactly this fixture's partial block.
+    // The two rank-four fixtures, and the pair is deliberate. Every other golden
+    // here contracts a rank-two output; these are the first whose iteration
+    // space carries four axes, so compiling them is what turns "the emitter
+    // writes a four-axis address chain" into "the Metal compiler accepts the
+    // nested division-and-remainder chain this backend emits to recover four
+    // coordinates from one linear invocation index".
+    //
+    // They also differ from each other in exactly one way — whether operand 1
+    // reads its contracted axis last or in the middle — which is the sharpest
+    // identity hazard in the pinned workload and the one a positional rather
+    // than role-keyed lowering would collapse.
+    (
+        "contraction_attention_score.metal",
+        include_str!("../goldens/contraction_attention_score.metal"),
+    ),
+    (
+        "contraction_attention_value.metal",
+        include_str!("../goldens/contraction_attention_value.metal"),
+    ),
     (
         "contraction_tiled_cooperative.metal",
         include_str!("../goldens/contraction_tiled_cooperative.metal"),
