@@ -3,7 +3,7 @@ id: accept-the-exact-composed-reference-session-and-event-surface
 title: Accept the exact composed-reference session and event surface
 status: blocked
 priority: p1
-dependencies: [derive-staged-combine-structure-from-program-scope]
+dependencies: [derive-staged-combine-structure-from-program-scope, join-the-scheduled-region-into-the-contraction-witness]
 related: [implement-the-composed-realization-evaluation-driver, define-the-composed-realization-driver-subject-bridge, decide-the-safe-cross-crate-composed-reference-boundary, accept-the-realization-witness-surface, accept-the-composed-realization-evaluation-surface]
 scopes: [contracts/decisions]
 shared_scopes: [project/tickets]

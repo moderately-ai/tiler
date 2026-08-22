@@ -1,7 +1,7 @@
 ---
 id: replace-provider-offer-with-a-host-bounded-frontier-sink
 title: Replace ProviderOffer vectors with a host-bounded frontier sink
-status: blocked
+status: todo
 priority: p1
 dependencies: [decide-whether-the-implementation-frontier-owes-a-retention-budget, calibrate-the-physical-frontier-provider-and-outcome-budgets]
 related: [accept-the-installed-physical-provider-public-surface, design-explicit-caller-selected-budget-exhaustion-policies]
@@ -58,3 +58,13 @@ Blocker 1 is reproduced through the public API on this draft: the ordinary five-
 The branch-local acceptance packet is also incomplete. It omits exact sink method argument/return signatures and the refusal-token traits, gives no per-exclusion reasons despite claiming them, and compares the sink only with a one-sentence pull counterpoint. Rebuild the packet through the full decision-readiness gate after the implementation and spike migrations are complete; do not patch those omissions into a packet that still carries the uncalibrated value.
 
 The claim was released because its calibration dependency was reopened. Resume only after [`calibrate-the-physical-frontier-provider-and-outcome-budgets`](calibrate-the-physical-frontier-provider-and-outcome-budgets.md) supplies a reviewed full-request authority/value. Then rebase the preserved draft, repair every finding above, run exact-commit independent review, and only then update the public-boundary packet for Tom.
+
+## Released to ready — 2026-08-22, its stated resume condition fired
+
+This ticket says **"Resume only after `calibrate-the-physical-frontier-provider-and-outcome-budgets` supplies a reviewed value, then rebase."** That ticket is now **`done`**, and so is the other dependency, `decide-whether-the-implementation-frontier-owes-a-retention-budget` — both verified by the coordinator at `925fdfd8`. The stated condition has fired, so the status moves from `blocked` to `todo`.
+
+**Read this before starting: a preserved draft exists and must not be merged.** Commit `54e272baa525027a6f6f9d982bd3bd7c387597fb` sits on `tkt/replace-provider-offer-with-a-host-bounded-frontier-sink` — 1,031 insertions across 17 files, including a branch-only `tickets/accept-the-host-bounded-physical-frontier-sink.md` that does not exist on `main`. This ticket's own text records it as *"not decision-ready or mergeable"*, and a branch audit confirmed it is **612 commits behind**. Treat it as evidence to read, not a base to build on: the review that parked it named five blockers, one of which is that three retained spikes no longer compile against the revised API. **Rebase or rewrite deliberately; do not merge it, and do not delete the branch.**
+
+**What the calibration actually settled, and what it did not.** It landed the **raw-outcome** axis only. Its own stop condition fired on the **provider-count** axis, which has no accepted value and a different enforcement point — `InstalledPhysicalProviders::installed` runs *before* compile and has no count branch, so a per-request budget field could never enforce it. That axis is [`calibrate-the-physical-provider-count-at-the-installation-seam`](calibrate-the-physical-provider-count-at-the-installation-seam.md), still open. **Do not assume a provider-count limit exists.**
+
+**Scheduling.** Collides with the live gather-vertical lane on `implementation/compiler` and `contracts/decisions`. **Release trigger: that lane merges or stops at a gated boundary.**
