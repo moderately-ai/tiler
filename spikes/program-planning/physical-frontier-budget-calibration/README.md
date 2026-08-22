@@ -26,7 +26,8 @@ CARGO_TARGET_DIR=./target cargo build --release
 ./target/release/physical-frontier-budget-calibration request-census
 ./target/release/physical-frontier-budget-calibration request-boundary 31
 ./target/release/physical-frontier-budget-calibration perturb extra-production-provider
-./target/release/physical-frontier-budget-calibration record /tmp/physical-frontier-request-wide-rerun.json
+python3 ../../scheduling/metal_contraction_tile_width/tile_width_sweep.py --mode gate \
+  && ./target/release/physical-frontier-budget-calibration record /tmp/physical-frontier-request-wide-rerun.json
 ./target/release/physical-frontier-budget-calibration export-raw /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 ./target/release/physical-frontier-budget-calibration annotate-record /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 ./target/release/physical-frontier-budget-calibration verify-evidence /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
@@ -42,14 +43,76 @@ git worktree add --detach "$evidence_worktree" d086fe9953a09a1a8a64dbd2353e9ded7
 CARGO_TARGET_DIR="$evidence_worktree/target" cargo test --manifest-path "$evidence_worktree/Cargo.toml" -p tiler-compiler --lib request_wide_physical_planning_population_is_pinned -- --nocapture
 CARGO_TARGET_DIR="$evidence_worktree/spike-target" cargo run --quiet --manifest-path "$evidence_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml" -- census
 CARGO_TARGET_DIR="$evidence_worktree/spike-target" cargo build --release --manifest-path "$evidence_worktree/spikes/program-planning/physical-frontier-budget-calibration/Cargo.toml"
-"$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" record /tmp/physical-frontier-request-wide-rerun.json
+# The probe comes from the current checkout: it postdates d086fe99.
+python3 ../../scheduling/metal_contraction_tile_width/tile_width_sweep.py --mode gate \
+  && "$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" record /tmp/physical-frontier-request-wide-rerun.json
 "$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" export-raw /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 "$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" annotate-record /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 "$evidence_worktree/spike-target/release/physical-frontier-budget-calibration" verify-evidence /tmp/physical-frontier-request-wide-rerun.json /tmp/physical-frontier-request-wide-rerun.annotated.json /tmp/physical-frontier-request-wide-rerun.timings.tsv /tmp/physical-frontier-request-wide-rerun.rss.jsonl
 git worktree remove --force "$evidence_worktree"
 ```
 
-Run the release `record` line only after the idle/noise precheck. The retained snapshots used `sw_vers`, `uname -a`, `sysctl -n machdep.cpu.brand_string`, `sysctl -n hw.ncpu`, `sysctl -n hw.memsize`, `sysctl -n vm.loadavg`, `uptime`, `pmset -g batt`, `pmset -g therm`, `memory_pressure`, `df -h /`, and `ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r`; the same load, power, thermal, memory, filesystem, and process checks ran immediately after the record. The [pre-run](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-before.txt) and [post-run](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-after.txt) artifacts retain those outputs with only `memory_pressure`'s trailing spaces normalized.
+Run the release `record` line only behind the quiet-host gate stated in [Host precondition for a timed rerun](#host-precondition-for-a-timed-rerun) below, which is what the phrase *idle/noise precheck* used to gesture at without defining. The retained snapshots used `sw_vers`, `uname -a`, `sysctl -n machdep.cpu.brand_string`, `sysctl -n hw.ncpu`, `sysctl -n hw.memsize`, `sysctl -n vm.loadavg`, `uptime`, `pmset -g batt`, `pmset -g therm`, `memory_pressure`, `df -h /`, and `ps -Ao pid,ppid,%cpu,%mem,state,etime,comm -r`; the same load, power, thermal, memory, filesystem, and process checks ran immediately after the record. The [pre-run](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-before.txt) and [post-run](results/2026-08-14-request-wide-macos-27.0-m3-pro.environment-after.txt) artifacts retain those outputs with only `memory_pressure`'s trailing spaces normalized.
+
+## Host precondition for a timed rerun
+
+The only command here that reads a wall clock is `record`, and it is gated on the quiet-host probe below. Until 2026-08-22 that precondition existed but was never written down: it was applied by judgement, run by run, under a phrase — *the idle/noise precheck* — that named no threshold, no probe, and nothing a rerun could apply. The retained numbers are sound. What was missing is the rule deciding which host they may be taken on, and without it a rerun cannot reproduce the admission decision, so the numbers are not reproducible in the sense `AGENTS.md` requires of a measurement. This section is that rule. It changes no measured value and re-runs nothing.
+
+**The rule is adopted, not written.** It is the gate the contraction tile-width lane derived and froze, unchanged in every component and every threshold: [its pre-run amendment](../../scheduling/metal_contraction_tile_width/PROTOCOL-2026-08-22-contraction-tile-width.md) states it and `spikes/scheduling/metal_contraction_tile_width/tile_width_sweep.py "def quiet_host_gate"` implements it. Writing a second rule here was the alternative and is rejected. Two quiet-host rules in one repository drift, and the drift is silent because `spikes/` sits outside every repository gate, so a copied threshold that falls out of date keeps reading green while admitting a contaminated host. Invoking the other lane's file instead fails **loudly**: a moved file, a renamed mode, or a Python that will not parse is a nonzero exit, and this gate reads a nonzero exit as a refusal. That asymmetry — silent divergence against loud absence — is the whole argument for adoption, and it is why the probe is invoked rather than vendored.
+
+**No component was added for this subject, and that was decided on evidence rather than economy.** The four are mean CPU idle at or above 95% over ten one-second samples, GPU device utilization at or below 5%, a one-minute load average at or below a baseline-relative 3.5, and an exclusive advisory lock; each fails closed, so a probe whose input cannot be read refuses instead of passing. This spike measures Tiler host runtime and process RSS rather than kernel time, so the contended device is the CPU, not the GPU — which invites both dropping the GPU component and adding the dimensions this spike's own snapshots already record: AC power, thermal state, memory pressure, and a concurrent-build-process count. Both moves are refused. The single refusal this spike ever actually made turned on the load average and on a Chrome renderer's CPU, and the CPU-idle component discriminates both directly and earlier; power, thermal, and swap were all clean at that same refusal, so promoting them to gate components would write down a rule *stricter* than the one that was applied, which is a different repair than the one this record needs. A concurrent-build-process count is worse than redundant: an active `cargo` or `rustc` already drives CPU idle below the floor, and a name-matched count is the shape the sibling lane rejected by name, because it admits whatever the pattern misses and reads green forever once the pattern rots. The narrower in-repository precedent at `spikes/program-planning/reduction-partition-calibration/src/main.rs "fn concurrent_build_processes"` stays correct for its own study and is deliberately not generalized here. The GPU component is retained unchanged despite not being this subject's contended device: on a unified-memory part a busy GPU still competes for the memory system an RSS-sensitive compile measurement runs in, it costs nothing, it fails closed, and dropping one component is precisely how the second rule would begin.
+
+**The command, and the fail-closed contract.** From this directory, in a checkout new enough to contain the probe:
+
+```sh
+python3 ../../scheduling/metal_contraction_tile_width/tile_width_sweep.py --mode gate
+```
+
+Exit 0 admits, exit 1 refuses and prints which component refused and why; the probe dispatches nothing and reads no wall clock. Chain it with `&&` rather than running it as a separate step, so a refusal *stops* the measurement instead of being read and ignored — the chaining is what makes this a gate rather than a note, and both command blocks above are written that way. The historical-evidence block chains the probe from the **current** checkout, because commit `d086fe9953a09a1a8a64dbd2353e9ded78ef18e6` predates it. That is also why the precondition is an external probe rather than a check inside the binary: this record has two rerun paths, one through the current executable and one through a detached worktree at that commit, and a gate compiled into either binary would not reach the other path at all. A precondition that cannot reach half its subject is the failure class this repository has already been bitten by.
+
+**Two consequences of adopting another lane's file, stated rather than discovered.** The probe's `main()` refuses outright when `xcrun` is absent, because its other modes compile Metal. That check is irrelevant to this spike, which needs only `rustc`, so on a host without an Xcode command-line toolchain the gate refuses for a reason that has nothing to do with host quiet. It fails in the safe direction and the bench host has the toolchain, but a reader who sees that refusal should not go looking for competing work. Second, the probe was exercised here under the bench host's `Python 3.9.6`, not under a newer interpreter, so that is the version this precondition is known to run on.
+
+
+**What it would take for this gate to say no, and confirmation that case is reachable.** Any one of the four components refusing is enough, and all four were driven to refuse on this bench host by the lane that derived them, with each failure quoted in [the tile-width record](../../scheduling/metal_contraction_tile_width/README.md#the-quiet-host-gate-and-both-directions-of-it-watched). Those perturbations are evidence about *this* gate and not merely about a similar one: the probe file was verified byte-identical between the two hosts before the reads below, at SHA-256 `1815079e7495df2f16d9ecb6d8af4fbc9bc66be5ec5f1f6f081e8f8514db9ff0`. What is new here, and what is specific to this record, is whether a refusal actually stops `record` in the chained form written above. Both directions of that chain were watched on 2026-08-22 on the bench host, with `echo` standing in for `record` so that no wall clock was read and no calibration timing was re-run.
+
+**It admits a quiet host, and the chained command proceeds.** Quoted unedited:
+
+```text
+== quiet-host gate ==
+   host Thomass-MacBook-Pro, 11 cores, Apple M3 Pro
+  CPU idle, mean of 10 x 1 s    98.64%  (floor 95.0%, min sample 97.81%)  pass
+  GPU device utilization              0%  (ceiling 5%)  pass
+  load average, one minute         1.88   (ceiling 3.5, recorded idle baseline one-minute 1.86-2.47 over 20+ observations 2026-08-22; retained in-tree at spikes/program-planning/physical-frontier-budget-calibration/results/ as { 2.22 2.39 2.26 } on 2026-08-13 and { 2.18 2.23 2.24 } on 2026-08-14, same host)  pass
+  exclusive measurement lock     /tmp/tiler-contraction-tile-width-sweep.lock  held
+
+verdict: ADMIT -- a timing run may start now.
+NO WALL CLOCK WAS READ. This mode makes no timing claim of any kind.
+RECORD WOULD START (record stand-in; no timing was run)
+chain-exit=0
+```
+
+**It refuses under real competing work, and the chained command does not start.** Four bounded busy loops were started on the bench host and the same chain read twenty-five seconds later. The `RECORD WOULD START` line is absent, which is the property being demonstrated:
+
+```text
+  CPU idle, mean of 10 x 1 s    53.03%  (floor 95.0%, min sample 48.13%)  REFUSE
+  GPU device utilization              0%  (ceiling 5%)  pass
+  load average, one minute         3.71   (ceiling 3.5, ...)  REFUSE
+  exclusive measurement lock     /tmp/tiler-contraction-tile-width-sweep.lock  held
+
+REFUSED: CPU idle averaged 53.03% over 10 s, below the 95.0% floor. Work is competing for CPU, and on a unified-memory device that competes for bandwidth with the dispatch being timed.
+REFUSED: One-minute load average is 3.71, above the 3.5 ceiling. This ceiling is relative to this host's recorded idle baseline of ..., not an absolute quiet figure.
+chain-exit=1
+```
+
+The subject was perturbed in both cases and no assertion was edited. The busy loops self-terminated after 150 seconds and were confirmed gone; where a long constant is elided above it is marked `...`, and no line is combined from a different read.
+
+**An independent confirmation of the load average's demotion, from the opposite side.** The tile-width lane demoted the one-minute load average to a lagging cross-check on evidence that it lags on the way *up*: twenty-five seconds into competing work, CPU idle had fallen to 61.17% while load still read 2.89. The recovery read here shows the same lag on the way *down*. Immediately after those busy loops ended, CPU idle had already returned to `98.29%` while the one-minute load average still read `4.06` and refused the run. The instrument lags in both directions, which is a stronger reason to keep it as a cross-check and not as the discriminator than either observation alone.
+
+**One consequence of writing the rule down, stated rather than left for a reader to hit.** This gate admits the run the current result rests on and refuses one it does not. The 2026-08-14 request-wide record was taken at load `{ 2.18 2.23 2.24 }` falling to `{ 1.61 2.07 2.17 }`, with the highest non-observing process at 5.0 percent CPU: inside every component. The [historical single-target record](#historical-single-target-host-runtime-record) below was taken at load `{ 6.82 3.66 2.70 }` and `{ 6.32 3.66 2.71 }`, which this gate refuses at start and at end. That row is already labelled historical and is superseded by the corrected request-wide result, and nothing here re-runs it, withdraws a number, or changes a value — but a rerun of it under this precondition would refuse, and a reader is entitled to know that before treating it as reproducible. An unwritten gate can never disagree with a retained run, which is exactly why it could not be relied on.
+
+**Before a rerun, quiesce the interactive session.** The bench host carries a permanent console login whose foreground applications produce episodic bursts of roughly one core, and the gate refuses during them, correctly. Across ten arbitrary reads on 2026-08-22 while that session was live, six admitted and four refused; every read taken is counted here, including the ones that refused, and the perturbed read and the burner-recovery read are excluded because their load was induced. Quit the foreground applications before the run rather than re-reading the gate until it passes. Re-reading until green selects for the quiet phase of a host that is not quiet, which is the contamination this gate exists to exclude; where several reads are genuinely needed, fix the count in advance and report every verdict, which is how the six-and-four above were obtained. Quiescing a user session is an operator action. Nothing here authorizes disabling the system extensions that carry this host's load-average floor: they are the machine's networking, and that is Tom's decision.
+
+**Work record:** [`write-the-frontier-calibration-s-unwritten-quiet-host-gate`](../../../tickets/write-the-frontier-calibration-s-unwritten-quiet-host-gate.md).
 
 The compiler-owned governed census is a targeted crate test because the old `ProviderOffer` public surface cannot expose raw governed emissions:
 
