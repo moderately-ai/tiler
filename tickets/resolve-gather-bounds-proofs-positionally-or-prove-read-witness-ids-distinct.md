@@ -1,7 +1,7 @@
 ---
 id: resolve-gather-bounds-proofs-positionally-or-prove-read-witness-ids-distinct
 title: Resolve gather bounds proofs positionally or prove read witness ids distinct
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-selected-data-dependent-index-representation, carry-the-gather-relation-through-the-compiler-vertical]
