@@ -28,6 +28,7 @@ pub(crate) use tiler_ir::schedule::{
 };
 use tiler_ir::schedule::{
     ArithmeticType, ScheduledRegionBuildError, ScheduledRegionBuilder, ScheduledRegionDiagnostic,
+    admit_exact_cooperative_contraction, admit_predicated_cooperative_contraction,
 };
 
 use crate::region::SemanticStage;
@@ -2464,6 +2465,24 @@ pub(crate) fn contraction_region(
     (region, normalized.members.clone())
 }
 
+/// The region identifier every tiled cooperative contraction carries.
+///
+/// Distinct from the direct fold's zero for the reason [`EPILOGUE_REGION`] is
+/// distinct from the whole-program region's: the request-subject binding matches
+/// on the identifier, and the two realizations carry the *same* scalar program —
+/// `StrictTensorContraction` over the same contracted shape — so the program
+/// cannot separate them and the identifier can. It is the contraction lane's
+/// spelling of the relation the fold lane already has, where the single-workgroup
+/// tree takes an identifier of its own rather than reusing the materialized
+/// fold's.
+///
+/// Nothing in this crate constructs a region with this identifier: the tiled
+/// alternative is not offered yet. The identifier exists so that a *provider*
+/// supplying one is checked against the subject it claims rather than refused
+/// for wearing the wrong number, which is the same reason the split's pass
+/// identifiers exist.
+const COOPERATIVE_CONTRACTION_REGION: RegionId = RegionId::new(9);
+
 /// Builds the canonical reduction scheduled region for one request.
 ///
 /// **It is the whole plan for a fold with no prologue, and the fold half of a
@@ -3955,6 +3974,30 @@ fn verify_region_output_binding(
                 ..
             },
         ) => {
+            // A tiled cooperative contraction realizes the same occurrence as
+            // the direct fold by a different physical route: each invocation
+            // still owns one output position, and the workgroup stages operand
+            // tiles so the contracted space is walked a tile at a time. It
+            // *replaces* the direct region rather than adding a stage, so there
+            // is no second region to leave the occurrence to — the relation the
+            // single-workgroup tree has to the materialized fold.
+            //
+            // Matched on its own terms here rather than by relaxing the rules
+            // below, because relaxing them is what the fold lane deliberately
+            // did not do: the direct fold's identifier, launch, and blocked map
+            // are all wrong for a tiled region, and admitting it by weakening
+            // four checks would weaken them for the direct fold too.
+            if matches!(
+                region.schedule.reduction,
+                ReductionTopology::CooperativeContraction { .. }
+            ) {
+                return verify_cooperative_contraction_subject_binding(
+                    region,
+                    semantic_members,
+                    normalized,
+                    subject,
+                );
+            }
             // Every quantity the region carries is re-derived from the subject
             // and compared, including both operands' coordinate maps: a region
             // whose access relation differs from the recognized structure's
@@ -4557,6 +4600,113 @@ fn verify_workgroup_tree_subject_binding(
             coverage.partition(),
         )
         .is_some_and(|shape| shape == region.index.iteration_shape);
+    if !expected {
+        return intrinsic("request-binding", region.index.id);
+    }
+    Ok(())
+}
+
+/// Binds one tiled cooperative contraction to the request subject it refines.
+///
+/// It claims the contraction occurrence, exactly as the direct fold's single
+/// region does and as the single-workgroup tree claims the fold's: the tiled
+/// region replaces that region rather than adding a stage.
+///
+/// **The tiling facts are re-derived through the authority that admits them,
+/// not read back.** `admit_exact_cooperative_contraction` and
+/// `admit_predicated_cooperative_contraction` are the functions that prove the
+/// exact-divisibility equalities before a schedule may carry them, so calling
+/// one here over the *subject's* shapes and the region's declared block re-runs
+/// that proof against what the request actually asked for. Reading `rounds` back
+/// off the topology would make this check agree with whatever the provider
+/// chose — the one thing a subject binding exists to stop — and a round loop
+/// that covers some other contracted extent would then bind while every other
+/// fact agreed. It is the argument [`verify_workgroup_tree_subject_binding`]
+/// makes for re-deriving its participant count.
+///
+/// The blocked binding is required rather than defaulted, which the topology's
+/// own contract states: it is never derived from a global linear invocation, so
+/// a region that declares one has no block for the admission to check and is
+/// refused by the `else` below.
+fn verify_cooperative_contraction_subject_binding(
+    region: &ScheduledRegion,
+    semantic_members: &[SemanticStage],
+    normalized: &NormalizedContraction,
+    subject: &VerifiedRequestSubject,
+) -> Result<(), PhysicalError> {
+    let ReductionTopology::CooperativeContraction {
+        tile,
+        contracted_shape,
+        contracted_tile,
+        ..
+    } = &region.schedule.reduction
+    else {
+        return intrinsic("request-binding", region.index.id);
+    };
+    let ExecutionBinding::BlockedWorkgroup { block, .. } = &region.schedule.binding else {
+        return intrinsic("request-binding", region.index.id);
+    };
+    // The launch population the admitted tail states. An exact blocked map
+    // covers the output exactly, so its grid *is* the output population; a
+    // predicated one ceilings the grid and states the padded total separately,
+    // which is why the two arms resolve it differently rather than sharing one
+    // expression that would be wrong for one of them.
+    let admitted = match region.schedule.tail {
+        TailPolicy::Exact => admit_exact_cooperative_contraction(
+            &normalized.output_shape,
+            block,
+            &normalized.contracted_shape,
+            contracted_tile,
+        )
+        .ok()
+        .map(|exact| (exact.binding, exact.rounds, normalized.output_elements)),
+        TailPolicy::Predicated => admit_predicated_cooperative_contraction(
+            &normalized.output_shape,
+            block,
+            &normalized.contracted_shape,
+            contracted_tile,
+        )
+        .ok()
+        .map(|padded| (padded.binding, padded.rounds, padded.grid_threads)),
+        // A tail policy this binding has not been checked against binds no
+        // subject. Refusing rather than guessing keeps a policy added later from
+        // being admitted under the rules the two known ones were checked
+        // against, which is how the split's pass-role arm refuses an unknown
+        // role. `TailPolicy` is `#[non_exhaustive]` outside `tiler-ir`, so this
+        // arm is required rather than chosen.
+        _ => None,
+    };
+    let Some((binding, rounds, grid_threads)) = admitted else {
+        return intrinsic("request-binding", region.index.id);
+    };
+    let expected = matches!(
+        &region.index.program,
+        RegionProgram::Numerical {
+            scalar: ScalarProgram::StrictTensorContraction {
+                contracted_shape: scalar_contracted,
+                order,
+                canonical_nan_bits,
+            },
+            ..
+        } if scalar_contracted == &normalized.contracted_shape
+                && *order == ContributorOrder::OriginalAxisLexicographic
+                && *canonical_nan_bits
+                    == subject.numerical_contract().canonical_arithmetic_nan_bits
+    ) && semantic_members == normalized.members
+        && region.index.id == COOPERATIVE_CONTRACTION_REGION
+        && region.index.iteration_shape == normalized.output_shape
+        && contracted_shape == &normalized.contracted_shape
+        && element_count(&normalized.output_shape, region.index.id)? == normalized.output_elements
+        && element_count(&normalized.contracted_shape, region.index.id)?
+            == normalized.contracted_elements
+        && region.schedule.binding == binding
+        && tile.rounds == rounds
+        // The population that folds, and the population that launches. A
+        // predicated tail separates them, and a region agreeing on one but not
+        // the other iterates a domain the admitted map does not cover.
+        && region.schedule.work_items == normalized.output_elements
+        && region.schedule.launch.grid_threads == grid_threads
+        && contraction_accesses_match(&region.index.accesses, normalized);
     if !expected {
         return intrinsic("request-binding", region.index.id);
     }
@@ -5503,6 +5653,7 @@ mod tests {
     use super::*;
     use crate::request::{CompilationRequest, StrictF32NumericalContract, verify_planned_request};
     use tiler_ir::kernel::{KernelConstant, OperationRef, OperationView};
+    use tiler_ir::schedule::blocked_operand_tile;
     use tiler_ir::semantic::{
         F32, F32Add, F32Constant, F32Multiply, InputKey, OutputKey, SemanticProgramBuilder,
         StrictSerialF32Sum,
@@ -6271,6 +6422,199 @@ mod tests {
                 .iter()
                 .any(|atom| continuation.members.contains(atom)),
             "the fused affine candidate must not claim the continuation",
+        );
+    }
+
+    /// The `ab,bc->ac` product at `[4, 4] x [4, 4]`, recognized as a contraction.
+    ///
+    /// Four contracted points over a two-wide tile is two rounds, the smallest
+    /// shape that separates a per-round quantity from a whole-space one: at one
+    /// round a wrong round count and a right one are the same number.
+    fn square_contraction_request() -> VerifiedTargetRequest {
+        use tiler_ir::semantic::{
+            ContractionIndex, ContractionIndexStructure, F32TensorContraction,
+        };
+
+        let mut builder = SemanticProgramBuilder::try_standard().unwrap();
+        let left = builder
+            .input::<F32>(InputKey::new("left").unwrap(), Shape::from_dims([4, 4]))
+            .unwrap();
+        let right = builder
+            .input::<F32>(InputKey::new("right").unwrap(), Shape::from_dims([4, 4]))
+            .unwrap();
+        let structure = ContractionIndexStructure::new(
+            [
+                vec![ContractionIndex::new(0), ContractionIndex::new(1)],
+                vec![ContractionIndex::new(1), ContractionIndex::new(2)],
+            ],
+            [ContractionIndex::new(0), ContractionIndex::new(2)],
+        )
+        .unwrap();
+        let product = F32TensorContraction::apply(&mut builder, &structure, left, right).unwrap();
+        builder
+            .output(OutputKey::new("result").unwrap(), product)
+            .unwrap();
+        let program = builder.build().unwrap();
+        let request = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
+        request.for_target(0).unwrap()
+    }
+
+    /// A contraction subject binds a tiled region and the direct fold, and each
+    /// only under its own identifier.
+    ///
+    /// **This is the widening.** Before it, the contraction arm's single
+    /// `region.index.id == RegionId::new(0)` was the whole population a
+    /// contraction subject could bind, so a tiled region realizing the identical
+    /// occurrence was refused whatever else it proved. The two realizations
+    /// carry the *same* scalar program, so nothing but the identifier separates
+    /// them — which is why the widening is an identifier of its own rather than
+    /// a relaxed comparison, and why the direct fold wearing the tiled
+    /// identifier is refused just as firmly as the reverse.
+    ///
+    /// The negative control is the last assertion: the direct fold is still
+    /// bound, unchanged, at zero.
+    #[test]
+    fn a_contraction_subject_binds_the_tiled_region_and_the_direct_fold() {
+        let request = square_contraction_request();
+        let output = &request.normalized().outputs()[0];
+        let normalized = request
+            .contraction()
+            .expect("the square product is recognized as a contraction");
+        let NormalizedOutputSubject::Contraction(subject_contraction) =
+            &request.subject().normalized().outputs()[0]
+        else {
+            panic!("the recognized subject is a contraction");
+        };
+        let subject_output = NormalizedOutputSubject::Contraction(subject_contraction.clone());
+
+        let (direct, members) = contraction_region(&request, output, RegionWrite::ProgramOutput);
+        let bind = |region: &ScheduledRegion| {
+            verify_region_output_binding(region, &members, &subject_output, request.subject())
+        };
+
+        // The admitted blocked map for a two-by-two output block over a
+        // two-wide contracted tile: four workgroups of four invocations, two
+        // rounds. Every fact below is the admission's, not this test's.
+        let admitted = admit_exact_cooperative_contraction(
+            &normalized.output_shape,
+            &Shape::from_dims([2, 2]),
+            &normalized.contracted_shape,
+            &Shape::from_dims([2]),
+        )
+        .expect("a two-wide tile divides four contracted points");
+        assert_eq!(
+            admitted.rounds, 2,
+            "four contracted points over a two-wide tile is two rounds"
+        );
+
+        let tiled = |id: RegionId, contracted_tile: Shape, rounds: u64, grid_threads: u64| {
+            let mut region = direct.clone();
+            region.index.id = id;
+            region.schedule = KernelSchedule {
+                binding: admitted.binding.clone(),
+                work_items: normalized.output_elements,
+                threads_per_workgroup: 4,
+                tail: TailPolicy::Exact,
+                output_owner: OwnershipWitnessId::new(0),
+                reduction: ReductionTopology::CooperativeContraction {
+                    tile: blocked_operand_tile(2, rounds).expect("a representable operand tile"),
+                    contracted_shape: normalized.contracted_shape.clone(),
+                    contracted_tile,
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                launch: LaunchPlan {
+                    grid_threads,
+                    threads_per_workgroup: 4,
+                    zero_work_skips_dispatch: true,
+                },
+            };
+            region
+        };
+        let sound = || {
+            tiled(
+                COOPERATIVE_CONTRACTION_REGION,
+                Shape::from_dims([2]),
+                admitted.rounds,
+                normalized.output_elements,
+            )
+        };
+
+        assert!(
+            bind(&sound()).is_ok(),
+            "a tiled contraction realizing the recognized subject must bind",
+        );
+        // The pin the widening replaced: the identifier still decides, so the
+        // tiled region cannot claim the direct fold's number.
+        assert!(
+            bind(&tiled(
+                RegionId::new(0),
+                Shape::from_dims([2]),
+                admitted.rounds,
+                normalized.output_elements,
+            ))
+            .is_err(),
+            "a tiled region must not bind under the direct fold's identifier",
+        );
+        // A round loop that covers some other contracted extent. The tile still
+        // divides, so only the re-derived round count refuses it.
+        assert!(
+            bind(&tiled(
+                COOPERATIVE_CONTRACTION_REGION,
+                Shape::from_dims([2]),
+                admitted.rounds + 1,
+                normalized.output_elements,
+            ))
+            .is_err(),
+            "a round count the admission does not derive must be refused",
+        );
+        // A tile that does not divide the subject's contracted extent at all,
+        // which the admission itself refuses.
+        assert!(
+            bind(&tiled(
+                COOPERATIVE_CONTRACTION_REGION,
+                Shape::from_dims([3]),
+                admitted.rounds,
+                normalized.output_elements,
+            ))
+            .is_err(),
+            "a contracted tile that does not divide must be refused",
+        );
+        // A launch the admitted blocked map does not state.
+        assert!(
+            bind(&tiled(
+                COOPERATIVE_CONTRACTION_REGION,
+                Shape::from_dims([2]),
+                admitted.rounds,
+                normalized.output_elements + 4,
+            ))
+            .is_err(),
+            "a grid the admitted map does not state must be refused",
+        );
+        // A blocked binding is required rather than defaulted: the topology is
+        // never derived from a global linear invocation.
+        let mut unblocked = sound();
+        unblocked.schedule.binding = ExecutionBinding::GlobalLinearInvocation;
+        assert!(
+            bind(&unblocked).is_err(),
+            "a tiled contraction without a blocked map must be refused",
+        );
+
+        // The negative control: the direct fold is still scored by the arm it
+        // always was, at the identifier it always carried.
+        assert_eq!(direct.index.id, RegionId::new(0));
+        assert!(
+            bind(&direct).is_ok(),
+            "the direct fold must still bind its own subject",
+        );
+        // And it may not wear the tiled identifier either.
+        let mut renumbered = direct.clone();
+        renumbered.index.id = COOPERATIVE_CONTRACTION_REGION;
+        assert!(
+            bind(&renumbered).is_err(),
+            "the direct fold must not bind under the tiled identifier",
         );
     }
 }
