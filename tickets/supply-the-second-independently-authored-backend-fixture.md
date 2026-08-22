@@ -59,6 +59,96 @@ Both Facts were reported by the coordinator's read-only graph sweep and marked u
 
 Publishing the conformance suite — that is `publish-the-backend-provider-conformance-suite`'s own work, and this ticket exists to make it reachable. Any Metal second-family route: the iOS families are hardware- and decision-gated and `second_artifact_family_fixture` was deleted in `1f6ec214`, so that path is closed. Changing the portfolio's neutral subjects.
 
+## Outcome — 2026-08-22
+
+**The fixture is `crates/tiler-conformance/tests/independent_backend/`**, a Cargo integration-test target of about 2,100 lines in five files: `main.rs` (the cases and the subject census), `backend.rs` (the declared target profile, the translator, and the assembly), `graph.rs` (the executable representation and its decoder), `adapter.rs` (the runtime adapter, its worker host, and the route), and `oracle.rs` (the program and the reference evaluation). It adds no public item, no manifest entry, and no `Cargo.lock` edge; `tiler-conformance` already depends on every crate the vertical crosses. Twelve tests, all device-free.
+
+### The two subjects it shares with the portfolio
+
+**Device-free structural subject — a producer cannot state a fact the plan already decided.** Not "the artifact validates", which any careful backend satisfies, but that `assemble_plan_artifact` offers no parameter through which such a fact could be supplied. `the_assembled_artifact_carries_facts_this_backend_never_supplied` asserts the target-profile key and exact descriptor digest, the feasibility rule-set key and revision, the zero deferred prepared-entry predicates, and each packaged entry's `BackendEntryKey`, against the compilation rather than against the producer. The same subject is already asserted independently by `crates/tiler-build/tests/custom_backend`'s `the_derived_subjects_follow_the_compilation_and_not_the_producer`.
+
+**Execution subject — a routed result's verdict comes from `tiler-reference` and never from the adapter.** `the_routed_result_agrees_with_the_reference_oracle` routes through `route_with_adapter` with a caller-selected adapter and compares twelve `f32` bit patterns against the oracle. The same subject is asserted independently by the retained three-family portfolio spike's CPU leg.
+
+### What makes it independently authored rather than a rename
+
+Every row below is a place the seam left a choice, and each is checkable in the source rather than asserted here.
+
+| Choice the seam left open | `tests/custom_backend` | this backend |
+| --- | --- | --- |
+| payload model | symbol, transport list, and work-item count per entry | a single-assignment node table with a declarative store plan |
+| control flow | none carried; the image describes entries, not bodies | predication is one optional guard ordinal on the store plan |
+| evaluation | none; the image is never executed | demand-driven, one forward pass, dead nodes never evaluated |
+| framing | big-endian | little-endian |
+| entry symbol | derived per family from the target triple | positional, carrying no identity, reaching no digest crate |
+| execution host | none | a worker thread the adapter owns, acquired before the commit |
+| delivery positions | two families under one profile | one, and the profile declares one triple |
+
+Two further rows are **convergence rather than difference**, and reporting them that way is the point. Both backends declare `SubnormalMode::Preserve` exact and refuse both flushing modes, because that is what an honest host-arithmetic interpreter under `STRICT_F32` can say; and both declare a **non-identity** transport mapping. A second author reaching the same declaration independently is evidence about the seam, not about copying — and the transport row is now shown to be a live hazard rather than a stylistic claim (see the fifth perturbation below).
+
+Three structural differences are worth naming because they produce validation obligations the other design does not have. A node's ordinal *is* its result, so the decoder must prove every operand is an **earlier** ordinal (`ForwardReference`) and must rebuild the kind table itself rather than transport it (`OperandTypeDisagreement`); and because the store plan is declarative, evaluation is demand-driven, so a load under a false guard is never evaluated at all rather than being skipped by an interpreter that had to remember to.
+
+### The perturbations, each with its quoted failure
+
+Every one perturbs the **subject** — the backend, the adapter, or the declared mapping — and leaves the assertions untouched. The first four are standing cases that assert the refusal; each was additionally applied to the *sound* path and watched turning the suite red, which is the demonstration that the suite can say no. The three red transcripts below were re-captured against the final tree after every case had landed, so their line numbers resolve at this commit; the durable anchors are the test names, and a later reader should re-locate by those rather than by the number.
+
+1. **A self-certifying adapter** (`Evaluation::Certify`): reaches the routing commit, receives the storage, reports its terminal use, and folds nothing. Everything the adapter itself could be asked about is green. Applied to the sound path, `the_routed_result_agrees_with_the_reference_oracle` fails:
+
+   ```text
+   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:522:40:
+   the routed result disagrees: element 0 is 0x00000000 and tiler-reference requires 0x3fc00000
+   ```
+
+2. **A producer-minted entry key** (`EntryPerturbation::ForgedEntryKey`): the backend states an entry identity instead of transporting the one the stage kernel decided. Applied to the sound path, `the_assembled_artifact_carries_facts_this_backend_never_supplied` fails:
+
+   ```text
+   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:238:10:
+   the assembled envelope decodes: Invalid { detail: "UnmappedBackendEntry { payload: 0 }" }
+   ```
+
+3. **An adapter that returns before terminal use** (`Lifetime::ReturnBeforeTerminalUse`): submits the entry, does not await the worker's completion, and returns. Applied to the sound path:
+
+   ```text
+   panicked at crates/tiler-conformance/tests/independent_backend/main.rs:511:6:
+   this caller required the execution host and this host supplied it: "the committed route failed: nodefold.dispatch: 1 entr(y/ies) were submitted and 0 terminal use(s) were witnessed; the routed storage is still outstanding"
+   ```
+
+4. **An adapter that reports what it prefers** (`Binding::Preferred`): reports a representation it cannot decode. The loader compares and refuses:
+
+   ```text
+   runtime.no-eligible-variant: this host can execute none of the 1 packaged variant(s), and no guard was evaluated: variant 0: entry 0 is realized by a tiler.test.nodefold/tiler.test.nodefold-graph-v1 payload and this host states tiler.test.nodefold/tiler.test.nodefold-graph-v2
+   ```
+
+5. **A transport map that disagrees with the payload** (`EntryPerturbation::IdentityTransports`): every identity in the artifact is still the plan's, so the envelope assembles, decodes, routes, and reports terminal success — and the arithmetic is wrong. Caught by the oracle and by nothing else:
+
+   ```text
+   disagreeing transport map refused by the oracle: element 0 is 0x00000000 and tiler-reference requires 0x3fc00000
+   ```
+
+   This is the sharpest form of the whole argument: nothing above the backend has anything to compare, because the mapping is a statement no plan makes and the bytes it disagrees with are opaque to every layer that could read them.
+
+### The four properties the owning decision's Trigger 1 additionally requires
+
+- **Typed host unavailability.** The adapter acquires a worker thread in `plan_dispatch`, before the commit, so an unavailable host is a refusal a caller may still take a fallback from. `an_unavailable_execution_host_is_typed_and_cannot_pass` reaches it with an unsatisfiable stack request: `nodefold.host-unavailable: this host cannot supply an execution thread with a 18446744073709551615-byte stack: invalid stack size`. `ExecutionOutcome` implements no equality, holds no default, and answers `None` from `completed()` for an unavailable host, and the oracle comparison takes bits rather than an outcome — so there is no expression that reaches a comparison from an unavailable host.
+- **Caller-owned execution policy.** `HostPolicy::{Require, Report}` is applied by `apply_policy` at the call site. The adapter's report is byte-identical in both runs; only the caller's classification differs. No file in the fixture reads an environment variable.
+- **`tiler-reference` as the sole mathematical oracle.** No expected value is written down anywhere in the fixture; `oracle::reference_bits` derives it. The oracle-agreement case additionally asserts the reference output differs from the operands, so a program that had degenerated to the identity — which would let a backend that copied its input through compare equal — fails there rather than passing quietly.
+- **Adapter-owned terminal resource lifetime.** The routed storage is **moved** into the worker and comes back only with a `TerminalUse` value the worker loop alone can construct. `dispatch` refuses unless it has witnessed one per submission. It is not a second completion authority: the token is minted by the same worker whose write it attests, the loader is never consulted, and nothing outside the adapter can see it.
+
+### Populations sized from the type, not by hand
+
+- `Subject::ALL` is sized by `std::mem::variant_count`, so a third subject added without a coverage row is an array-length error at the declaration.
+- `every_named_graph_refusal_is_reachable_from_bytes` reaches **all twelve** members of `GraphRefusal` from constructed byte runs and asserts the count of distinct discriminants equals `std::mem::variant_count::<GraphRefusal>()`. A refusal added to the vocabulary and left unreached fails there. Census printed by the run: `ForeignDomain, UnsupportedSchema { major: 10, minor: 0 }, Truncated, TrailingBytes, UnknownNodeTag(255), MalformedSymbol, ForwardReference { node: 1, operand: 9 }, OperandTypeDisagreement { node: 3, required: F32, found: Index }, UndeclaredStoreBuffer(9), UndeclaredLoadBuffer(9), EmptySignature, StoreThroughReadBuffer(0)`.
+
+### What the trigger now has, and the gap that remains
+
+The evidence the owning decision names as **sufficient on its own** to reopen candidate D1 — *"one second independently authored fixture that shares exact structural and execution subjects with the portfolio without those defects"* — now exists in the gate. Two gaps are named rather than implied.
+
+- **The execution subject's in-gate counterpart is still one fixture.** `crates/tiler-build/tests/custom_backend` shares only the *structural* subject, and it cannot share the execution one: `crates/tiler-build`'s manifest has no `tiler-runtime` and no `tiler-reference` edge, so no test target there can route a plan or reach the oracle. The other fixture asserting the execution subject is the retained portfolio spike, which `spikes/` places outside the workspace `members` and therefore outside `make full`. Two independently authored fixtures do assert the execution subject; only one of them gates.
+- **No extraction was performed, and none was authorized.** Trigger 1 speaks of a *bounded extraction*; what exists here is the same subject expressed twice, independently, with no shared code. Building the shared expression is the reopened decision's own work, and this ticket's Non-goals exclude it. Whether the trigger has fired is the coordinator's and Tom's call: `publish-the-backend-provider-conformance-suite`'s `## Trigger check log` and `decide-the-backend-provider-conformance-harness-public-surface` were **not** edited here.
+
+### Not done, and why
+
+No `docs/` or ADR sweep. This ticket holds neither `contracts/decisions` nor `contracts/foundation`, and `contracts/decisions` is held by a live identity-migration lane. If the coordinator records the trigger as fired, the catalog and contract language that follow from reopening D1 belong in that decision's own carrier.
+
 ## Closes when
 
 The fixture exists, its independence is argued rather than asserted, the self-certifying perturbation is quoted failing, `publish-the-backend-provider-conformance-suite`'s release trigger is satisfied or its remaining gap is stated exactly, and the touched package's gates are green.
