@@ -764,7 +764,7 @@ mod tests {
             )
             .expect("the output binds");
         let semantic = semantic.build().expect("the semantic program verifies");
-        let environment = CompilationEnvironment::new(std::iter::empty::<ProviderIdentity>())
+        let environment = CompilationEnvironment::new(std::iter::empty::<ProviderIdentity>(), [])
             .expect("an empty environment is valid");
         ArtifactProgramBuilder::new(&semantic, environment)
             .expect("the artifact builder derives its subject")

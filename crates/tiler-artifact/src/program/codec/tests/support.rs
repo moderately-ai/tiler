@@ -165,9 +165,11 @@ pub(crate) fn guarded_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider.clone())).unwrap();
+    draft
+        .select_lowering_provider(selection(provider.clone()))
+        .unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let mut spec = variant(&formulas, descriptor, b"fused");
@@ -201,14 +203,14 @@ pub(crate) fn two_variant_artifact(forward: bool) -> VerifiedArtifactProgram {
     let first = fused_program(&semantic, SCALE_BITS);
     let second = fused_program(&semantic, OTHER_SCALE_BITS);
     let providers = [lowering_provider(1), lowering_provider(2)];
-    let environment = CompilationEnvironment::new(providers.iter().cloned()).unwrap();
+    let environment = CompilationEnvironment::new(providers.iter().cloned(), []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let (left, right) = if forward { (0, 1) } else { (1, 0) };
     draft
-        .select_provider(selection(providers[left].clone()))
+        .select_lowering_provider(selection(providers[left].clone()))
         .unwrap();
     draft
-        .select_provider(selection(providers[right].clone()))
+        .select_lowering_provider(selection(providers[right].clone()))
         .unwrap();
     let (primary, spare) = if forward {
         let primary = draft.push_payload(payload(0x01)).unwrap();
@@ -301,9 +303,9 @@ pub(crate) fn artifact_with(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = declare(&mut draft).unwrap();
     let formulas = formulas(&mut draft);
     draft

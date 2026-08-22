@@ -312,9 +312,9 @@ fn a_live_operand_over_a_fixed_semantic_axis_refuses_at_artifact_construction() 
     );
 
     let live = live_extent_program(&semantic);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let error = draft
@@ -338,9 +338,9 @@ fn a_live_contraction_operand_over_a_fixed_semantic_axis_refuses() {
     let semantic = live_contraction_semantic();
     let program = live_contraction_program(&semantic);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let error = draft
         .push_variant(

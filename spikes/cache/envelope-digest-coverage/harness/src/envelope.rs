@@ -41,7 +41,7 @@ use tiler_artifact::program::{
     LoweringCapabilitySubject, MaterializationRounding, NumericalDimension, NumericalObligationKey,
     NumericalPermission, PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform,
     PayloadProvenance, PolicyLocus, ProvenanceIdentity, RepresentationKey, ScalarArithmeticSubject,
-    SchemaVersion, SelectedProvider, SemanticOccurrence, TargetEvidenceDeclaration,
+    SchemaVersion, SelectedLoweringProvider, SemanticOccurrence, TargetEvidenceDeclaration,
     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, ToolComponent, VariantSpec,
     VerifiedArtifactProgram, overlapping_behaviour,
 };
@@ -211,14 +211,15 @@ fn assemble(
     let environment = CompilationEnvironment::new(
         plan.selected_capabilities()
             .map(|selected| selected.provider().clone()),
-    )
+    [],
+)
     .expect("the offered providers compose an environment");
     let mut builder =
         ArtifactProgramBuilder::new(semantic, environment).expect("a builder identity remains");
     for selected in plan.selected_capabilities() {
         let subject = selected.subject();
         builder
-            .select_provider(SelectedProvider {
+            .select_lowering_provider(SelectedLoweringProvider {
                 provider: selected.provider().clone(),
                 capability: LoweringCapabilitySubject {
                     family: CapabilityFamilyKey::new(subject.family().key_token())?,

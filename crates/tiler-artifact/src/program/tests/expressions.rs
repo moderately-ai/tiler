@@ -19,7 +19,7 @@ use tiler_ir::shape::Axis;
 #[test]
 fn a_conditional_selection_evaluates_only_the_branch_it_takes() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)]).unwrap();
+    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let zero = draft.push_root(AbiRoot::UnsignedLiteral(0)).unwrap();
     let one = draft.push_root(AbiRoot::UnsignedLiteral(1)).unwrap();
@@ -77,9 +77,9 @@ fn evaluation_reports_an_unbound_root_rather_than_guessing() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone()), []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let rows = draft
@@ -121,7 +121,7 @@ fn evaluation_reports_an_unbound_root_rather_than_guessing() {
 #[test]
 fn checked_narrowing_rejects_a_value_that_does_not_fit() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)]).unwrap();
+    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let wide = draft
         .push_root(AbiRoot::UnsignedLiteral(u64::from(u32::MAX) + 1))
@@ -171,9 +171,9 @@ fn artifact_identity_size_grows_linearly_with_the_abi_arena() {
             let program = fused_program(&semantic, SCALE_BITS);
             let provider = lowering_provider(1);
             let environment =
-                CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+                CompilationEnvironment::new(std::iter::once(provider.clone()), []).unwrap();
             let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-            draft.select_provider(selection(provider)).unwrap();
+            draft.select_lowering_provider(selection(provider)).unwrap();
             let descriptor = draft.push_payload(payload(0xa1)).unwrap();
             let formulas = formulas(&mut draft);
 
@@ -231,9 +231,9 @@ fn adopting_a_program_abi_replays_every_reached_position() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone()), []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
 
     let arena = program.abi_expressions();
     let roots: Vec<u32> = (0..u32::try_from(arena.len()).unwrap()).collect();
@@ -262,9 +262,9 @@ fn adopting_an_abi_with_an_out_of_range_root_is_rejected() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone()), []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
 
     let arena = program.abi_expressions();
     let beyond = u32::try_from(arena.len()).unwrap();
@@ -286,9 +286,9 @@ fn probe_whether_a_program_expression_satisfies_the_artifact_obligations() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new(std::iter::once(provider.clone())).unwrap();
+    let environment = CompilationEnvironment::new(std::iter::once(provider.clone()), []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
 
     let stage = program.stages().next().expect("one stage");
     let launch = stage.launch();

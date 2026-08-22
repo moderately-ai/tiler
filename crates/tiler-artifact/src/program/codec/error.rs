@@ -156,8 +156,8 @@ pub(crate) enum OrderedSubject {
     Feature,
     /// A stable key of the named program interface.
     InterfaceKey,
-    /// The selected capability providers.
-    Provider,
+    /// The selected lowering-capability providers.
+    SelectedLoweringProvider,
     /// The backend payload descriptors.
     Payload,
     /// The shared ABI expression arena.
@@ -255,8 +255,8 @@ pub(crate) enum CodecLimitKind {
     PlanDeterminismScopeCells,
     /// Byte length of one declared target-environment descriptor.
     TargetEnvironmentDescriptorBytes,
-    /// Selected capability-provider count.
-    SelectedProviders,
+    /// Selected lowering-capability-provider count.
+    SelectedLoweringProviders,
     /// Deferred feasibility predicate count of one plan variant.
     DeferredPredicates,
     /// Live-device route-requirement count of one plan variant.

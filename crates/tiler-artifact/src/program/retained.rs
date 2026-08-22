@@ -874,7 +874,7 @@ mod tests {
             .unwrap();
         let semantic = program_over(Arc::new(draft.build().unwrap()));
         let provider = lowering_provider(1);
-        let environment = CompilationEnvironment::new([provider]).unwrap();
+        let environment = CompilationEnvironment::new([provider], []).unwrap();
         assert!(
             matches!(
                 ArtifactProgramBuilder::new(&semantic, environment),

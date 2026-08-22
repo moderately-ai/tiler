@@ -44,9 +44,9 @@ use tiler_artifact::program::{
     AbiExprId, ArtifactBuildError, ArtifactProgramBuilder, ArtifactVerificationError,
     BackendEntryKey, BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey,
     CompilationEnvironment, DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey,
-    FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject, PayloadId, SelectedProvider,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
-    VerifiedArtifactProgram,
+    FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject, PayloadId,
+    SelectedLoweringProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_compiler::session::{Compilation, PlanAlternative};
 use tiler_ir::kernel::PlanDeterminismWitness;
@@ -221,13 +221,15 @@ pub fn assemble_plan_artifact(
     let compilation = plan.compilation();
     let profile = target_profile(compilation)?;
     let rules = feasibility_rules(compilation)?;
-    let environment =
-        CompilationEnvironment::new(compilation.offered_lowering_providers().iter().cloned())?;
+    let environment = CompilationEnvironment::new(
+        compilation.offered_lowering_providers().iter().cloned(),
+        compilation.offered_physical_providers().iter().cloned(),
+    )?;
     let mut builder = ArtifactProgramBuilder::new(semantic, environment)?;
 
     for selected in plan.selected_capabilities() {
         let subject = selected.subject();
-        builder.select_provider(SelectedProvider {
+        builder.select_lowering_provider(SelectedLoweringProvider {
             provider: selected.provider().clone(),
             capability: LoweringCapabilitySubject {
                 family: CapabilityFamilyKey::new(subject.family().key_token())?,

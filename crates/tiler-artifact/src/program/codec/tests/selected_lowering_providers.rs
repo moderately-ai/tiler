@@ -2,7 +2,7 @@
 
 use super::super::super::error::ArtifactBuildError;
 use super::super::super::keys::CapabilityFamilyKey;
-use super::super::super::model::SelectedProvider;
+use super::super::super::model::SelectedLoweringProvider;
 use super::super::super::tests::default_artifact;
 use super::super::decode::{Cursor, decode, read_providers};
 use super::super::encode::encode;
@@ -34,7 +34,7 @@ fn encoded_provider_rows(rows: &[(&str, &str, &str, u32)]) -> Vec<u8> {
 fn dotted_operation_boundaries_remain_distinct_through_artifact_and_codec_identity() {
     let mut envelope = envelope_of(&default_artifact());
     let provider = envelope.providers[0].provider.clone();
-    let selected = |namespace, name| SelectedProvider {
+    let selected = |namespace, name| SelectedLoweringProvider {
         provider: provider.clone(),
         capability: subject("index-access", namespace, name, 1),
         capability_revision: 1,
@@ -42,7 +42,7 @@ fn dotted_operation_boundaries_remain_distinct_through_artifact_and_codec_identi
     envelope.providers = vec![selected("a.b", "c"), selected("a", "b.c")];
     envelope
         .providers
-        .sort_unstable_by_key(SelectedProvider::canonical_key);
+        .sort_unstable_by_key(SelectedLoweringProvider::canonical_key);
 
     assert_eq!(envelope.providers().len(), 2, "both selected rows survive");
     assert_ne!(
@@ -75,7 +75,7 @@ fn dotted_operation_boundaries_remain_distinct_through_artifact_and_codec_identi
 }
 
 #[test]
-fn every_selected_provider_component_perturbs_artifact_identity_independently() {
+fn every_selected_lowering_provider_component_perturbs_artifact_identity_independently() {
     let mut baseline = envelope_of(&default_artifact());
     baseline.providers[0].capability = subject("index-access", "a.b", "c", 1);
     let baseline_identity = baseline.canonical_identity().unwrap();

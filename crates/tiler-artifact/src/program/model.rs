@@ -663,7 +663,7 @@ pub struct LoweringCapabilitySubject {
 /// compilation-request environment, never packaged artifact identity. Only the
 /// providers recorded here reach [`CanonicalArtifactProgramIdentity`].
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct SelectedProvider {
+pub struct SelectedLoweringProvider {
     /// Identity and nonzero output-affecting revision of the provider.
     pub provider: ProviderIdentity,
     /// Exact lowering capability the provider was selected for.
@@ -684,7 +684,7 @@ pub struct SelectedProvider {
     pub capability_revision: u32,
 }
 
-impl SelectedProvider {
+impl SelectedLoweringProvider {
     /// Derives this selection's canonical content key.
     ///
     /// Destructured irrefutably, so a field added to this record fails to
@@ -1080,7 +1080,7 @@ pub(super) struct ArtifactProgramData {
     pub(super) routing: RoutingPolicy,
     pub(super) inputs: Vec<InterfaceEntryData<InputKey>>,
     pub(super) outputs: Vec<InterfaceEntryData<OutputKey>>,
-    pub(super) providers: Vec<SelectedProvider>,
+    pub(super) providers: Vec<SelectedLoweringProvider>,
     pub(super) payloads: Vec<BackendPayloadDescriptor>,
     /// Carried content of each payload, aligned with `payloads`.
     ///
@@ -1430,7 +1430,7 @@ impl VerifiedArtifactProgram {
 
     /// Returns the capability providers the packaged plan actually selected.
     #[must_use]
-    pub fn selected_providers(&self) -> &[SelectedProvider] {
+    pub fn selected_lowering_providers(&self) -> &[SelectedLoweringProvider] {
         &self.data.providers
     }
 
@@ -2887,8 +2887,8 @@ pub(super) fn encode_identity(
         envelope
             .providers()
             .iter()
-            .map(SelectedProvider::canonical_key),
-        ArtifactEntityKind::Provider,
+            .map(SelectedLoweringProvider::canonical_key),
+        ArtifactEntityKind::LoweringProvider,
     )?;
     let payload_keys: Vec<Vec<u8>> = envelope
         .payloads()

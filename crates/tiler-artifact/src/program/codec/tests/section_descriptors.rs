@@ -175,9 +175,11 @@ fn a_changed_payload_compatibility_contract_changes_the_artifact() {
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     let build = |compatibility: TargetProfileRef| {
-        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-        draft.select_provider(selection(provider.clone())).unwrap();
+        draft
+            .select_lowering_provider(selection(provider.clone()))
+            .unwrap();
         let mut descriptor = payload(0xa1);
         descriptor.compatibility = compatibility;
         let id = draft.push_payload(descriptor).unwrap();

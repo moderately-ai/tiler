@@ -5,7 +5,7 @@ use tiler_artifact::program::{
     BackendEntryRef, BindingKind, BindingSpec, CapabilityFamilyKey, CompilationEnvironment,
     DeferredPredicateSpec, EntrySpec, FeasibilityRuleSetKey, FeasibilityRuleSetRef, LaunchSpec,
     LoweringCapabilitySubject, PayloadContent, PayloadId, RecordedArtifactProgramIdentity,
-    SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey,
+    SchemaVersion, SelectedLoweringProvider, TargetProfileDescriptorDigest, TargetProfileKey,
     TargetProfileRef, VariantSpec, VerifiedArtifactProgram,
 };
 use tiler_build::realization;
@@ -153,7 +153,7 @@ pub fn assemble_cpu_property_probe(
     probe: PreparedEntryProbe,
 ) -> Result<PackagedPortfolio, PortfolioError> {
     let environment =
-        CompilationEnvironment::new(compilation.offered_lowering_providers().iter().cloned())
+        CompilationEnvironment::new(compilation.offered_lowering_providers().iter().cloned(), [])
             .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
     let mut draft = ArtifactProgramBuilder::new(semantic, environment)
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
@@ -222,7 +222,8 @@ fn assemble_with(
             .offered_lowering_providers()
             .iter()
             .cloned(),
-    )?;
+    [],
+)?;
     let mut draft = ArtifactProgramBuilder::new(semantic, environment)?;
     select_capabilities(&mut draft, plans.metal_plan)?;
 
@@ -289,7 +290,7 @@ fn select_capabilities(
 ) -> Result<(), ArtifactBuildError> {
     for selected in plan.selected_capabilities() {
         let subject = selected.subject();
-        draft.select_provider(SelectedProvider {
+        draft.select_lowering_provider(SelectedLoweringProvider {
             provider: selected.provider().clone(),
             capability: LoweringCapabilitySubject {
                 family: CapabilityFamilyKey::new(subject.family().key_token())?,

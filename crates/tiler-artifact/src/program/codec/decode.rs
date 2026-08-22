@@ -53,7 +53,7 @@ use super::super::model::{
     BINDING_TARGET_PROGRAM_OUTPUT, BackendPayloadDescriptor, BindingData, BindingKind,
     BindingTargetData, DeferredPredicateData, InterfaceComponentData, InterfaceEntryData,
     LaunchData, LoweringCapabilitySubject, RoutingPolicy, SOURCED_EXTENT_LITERAL,
-    SOURCED_EXTENT_SYMBOL, SUBGROUP_REQUIREMENT_BLOCK_TAG, SchemaVersion, SelectedProvider,
+    SOURCED_EXTENT_SYMBOL, SUBGROUP_REQUIREMENT_BLOCK_TAG, SchemaVersion, SelectedLoweringProvider,
     StageDependencyData, StageDependencyReason, address_space_from_tag,
     approximation_envelope_from_tag, buffer_access_from_tag, element_type_from_tag,
     exceptional_assumption_from_tag, index_arithmetic_from_tag, memory_ordering_from_tag,
@@ -69,7 +69,7 @@ use super::super::requirement::{
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
     MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_LAUNCH_PRECONDITIONS,
-    MAX_ROUTE_FEATURE_PAYLOAD_BYTES, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS,
+    MAX_ROUTE_FEATURE_PAYLOAD_BYTES, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_LOWERING_PROVIDERS,
     MAX_STAGE_DEPENDENCIES, MAX_VARIANT_ENTRIES,
 };
 use super::encode::{
@@ -316,7 +316,7 @@ pub(super) struct DecodedBody {
     pub(super) semantic: SemanticSubjects,
     pub(super) inputs: Vec<InterfaceEntryData<InputKey>>,
     pub(super) outputs: Vec<InterfaceEntryData<OutputKey>>,
-    pub(super) providers: Vec<SelectedProvider>,
+    pub(super) providers: Vec<SelectedLoweringProvider>,
     pub(super) payloads: Vec<BackendPayloadDescriptor>,
     /// Each payload's carried sections, aligned with `payloads`.
     pub(super) payload_content: Vec<Option<PayloadSections>>,
@@ -473,10 +473,10 @@ fn read_outputs(
 /// Reads the selected capability providers and proves their canonical order.
 pub(super) fn read_providers(
     cursor: &mut Cursor<'_>,
-) -> Result<Vec<SelectedProvider>, ArtifactCodecError> {
+) -> Result<Vec<SelectedLoweringProvider>, ArtifactCodecError> {
     let providers = cursor.vec(
-        MAX_SELECTED_PROVIDERS,
-        CodecLimitKind::SelectedProviders,
+        MAX_SELECTED_LOWERING_PROVIDERS,
+        CodecLimitKind::SelectedLoweringProviders,
         |cursor| {
             let provider = cursor.provider()?;
             let family = CapabilityFamilyKey::from_owned(cursor.text()?)
@@ -486,7 +486,7 @@ pub(super) fn read_providers(
             let semantic_version = cursor.u32()?;
             let operation = OpKey::from_owned(namespace, name, semantic_version)
                 .map_err(|cause| ArtifactCodecError::InvalidOperationKey { cause })?;
-            Ok(SelectedProvider {
+            Ok(SelectedLoweringProvider {
                 provider,
                 capability: LoweringCapabilitySubject { family, operation },
                 capability_revision: cursor.u32()?,
@@ -496,9 +496,9 @@ pub(super) fn read_providers(
     require_sorted_and_distinct(
         &providers
             .iter()
-            .map(SelectedProvider::canonical_key)
+            .map(SelectedLoweringProvider::canonical_key)
             .collect::<Vec<_>>(),
-        OrderedSubject::Provider,
+        OrderedSubject::SelectedLoweringProvider,
     )?;
     Ok(providers)
 }

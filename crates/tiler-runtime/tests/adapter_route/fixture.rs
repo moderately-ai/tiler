@@ -112,11 +112,11 @@ use tiler_artifact::program::{
     PayloadMetadata, PayloadPlanDeterminismRefusal, PayloadPlanDeterminismVerifier,
     PayloadPlatform, PayloadProvenance, PolicyLocus, ProvenanceIdentity,
     RecordedArtifactProgramIdentity, RepresentationKey, RouteFeatureKey, RouteRequirement,
-    ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion, SelectedProvider,
-    SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration, TargetEnvironmentDescriptor,
-    TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode, TargetEvidenceDeclaration,
-    TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, TargetPropertyKey,
-    ToolComponent, VariantSpec, overlapping_behaviour,
+    ScalarArithmeticSubject, ScalarArithmeticSubjectIdentity, SchemaVersion,
+    SelectedLoweringProvider, SemanticOccurrence, SubnormalMode, TargetEnvironmentDeclaration,
+    TargetEnvironmentDescriptor, TargetEnvironmentDescriptorSchema, TargetEnvironmentReasonCode,
+    TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
+    TargetPropertyKey, ToolComponent, VariantSpec, overlapping_behaviour,
 };
 use tiler_artifact::program::{BackendPayloadDescriptor, ValidatedTargetEnvironmentDeclaration};
 use tiler_ir::index::{
@@ -954,10 +954,10 @@ pub fn try_assemble_portfolio_over(
     // it, and which backend emits them, are physical choices below it.
     let provider =
         ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
-    let environment = CompilationEnvironment::new([provider.clone()]).expect("an environment");
+    let environment = CompilationEnvironment::new([provider.clone()], []).expect("an environment");
     let mut draft = ArtifactProgramBuilder::new(semantic, environment).expect("an artifact draft");
     draft
-        .select_provider(SelectedProvider {
+        .select_lowering_provider(SelectedLoweringProvider {
             provider,
             capability: LoweringCapabilitySubject {
                 family: CapabilityFamilyKey::new("index-access").expect("a capability family"),
@@ -1447,10 +1447,10 @@ pub fn assemble_two_delivery_claimed() -> Fixture {
     let semantic = semantic_program();
     let provider =
         ProviderIdentity::new("tiler-test", "scalar-host-serial-sum", 1).expect("a provider");
-    let compilation = CompilationEnvironment::new([provider.clone()]).expect("an environment");
+    let compilation = CompilationEnvironment::new([provider.clone()], []).expect("an environment");
     let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).expect("an artifact draft");
     draft
-        .select_provider(SelectedProvider {
+        .select_lowering_provider(SelectedLoweringProvider {
             provider,
             capability: LoweringCapabilitySubject {
                 family: CapabilityFamilyKey::new("index-access").expect("a capability family"),

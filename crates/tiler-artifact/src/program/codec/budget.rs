@@ -16,7 +16,7 @@ use super::super::requirement::RouteRequirement;
 use super::super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
     MAX_ENTRY_BINDINGS, MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_FEATURE_PAYLOAD_BYTES,
-    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_LOWERING_PROVIDERS, MAX_VARIANT_ENTRIES,
 };
 use super::error::{ArtifactCodecError, CodecLimitKind, codec_limit};
 use super::model::{
@@ -64,8 +64,8 @@ pub(super) fn check_budgets(envelope: &ArtifactEnvelope) -> Result<(), ArtifactC
     }
     codec_limit(
         envelope.providers().len(),
-        MAX_SELECTED_PROVIDERS,
-        CodecLimitKind::SelectedProviders,
+        MAX_SELECTED_LOWERING_PROVIDERS,
+        CodecLimitKind::SelectedLoweringProviders,
     )?;
     codec_limit(
         envelope.payloads().len(),

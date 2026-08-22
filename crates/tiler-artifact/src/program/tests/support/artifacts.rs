@@ -5,7 +5,7 @@ use super::super::super::{
     BackendEntryKey, BackendEntryRef, BackendKey, BackendPayloadDescriptor, BindingKind,
     BindingSpec, CapabilityFamilyKey, CompilationEnvironment, EntrySpec, FeasibilityRuleSetKey,
     FeasibilityRuleSetRef, LaunchSpec, LoweringCapabilitySubject, PayloadDigest, PayloadId,
-    RepresentationKey, SchemaVersion, SelectedProvider, TargetProfileDescriptorDigest,
+    RepresentationKey, SchemaVersion, SelectedLoweringProvider, TargetProfileDescriptorDigest,
     TargetProfileKey, TargetProfileRef, TargetPropertyKey, VariantSpec, VerifiedArtifactProgram,
 };
 use super::super::super::{
@@ -38,8 +38,8 @@ pub(crate) fn spare_provider(revision: u32) -> ProviderIdentity {
     ProviderIdentity::new("tiler-test", "never-selected", revision).unwrap()
 }
 
-pub(crate) fn selection(provider: ProviderIdentity) -> SelectedProvider {
-    SelectedProvider {
+pub(crate) fn selection(provider: ProviderIdentity) -> SelectedLoweringProvider {
+    SelectedLoweringProvider {
         provider,
         capability: lowering_subject("tiler", "strict-serial-sum-f32", 1),
         capability_revision: 1,
@@ -277,9 +277,12 @@ pub(crate) fn build_artifact(
     selected: ProviderIdentity,
     available: &[ProviderIdentity],
 ) -> VerifiedArtifactProgram {
-    let environment = CompilationEnvironment::new(available.iter().cloned()).unwrap();
+    // The physical role is offered empty throughout this suite: no fixture here
+    // packages a selected physical implementation, so granting physical
+    // authority would be a claim the artifacts do not make.
+    let environment = CompilationEnvironment::new(available.iter().cloned(), []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(semantic, environment).unwrap();
-    draft.select_provider(selection(selected)).unwrap();
+    draft.select_lowering_provider(selection(selected)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     draft
@@ -296,11 +299,11 @@ pub(crate) fn artifact_with_selected_operations(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     for (namespace, name, version) in operations {
         draft
-            .select_provider(SelectedProvider {
+            .select_lowering_provider(SelectedLoweringProvider {
                 provider: provider.clone(),
                 capability: lowering_subject(namespace, name, *version),
                 capability_revision: 1,
@@ -354,9 +357,9 @@ pub(crate) fn partial_window_artifact() -> VerifiedArtifactProgram {
     let semantic = semantic_program();
     let program = partial_window_program(&semantic);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     draft
         .push_variant(&program, partial_window_variant(descriptor))

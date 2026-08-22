@@ -8,6 +8,7 @@
 mod baked_extents;
 mod bf16_pointwise;
 mod construction;
+mod environment_roles;
 mod expressions;
 mod extent_operands;
 mod foreign_handles;

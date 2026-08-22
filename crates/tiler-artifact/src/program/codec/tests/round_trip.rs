@@ -158,7 +158,7 @@ fn expression_assembly_order_does_not_change_the_bytes() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
 
     // The same formulas, minted through two different arena orders. Identity is
     // already order-independent because it writes one canonical arena and names
@@ -167,7 +167,9 @@ fn expression_assembly_order_does_not_change_the_bytes() {
     // cache key.
     let assemble = |reversed: bool| {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
-        draft.select_provider(selection(provider.clone())).unwrap();
+        draft
+            .select_lowering_provider(selection(provider.clone()))
+            .unwrap();
         let descriptor = draft.push_payload(payload(0xa1)).unwrap();
         let formulas = if reversed {
             // The same two expressions in the opposite declaration order; the

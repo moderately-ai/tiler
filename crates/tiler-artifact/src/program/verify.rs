@@ -25,7 +25,7 @@ pub(super) fn verify_artifact(data: &ArtifactProgramData) -> Vec<ArtifactDiagnos
         diagnostics.push(ArtifactDiagnostic::EmptyPortfolio);
     }
     if data.providers.is_empty() {
-        diagnostics.push(ArtifactDiagnostic::MissingSelectedProvider);
+        diagnostics.push(ArtifactDiagnostic::MissingSelectedLoweringProvider);
     }
     if !expressions_are_reachable(data) {
         diagnostics.push(ArtifactDiagnostic::UnusedExpression);

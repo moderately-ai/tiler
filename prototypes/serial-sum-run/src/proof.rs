@@ -5590,8 +5590,8 @@ mod tests {
         LoweringCapabilitySubject, PayloadContent, PayloadEntryMapping, PayloadMetadata,
         PayloadPlatform, PayloadProvenance, RecordedArtifactProgramIdentity, RepresentationKey,
         RouteFeatureKey, RouteRequirementSubject, RouteResourceRequirement, SchemaVersion,
-        SelectedProvider, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
-        ToolComponent, VariantSpec, VerifiedArtifactProgram,
+        SelectedLoweringProvider, TargetProfileDescriptorDigest, TargetProfileKey,
+        TargetProfileRef, ToolComponent, VariantSpec, VerifiedArtifactProgram,
     };
     use tiler_build::BoundMetalCompileDeclaration;
     use tiler_build::realization::translate;
@@ -6149,6 +6149,7 @@ mod tests {
         let environment = CompilationEnvironment::new(
             plan.selected_capabilities()
                 .map(|selected| selected.provider().clone()),
+            [],
         )
         .expect("the offered providers compose an environment");
         let mut builder =
@@ -6156,7 +6157,7 @@ mod tests {
         for selected in plan.selected_capabilities() {
             let subject = selected.subject();
             builder
-                .select_provider(SelectedProvider {
+                .select_lowering_provider(SelectedLoweringProvider {
                     provider: selected.provider().clone(),
                     capability: LoweringCapabilitySubject {
                         family: CapabilityFamilyKey::new(subject.family().key_token())?,

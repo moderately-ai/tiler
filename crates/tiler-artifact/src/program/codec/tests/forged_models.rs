@@ -97,7 +97,7 @@ fn an_unattributed_plan_is_rejected() {
     assert_eq!(
         reject_forged(|envelope| envelope.providers.clear()),
         ArtifactCodecError::ModelObligation {
-            cause: ArtifactDiagnostic::MissingSelectedProvider,
+            cause: ArtifactDiagnostic::MissingSelectedLoweringProvider,
         },
     );
 }
@@ -120,7 +120,7 @@ fn a_payload_no_entry_realizes_is_rejected() {
 }
 
 #[test]
-fn a_duplicate_selected_provider_cannot_even_be_encoded() {
+fn a_duplicate_selected_lowering_provider_cannot_even_be_encoded() {
     let artifact = default_artifact();
     let mut envelope = envelope_of(&artifact);
     let repeated = envelope.providers[0].clone();
@@ -129,7 +129,7 @@ fn a_duplicate_selected_provider_cannot_even_be_encoded() {
         encode(&envelope),
         Err(ArtifactCodecError::IdentityDerivation {
             cause: ArtifactDiagnostic::AmbiguousCanonicalKey {
-                entity: ArtifactEntityKind::Provider,
+                entity: ArtifactEntityKind::LoweringProvider,
             },
         }),
     );
@@ -361,9 +361,11 @@ fn a_deferred_requirement_that_disagrees_with_its_predicate_is_rejected() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider.clone())).unwrap();
+    draft
+        .select_lowering_provider(selection(provider.clone()))
+        .unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let mut spec = variant(&formulas, descriptor, b"fused");

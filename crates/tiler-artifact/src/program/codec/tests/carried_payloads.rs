@@ -139,7 +139,7 @@ fn a_recovered_builder_rebuilds_the_artifact_byte_for_byte() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     // Every declaration but the provider selection, so the refusal below is one
     // correctable diagnostic and every table `build` takes is already populated
@@ -162,7 +162,9 @@ fn a_recovered_builder_rebuilds_the_artifact_byte_for_byte() {
     declare_realization(&mut draft, &program);
 
     let complete = |mut draft: ArtifactProgramBuilder| {
-        draft.select_provider(selection(provider.clone())).unwrap();
+        draft
+            .select_lowering_provider(selection(provider.clone()))
+            .unwrap();
         encoded(&draft.build().expect("the amended draft verifies"))
     };
     let reference = complete(draft.clone());
@@ -170,7 +172,7 @@ fn a_recovered_builder_rebuilds_the_artifact_byte_for_byte() {
     let error = draft.build().expect_err("an unattributed plan is rejected");
     assert_eq!(
         error.diagnostics(),
-        [ArtifactDiagnostic::MissingSelectedProvider],
+        [ArtifactDiagnostic::MissingSelectedLoweringProvider],
     );
     let (recovered, _) = error.into_parts();
     let rebuilt = complete(recovered);
