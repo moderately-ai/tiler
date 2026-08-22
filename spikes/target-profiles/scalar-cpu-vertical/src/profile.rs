@@ -31,7 +31,8 @@ use tiler_compiler::target::{
     TargetProfile, TargetProfileBuildError, TargetProfileKey,
 };
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, FlushedZeroSign, NumericalPermission, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, FlushedZeroSign, MaterializationRounding,
+    NumericalPermission, SubnormalMode,
 };
 use tiler_ir::semantic::F32;
 
@@ -249,6 +250,45 @@ fn declare_numerics(
     builder.declare_signed_zero(
         f32_subject.clone(),
         NumericalPermission::Forbidden,
+        ScalarSupport::Exact,
+        source.clone(),
+    )?;
+    // Reciprocal transform: forbidden, and honoured exactly. The strict f32
+    // contract requires this dimension, and leaving it undeclared left the
+    // profile's disposition `Unknown`, which the contract check refuses rather
+    // than reads as a denial -- the refusal this spike hit before the row
+    // existed. `Exact` is a claim about the image, not a convenience: the only
+    // division the vocabulary carries is `IndexDivide` over the `Index` type,
+    // evaluated as integer division, so there is no f32 division here for a
+    // reciprocal multiplication to replace and the interpreter cannot perform
+    // the transform even accidentally.
+    builder.declare_reciprocal_transform(
+        f32_subject.clone(),
+        NumericalPermission::Forbidden,
+        ScalarSupport::Exact,
+        source.clone(),
+    )?;
+    // Approximate intrinsics: forbidden, and honoured exactly. `ImageBinaryOp`
+    // is the complete arithmetic vocabulary -- `IndexAdd`, `IndexMultiply`,
+    // `IndexDivide`, `IndexModulo`, `F32Add`, `F32Multiply` -- so the image has
+    // no intrinsic at all, approximate or otherwise, and no envelope for one to
+    // be consumed from.
+    builder.declare_approximate_intrinsics(
+        f32_subject.clone(),
+        ApproximationEnvelope::Forbidden,
+        ScalarSupport::Exact,
+        source.clone(),
+    )?;
+    // Materialization rounding: nearest-ties-to-even, honoured exactly. The only
+    // observable materialization this image performs is storing an f32 value
+    // into an f32 buffer, so no narrowing occurs and the declared rounding is
+    // the IEEE-754 default the store trivially satisfies. This is the same value
+    // `realization_record` resolves the dimension to, and the two agree because
+    // both describe one interpreter rather than because either was matched to
+    // the other.
+    builder.declare_materialization_rounding(
+        f32_subject.clone(),
+        MaterializationRounding::NearestTiesToEven,
         ScalarSupport::Exact,
         source.clone(),
     )?;

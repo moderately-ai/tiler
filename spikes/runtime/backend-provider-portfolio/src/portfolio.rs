@@ -166,6 +166,11 @@ pub fn assemble_cpu_property_probe(
             cpu::payload_schema(),
             profile.clone(),
             ArtifactExecutionPolicy::NativeImage,
+            // No target-environment declaration. Positive ADR 0013 support
+            // needs an independently selected authority exposing the exact
+            // descriptor schema, and this spike registers none, so declaring a
+            // compatibility class here would assert what nothing can validate.
+            None,
             cpu.content.clone(),
         )
         .map_err(|error| PortfolioError::Assemble(error.to_string()))?;
@@ -227,6 +232,10 @@ fn assemble_with(
         SchemaVersion::new(1, 0),
         metal_profile.clone(),
         ArtifactExecutionPolicy::NativeImage,
+        // No target-environment declaration; see the CPU payload above. ADR 0086
+        // records the Metal runtime-translation authority as `Unknown`, so no
+        // accepted Metal provider schema exists for this to name.
+        None,
         metal_content.clone(),
     )?;
     let cpu_payload = draft.push_carried_payload(
@@ -235,6 +244,7 @@ fn assemble_with(
         cpu::payload_schema(),
         cpu_profile.clone(),
         ArtifactExecutionPolicy::NativeImage,
+        None,
         cpu.content.clone(),
     )?;
 

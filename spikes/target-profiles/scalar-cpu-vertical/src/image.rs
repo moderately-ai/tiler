@@ -95,12 +95,18 @@ impl ImageType {
     /// refusal path does exactly that — [`TranslationError::UnsupportedValueType`]
     /// carries the `KernelType` — so the widened vocabulary cannot make an
     /// unimplemented path look reachable here.
+    ///
+    /// `U32` is refused on the same reasoning. It is an exact-width storage and
+    /// SSA type carrying no arithmetic, conversion, or backend producer, and
+    /// this image has no unsigned 32-bit value class to map it onto; mapping it
+    /// to [`Self::Index`] would silently widen it and mapping it to
+    /// [`Self::Bool`] would reinterpret it.
     const fn from_kernel(value: KernelType) -> Option<Self> {
         match value {
             KernelType::Bool => Some(Self::Bool),
             KernelType::Index => Some(Self::Index),
             KernelType::F32 => Some(Self::F32),
-            KernelType::U8 | KernelType::I32 | KernelType::Bf16 => None,
+            KernelType::U8 | KernelType::I32 | KernelType::Bf16 | KernelType::U32 => None,
         }
     }
 }

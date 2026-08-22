@@ -19,7 +19,8 @@ use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter, route_with_ad
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
     LoadRejection, Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry,
-    TargetPropertyRequest, VariantIneligibility,
+    TargetEnvironmentObservation, TargetEnvironmentSupport, TargetPropertyRequest,
+    VariantIneligibility,
 };
 
 use crate::cpu::{SOLE_DELIVERY, bind_facts};
@@ -326,6 +327,31 @@ impl RuntimeAdapter for MetalAdapter {
     type Refusal = MetalError;
     type Failure = MetalError;
     type Completion = Vec<u32>;
+
+    /// Registers no target-environment descriptor schema.
+    ///
+    /// ADR 0086 records the native Metal runtime-translation authority as
+    /// `Unknown`, so no accepted Metal provider schema exists and this adapter
+    /// must not invent one. There is no permissive default here on purpose:
+    /// `Unsupported` filters every claimed `Plan` cell while leaving
+    /// `Unclaimed` routes routable, which is the fail-closed answer for an
+    /// adapter that cannot stand behind an exact provider schema.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        TargetEnvironmentSupport::Unsupported
+    }
+
+    /// Never reached while no schema is registered; unavailable regardless.
+    ///
+    /// An observation is an assertion rather than an attestation, and this
+    /// adapter has nothing to assert.
+    fn observe_target_environment(
+        &mut self,
+        _context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        TargetEnvironmentObservation::Unavailable {
+            reason: "no accepted Metal target-environment observer exists (ADR 0086)".to_owned(),
+        }
+    }
 
     fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Self::Refusal> {
         Ok(ExecutionEnvironment {

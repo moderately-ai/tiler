@@ -33,6 +33,25 @@ Filed 2026-08-19 by the coordinator at `8d2619e5`, immediately on the symbolic-p
 
 **Fact — this is the same defect class the route-gate ticket just closed, one level out.** `keep-the-path-shared-route-gate-spike-compiling-or-make-its-breakage-loud` landed a guard for a spike sharing a *file* with a gated test. That guard cannot see this: these spikes break through the ordinary public API, not through a `#[path]` share. AGENTS.md deliberately keeps spikes out of the gate — "run them manually from documented commands so exploratory dependencies do not silently become repository gates" — so the ungated state is a decision, not an oversight. What is missing is any signal at all when a workspace change invalidates one.
 
+## Correction — 2026-08-22, worker at base `3cca5438`
+
+**The two Facts above are verified but the second is materially incomplete, and acting on it alone would have left both spikes broken.** Its table is exactly right: `.shape()` appears at five call sites in the three named files, and `spikes/` is absent from `Cargo.toml`'s `members` with no `Makefile` target naming it. What it does not say is that the accessor change is **one of six API changes, across four independent landings**, that broke these spikes. The table was derived from a grep for `.shape()`, and a grep cannot see a missing argument, a widened enum, a new required trait method, a changed closure signature, or a run-time contract refusal. A clean `cargo check` reports five errors in `scalar-cpu-vertical` and nine in `backend-provider-portfolio`. Landings are attributed with `git log -S` against each changed signature; the three ADR 0013 rows are one commit, not three.
+
+The complete population at this base:
+
+| Landing | Change | Where | Visible to |
+| --- | --- | --- | --- |
+| `79dc05a1` | `shape` → `static_shape` on the decoded-input view | 5 sites, 3 files (the table above) | `cargo check` |
+| `c77aab39` | `push_carried_payload` gained `Option<TargetEnvironmentDeclaration>` | 4 sites across both spikes | `cargo check` |
+| `c77aab39` | `assemble_plan_artifact` gained `PlanDeterminismDeclaration` | `backend-provider-portfolio/src/cpu.rs` | `cargo check` |
+| `c77aab39` | `RuntimeAdapter` gained `target_environment_support` + `observe_target_environment` | both adapters in `backend-provider-portfolio` | `cargo check` |
+| `bc0b7c0e` | `KernelType` gained `U32` | 2 non-exhaustive matches | `cargo check` |
+| the strict `f32` contract's dimension set | requires `ReciprocalTransform`, `ApproximateIntrinsics`, `MaterializationRounding` | `scalar-cpu-vertical/src/profile.rs` | **running the spike only** |
+
+The last row is the one that matters for the visibility question this ticket asks, and it was found only because the spike was run rather than checked: `declare_numerics` omitted three dimensions, an omitted dimension is `Unknown`, and the contract check refuses `Unknown` rather than reading it as a denial. The spike compiled cleanly and exited non-zero with `TargetNumericalContractRefusal`.
+
+**Consequence for "Closes when".** "Both newly broken spikes compile" is too weak a closing condition for this ticket's own outcome, which is that a cited spike "can actually be run". Both spikes are now repaired to the point of a completed run against `tiler-reference`, not merely to the point of compiling.
+
 ## Required work
 
 - Re-audit the Facts above at your actual base and report a per-Fact verdict; re-derive the call-site list rather than trusting the table, since a sibling lane may have touched these files.

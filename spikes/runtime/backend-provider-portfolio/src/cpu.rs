@@ -14,7 +14,7 @@ use tiler_artifact::program::{
     RecordedArtifactProgramIdentity, RepresentationKey, SchemaVersion, TargetProfileRef,
     ToolComponent, VerifiedArtifactProgram,
 };
-use tiler_build::{BackendEntryDeclaration, assemble_plan_artifact};
+use tiler_build::{BackendEntryDeclaration, PlanDeterminismDeclaration, assemble_plan_artifact};
 use tiler_compiler::session::PlanAlternative;
 use tiler_ir::kernel::{
     AddressSpace, BinaryOp, BlockRef, BufferAccess, BufferParameter, CompareOp, ConvertOp,
@@ -26,7 +26,7 @@ use tiler_runtime::adapter::{LiveExecutionContext, RuntimeAdapter, route_with_ad
 use tiler_runtime::load::{
     DTypeDispatch, DecodedProgram, ExecutionEnvironment, LiveDeviceObservation, LiveDeviceRequest,
     LoadRejection, Preflight, PreparedEntryObservation, RoutedDispatch, RoutedEntry,
-    TargetPropertyRequest,
+    TargetEnvironmentObservation, TargetEnvironmentSupport, TargetPropertyRequest,
 };
 
 /// Governed backend family of this spike's CPU path.
@@ -275,7 +275,7 @@ impl Translator<'_> {
             .map_err(|_| CpuError::Translate("a value handle the kernel does not retain"))?;
         match kind {
             KernelType::Bool | KernelType::Index | KernelType::F32 => {}
-            KernelType::U8 | KernelType::I32 | KernelType::Bf16 => {
+            KernelType::U8 | KernelType::I32 | KernelType::Bf16 | KernelType::U32 => {
                 return Err(CpuError::Translate("a value type this image refuses"));
             }
         }
@@ -1006,6 +1006,11 @@ pub fn assemble(
     let artifact = assemble_plan_artifact(
         semantic,
         plan,
+        // `Unclaimed`, which is every current build: a `Claimed` declaration
+        // needs a compiler witness joined to per-payload receipts, and no
+        // accepted provider can mint a receipt today. The artifact lands
+        // admitting nothing and stays routable.
+        PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
             builder
                 .push_carried_payload(
@@ -1015,6 +1020,9 @@ pub fn assemble(
                     PAYLOAD_SCHEMA,
                     profile,
                     ArtifactExecutionPolicy::NativeImage,
+                    // No target-environment declaration; this spike registers
+                    // no provider descriptor schema to name one under.
+                    None,
                     content.clone(),
                 )
                 .map(|payload| vec![payload])
@@ -1104,6 +1112,33 @@ impl RuntimeAdapter for CpuAdapter {
     type Refusal = CpuError;
     type Failure = CpuError;
     type Completion = Vec<u32>;
+
+    /// Registers no target-environment descriptor schema.
+    ///
+    /// This spike's scalar CPU image is its own representation, and no accepted
+    /// provider schema describes the host arithmetic conditions such a
+    /// declaration would have to fix. There is no permissive default here on
+    /// purpose: `Unsupported` filters every claimed `Plan` cell while leaving
+    /// `Unclaimed` routes routable, which is the fail-closed answer for an
+    /// adapter that cannot stand behind an exact provider schema.
+    fn target_environment_support(&self) -> TargetEnvironmentSupport<'_> {
+        TargetEnvironmentSupport::Unsupported
+    }
+
+    /// Never reached while no schema is registered; unavailable regardless.
+    ///
+    /// An observation is an assertion rather than an attestation, and this
+    /// adapter has nothing to assert.
+    fn observe_target_environment(
+        &mut self,
+        _context: &LiveExecutionContext,
+    ) -> TargetEnvironmentObservation {
+        TargetEnvironmentObservation::Unavailable {
+            reason:
+                "this spike's scalar CPU adapter registers no target-environment descriptor schema"
+                    .to_owned(),
+        }
+    }
 
     fn bind_execution_context(&mut self) -> Result<ExecutionEnvironment, Self::Refusal> {
         Ok(ExecutionEnvironment {
@@ -1297,12 +1332,20 @@ impl RuntimeAdapter for CpuAdapter {
 }
 
 /// Binds the ABI facts a route evaluates its formulas against.
+///
+/// The *literal* axes only. An interface axis may name a `ShapeEnv` symbol,
+/// whose value is the caller's bound buffer rather than anything the artifact
+/// declares, so binding one here would state a fact this artifact does not
+/// know. A symbolic axis is left unbound instead, which makes every expression
+/// over it fail closed as an unbound input extent rather than silently
+/// evaluating against an invented extent. Every fixture this spike packages
+/// declares a wholly literal boundary, so the bound set is unchanged for them.
 #[must_use]
 pub fn bind_facts(program: &DecodedProgram) -> AbiFacts {
     let mut binder = AbiFactBinder::new(AvailabilityPhase::LiveDevicePreflight);
     for input in program.inputs() {
         binder
-            .bind_input_shape(input.key(), input.shape())
+            .bind_declared_extents(input.key(), input.extents())
             .expect("the declared interface binds");
     }
     binder.build()
