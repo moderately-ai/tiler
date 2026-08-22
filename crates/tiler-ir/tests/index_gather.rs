@@ -806,3 +806,273 @@ fn the_gather_rule_vocabulary_is_publicly_inspectable() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// Declaration order: the domain is a set, and both validators read it as one
+// ---------------------------------------------------------------------------
+
+/// One `out = gather(source=[4, 5], index=[3], axis=1)` under a chosen order.
+///
+/// The derived result is `[4, 3]`. `creation_reversed` declares the extent-3
+/// result dimension **first**, so the ascending-ordinal run the builder commits
+/// is the reverse of the result order; `slice_by_ordinal` then hands
+/// `gather_read` its domain in ordinal order rather than in result order. Only
+/// the declaration order varies — the dimension set, the extents, the output
+/// shape, the coordinates, and the axis are identical across all four.
+///
+/// That two-by-two is the whole space, because the two validators read the
+/// domain from opposite ends: `prepare_gather_access` sees the caller's slice
+/// and `verify_gather_access` sees the committed sorted run. Nothing else can
+/// separate them, and every other fixture in this file, in
+/// `tiler-reference`'s region oracle, and in `proof.rs`'s own `admitted_gather`
+/// declares result dimensions ascending, so caller order and ordinal order
+/// coincide there and none of them can see this at all.
+fn ordered_domain_gather(
+    creation_reversed: bool,
+    slice_by_ordinal: bool,
+) -> Result<VerifiedIndexRegion, String> {
+    let mut builder = IndexRegionBuilder::new(registry()).map_err(|error| format!("{error:?}"))?;
+    // Result axis 0 has extent 4 and result axis 1 has extent 3, whichever
+    // order the two are declared in.
+    let (four, three) = if creation_reversed {
+        let three = builder
+            .dimension(DomainRole::Parallel, Extent::new(3))
+            .unwrap();
+        let four = builder
+            .dimension(DomainRole::Parallel, Extent::new(4))
+            .unwrap();
+        (four, three)
+    } else {
+        let four = builder
+            .dimension(DomainRole::Parallel, Extent::new(4))
+            .unwrap();
+        let three = builder
+            .dimension(DomainRole::Parallel, Extent::new(3))
+            .unwrap();
+        (four, three)
+    };
+    let source = builder
+        .tensor(
+            TensorRole::Input,
+            F32::resolved_type().clone(),
+            Shape::from_dims([4, 5]),
+        )
+        .unwrap();
+    let index = builder
+        .tensor(
+            TensorRole::Input,
+            gather_index_resolved_type(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let output = builder
+        .tensor(
+            TensorRole::Output,
+            F32::resolved_type().clone(),
+            Shape::from_dims([4, 3]),
+        )
+        .unwrap();
+    let outer = builder.dimension_expr(four).unwrap();
+    let inner = builder.dimension_expr(three).unwrap();
+    let result_order = [four, three];
+    let ordinal_order = if creation_reversed {
+        [three, four]
+    } else {
+        [four, three]
+    };
+    let domain = if slice_by_ordinal {
+        ordinal_order
+    } else {
+        result_order
+    };
+    // Source axis 0 is the one the loaded U32 does not supply; the index run is
+    // the single index axis. Both are unchanged by the declaration order.
+    let value = builder
+        .gather_read(source, index, &domain, &[outer], &[inner], Axis::new(1))
+        .map_err(|error| format!("gather_read refused: {error:?}"))?;
+    let write = builder
+        .write(output, &result_order, &[outer, inner])
+        .map_err(|error| format!("{error:?}"))?;
+    builder
+        .output(write, value)
+        .map_err(|error| format!("{error:?}"))?;
+    builder
+        .build()
+        .map_err(|error| format!("build refused: {error:?}"))
+}
+
+/// Every declaration order of one gather is admitted by **both** validators.
+///
+/// The defect this pins is not a wrong answer but a disagreement: the caller's
+/// slice order and the committed ordinal order are two spellings of one set,
+/// and a rule that read one of them refused a region the other admitted. Three
+/// of these four cases pass under a rule that compares sequences; the fourth —
+/// dimensions declared in reverse, domain supplied in result order — is
+/// admitted by `gather_read` and then refused by `build`, at a different layer
+/// under a different diagnostic, which is a region no caller can author in
+/// either spelling.
+///
+/// Driving all four rather than that one case is deliberate: the two orders are
+/// independent inputs, and a repair that fixed the authoring check by making it
+/// read the sorted run would move the refusal rather than remove it, leaving
+/// this test's fourth row green and its third row red.
+#[test]
+fn every_declaration_order_of_one_gather_is_admitted_by_both_validators() {
+    for creation_reversed in [false, true] {
+        for slice_by_ordinal in [false, true] {
+            assert!(
+                ordered_domain_gather(creation_reversed, slice_by_ordinal).is_ok(),
+                "a gather declaring its result dimensions reversed={creation_reversed} and \
+                 supplying its domain by-ordinal={slice_by_ordinal} names the same set of \
+                 dimensions as every other spelling and must be admitted alike",
+            );
+        }
+    }
+}
+
+/// Two orders of one domain intern to one access, and so to one value.
+///
+/// This is the identity half of the same property: the committed `domain` is
+/// the ascending collection of a `BTreeSet`, so two callers naming the same
+/// dimensions in different orders build the *same* record. Asserting it here
+/// keeps a later order-carrying `domain` from splitting one meaning across two
+/// identities without that being a deliberate, reviewed decision — under such a
+/// change these two calls would return different values and this reddens.
+#[test]
+fn two_orders_of_one_gather_domain_intern_to_one_value() {
+    let mut builder = IndexRegionBuilder::new(registry()).unwrap();
+    let four = builder
+        .dimension(DomainRole::Parallel, Extent::new(4))
+        .unwrap();
+    let three = builder
+        .dimension(DomainRole::Parallel, Extent::new(3))
+        .unwrap();
+    let source = builder
+        .tensor(
+            TensorRole::Input,
+            F32::resolved_type().clone(),
+            Shape::from_dims([4, 5]),
+        )
+        .unwrap();
+    let index = builder
+        .tensor(
+            TensorRole::Input,
+            gather_index_resolved_type(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let outer = builder.dimension_expr(four).unwrap();
+    let inner = builder.dimension_expr(three).unwrap();
+    let ascending = builder
+        .gather_read(
+            source,
+            index,
+            &[four, three],
+            &[outer],
+            &[inner],
+            Axis::new(1),
+        )
+        .expect("the result-order spelling is admitted");
+    let descending = builder
+        .gather_read(
+            source,
+            index,
+            &[three, four],
+            &[outer],
+            &[inner],
+            Axis::new(1),
+        )
+        .expect("the reversed spelling names the same set and is admitted alike");
+    assert_eq!(
+        ascending, descending,
+        "the domain is a set at rest, so two orders of it are one access and one value",
+    );
+}
+
+/// A domain carrying the wrong extents is still refused, in both spellings.
+///
+/// The negative control for the two tests above: order-insensitivity must not
+/// have been bought by dropping the rule. `[4, 4]` is neither the derived
+/// `[4, 3]` nor any permutation of it, and the refusal must arrive from
+/// `gather_read` rather than from `build`, because the authoring surface owns
+/// the caller's diagnostics.
+#[test]
+fn a_domain_whose_extents_are_not_the_result_extents_is_still_refused() {
+    let mut builder = IndexRegionBuilder::new(registry()).unwrap();
+    let four = builder
+        .dimension(DomainRole::Parallel, Extent::new(4))
+        .unwrap();
+    let other = builder
+        .dimension(DomainRole::Parallel, Extent::new(4))
+        .unwrap();
+    let source = builder
+        .tensor(
+            TensorRole::Input,
+            F32::resolved_type().clone(),
+            Shape::from_dims([4, 5]),
+        )
+        .unwrap();
+    let index = builder
+        .tensor(
+            TensorRole::Input,
+            gather_index_resolved_type(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let outer = builder.dimension_expr(four).unwrap();
+    let inner = builder.dimension_expr(other).unwrap();
+    for domain in [[four, other], [other, four]] {
+        let error = builder
+            .gather_read(source, index, &domain, &[outer], &[inner], Axis::new(1))
+            .expect_err("a domain of [4, 4] is not the derived [4, 3] in any order");
+        assert!(
+            matches!(error, IndexBuildError::GatherDomainShape { .. }),
+            "the extent census still refuses under its own name, not another rule",
+        );
+    }
+}
+
+/// A gather commits its domain in ascending ordinal order, whatever order the
+/// caller wrote it in.
+///
+/// The subject is **compaction's** sort, not the draft builder's. A gather's
+/// domain is sorted three separate times on the way here — the draft commits
+/// the ascending collection of a `BTreeSet`, compaction remaps and re-sorts,
+/// and the alpha access key sorts again before hashing — so the draft's own
+/// order is unobservable, and replacing its `collect` with `rev().collect()`
+/// leaves the entire workspace suite green. What this test can lose is the
+/// middle sort: `encode_gather_bounds_identity` frames `subject.domain` as a
+/// run of ordinals taken from the compacted access in stored order, so if
+/// compaction stopped sorting, one gather would take two bounds-proof
+/// identities depending on which order its author happened to write.
+///
+/// That the alpha key sorts the domain independently is also the evidence that
+/// the order was never part of a gather's identity, which is what makes the
+/// multiset comparison in `GatherDomainShape` a repair rather than a
+/// weakening: the identity boundary already treated this field as a set.
+#[test]
+fn a_gather_commits_its_domain_in_ascending_ordinal_order() {
+    for creation_reversed in [false, true] {
+        for slice_by_ordinal in [false, true] {
+            let region = ordered_domain_gather(creation_reversed, slice_by_ordinal)
+                .expect("every declaration order is admitted");
+            let domain: Vec<_> = region
+                .accesses()
+                .find(|access| access.view().gather_read().is_some())
+                .expect("the fixture authors exactly one gather")
+                .domain()
+                .collect();
+            assert_eq!(
+                domain.len(),
+                2,
+                "the fixture's gather iterates two dimensions"
+            );
+            assert!(
+                domain.is_sorted(),
+                "a gather authored reversed={creation_reversed} by-ordinal={slice_by_ordinal} \
+                 must still commit its domain ascending, because both the extent-multiset rule \
+                 and the bounds-proof identity read the committed run as canonical",
+            );
+        }
+    }
+}

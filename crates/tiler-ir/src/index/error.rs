@@ -285,14 +285,20 @@ pub enum IndexBuildError {
         /// Offending dimension handle.
         dimension: DimensionId,
     },
-    /// The supplied result domain does not match the derived result shape.
+    /// The supplied result domain does not carry the derived result extents.
+    ///
+    /// Compared as a **multiset**: the order the domain is written in is not
+    /// significant, and this never reports a domain that names the right
+    /// extents in a different order. A gather's domain is a set, so the two
+    /// fields below are rendered as shapes for legibility rather than because
+    /// either one's axis order is part of the rule.
     ///
     /// Raised only after all three literal-shape refusals, so a nonliteral
     /// boundary is never reported as a shape disagreement.
     GatherDomainShape {
         /// Shape derived by splicing the index shape into the source at `axis`.
         expected: Shape,
-        /// Shape the supplied domain declares.
+        /// Extents the supplied domain declares, in the order it supplied them.
         actual: Shape,
     },
     /// Scalar authority rejected registration, typing, or application.
@@ -359,7 +365,11 @@ pub enum GatherAccessRule {
     IndexCoordinateRank,
     /// A domain dimension's extent is not authored literal.
     DomainExtentLiteral,
-    /// The declared domain disagrees with the derived result shape.
+    /// The declared domain does not carry the derived result extents.
+    ///
+    /// Compared as a multiset, exactly as
+    /// [`IndexBuildError::GatherDomainShape`] compares it, so a domain naming
+    /// the right extents in a different order is admitted by both surfaces.
     DomainShape,
     /// A source coordinate leaves the access domain.
     SourceCoordinateScope,

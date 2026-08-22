@@ -1609,6 +1609,16 @@ impl IndexRegionBuilder {
     /// index-axis order. The loaded U32 value supplies exactly the omitted
     /// `axis` coordinate.
     ///
+    /// `domain` is a **set**, and the order it is written in is not significant.
+    /// The rule it must satisfy is that its dimensions' extents, taken as a
+    /// multiset, are exactly the extents of the derived result shape — not that
+    /// the *i*th dimension carries the *i*th result extent. Two calls naming the
+    /// same dimensions in different orders are one access and return one value,
+    /// because the committed record stores the domain sorted and cannot retain
+    /// the order it was written in. Which dimension plays which result axis is
+    /// carried by `axis` and the two coordinate runs, and by the write that
+    /// stores the gathered value — never by this argument's order.
+    ///
     /// # Errors
     ///
     /// Returns an error for an invalid handle, an aliased or non-input operand,
@@ -1753,9 +1763,12 @@ impl IndexRegionBuilder {
                 actual: index_coordinates.len(),
             });
         }
-        // The domain is validated in the caller's supplied order, so the first
+        // The domain is *walked* in the caller's supplied order, so the first
         // offending dimension is reported rather than whichever one a sorted
-        // set happened to visit first.
+        // set happened to visit first. That is a diagnostic-quality choice
+        // only: `declared` below is compared as a multiset, because the commit
+        // at the end of this function stores the domain as a sorted set and a
+        // rule may not depend on an order the record does not retain.
         let mut domain_set = BTreeSet::new();
         let mut declared = Vec::with_capacity(domain.len());
         for dimension in domain {
@@ -1783,7 +1796,7 @@ impl IndexRegionBuilder {
         // `tiler::gather-f32@1` about what a gather's result shape is.
         let (_, derived) = gather_result_shape(axis, source_shape, index_shape)
             .expect("the rank and axis rules were decided above");
-        if declared_shape != derived {
+        if !gather_domain_carries_result_extents(&declared_shape, &derived) {
             return Err(IndexBuildError::GatherDomainShape {
                 expected: derived,
                 actual: declared_shape,
@@ -2908,6 +2921,36 @@ fn enumerated_points(points: Option<u64>) -> u64 {
 
 fn bounded_index(index: usize) -> u32 {
     u32::try_from(index).expect("governed region limits fit u32")
+}
+
+/// Whether a gather's result domain carries exactly the derived result extents.
+///
+/// The comparison is over the **multiset** of extents, not the sequence. A
+/// gather's stored `domain` is a set at rest — `prepare_gather_access` commits
+/// the ascending-ordinal collection of a `BTreeSet` — so the order a caller
+/// listed its dimensions in is not retained, and a rule that consulted it would
+/// be checking a property the record cannot answer. The domain also carries no
+/// positional meaning of its own: a gather's axis pairing is carried by `axis`
+/// and by the two coordinate runs, and every rule that reads the domain reads
+/// it as a set (`is_subset` for coordinate scope, a product for point count).
+///
+/// Both [`IndexRegionBuilder::prepare_gather_access`] and
+/// [`IndexRegionBuilder::verify_gather_access`] call this rather than each
+/// spelling the comparison, because they read the domain from opposite ends:
+/// the caller's slice and the committed sorted run. Any comparison sensitive to
+/// order therefore answers differently at the two ends for one region, which
+/// admits it at `gather_read` and refuses it at `build` — a legal region left
+/// unauthorable in either spelling, refused at the wrong layer.
+fn gather_domain_carries_result_extents(declared: &Shape, derived: &Shape) -> bool {
+    if declared.rank() != derived.rank() {
+        return false;
+    }
+    let sorted = |shape: &Shape| {
+        let mut extents: Vec<u64> = shape.extents().iter().copied().map(Extent::get).collect();
+        extents.sort_unstable();
+        extents
+    };
+    sorted(declared) == sorted(derived)
 }
 mod compact;
 mod gather;
