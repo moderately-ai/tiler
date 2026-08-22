@@ -6079,3 +6079,65 @@ fn a_cooperative_workgroup_kernel_cannot_cover_a_contraction_occurrence() {
         [KernelProgramDiagnostic::IncompleteComponentSet]
     );
 }
+
+/// The unjoined refusal's breadth is forced by the encoding, not chosen.
+///
+/// [`ContractionF32PlanWitness::from_program`] refuses on the presence of
+/// staging alone. Narrowing that would need program scope to say *which*
+/// cooperative topology a staged kernel realizes, because only
+/// `CooperativeContraction` leaves the canonical left chain intact. The
+/// execution binding is the field that looks like it says so — that topology
+/// requires [`ExecutionBinding::BlockedWorkgroup`] and never defaults it — and
+/// it does not reach the signature: `verify_signature` derives one
+/// `GlobalInvocationIndex` for the blocked and global-linear bindings out of a
+/// single shared match arm, then appends `LocalInvocationIndex` for either
+/// cooperative tile.
+///
+/// So a staged contraction and a staged reduction present the same builtins,
+/// and every staging row of either is a workgroup F32 allocation. What differs
+/// between these two subjects is capacity — the contraction stages one tile per
+/// operand at `256` slots, the reduction one partial array at `4` — and a
+/// capacity is not a discriminant: `CooperativeTile::staging` is a plain
+/// `Vec<WorkgroupStaging>`, so the tile vocabulary ties neither the row count
+/// nor the slot count to a topology. Reading either as one would be exactly the
+/// inference `staged_role` declines to make.
+///
+/// **If this test starts failing, program scope has gained a discriminant** and
+/// `staged_role`'s reconsideration trigger fires — with the caveat recorded
+/// there, that a newly discriminating *derived* field is not on its own the
+/// declarative record the narrowing needs.
+#[test]
+fn a_staged_contraction_and_a_staged_reduction_agree_on_program_scope_builtins() {
+    let contraction = lower_scheduled_region(&cooperative_contraction_region(21, 16))
+        .expect("the cooperative contraction lowers");
+    let reduction = lower_scheduled_region(&cooperative_workgroup_region(9))
+        .expect("the cooperative workgroup region lowers");
+    assert_ne!(
+        contraction.staging().len(),
+        0,
+        "the operand tile stages, so this kernel reaches the unjoined refusal"
+    );
+    assert_ne!(
+        reduction.staging().len(),
+        0,
+        "the partial tile stages, so this kernel reaches it too"
+    );
+    assert_eq!(
+        contraction.admitted_builtins(),
+        reduction.admitted_builtins(),
+        "the execution binding does not reach program scope, so the builtins \
+         cannot separate operand staging from partial staging",
+    );
+    for parameter in contraction.staging().chain(reduction.staging()) {
+        assert_eq!(
+            parameter.address_space,
+            crate::kernel::AddressSpace::Workgroup,
+            "every staging row of either topology is workgroup storage",
+        );
+        assert_eq!(
+            parameter.element_type,
+            KernelType::F32,
+            "every staging row of either topology holds the one staged element type",
+        );
+    }
+}
