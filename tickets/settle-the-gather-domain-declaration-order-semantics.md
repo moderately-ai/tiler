@@ -1,7 +1,7 @@
 ---
 id: settle-the-gather-domain-declaration-order-semantics
 title: Settle the gather domain declaration-order semantics
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-selected-data-dependent-index-representation, close-the-gather-review-findings-on-the-index-layer]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, gather, identity, verification]
-claimed_from: todo
-assignee: worker-gatherorder
-lease_expires_at: 1787428751
 ---
 ## User-visible outcome
 
