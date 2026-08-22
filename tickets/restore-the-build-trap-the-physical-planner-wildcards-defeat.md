@@ -26,6 +26,14 @@ Found 2026-08-22 by the post-chain multi-lens audit's wildcard census.
 
 **Pre-existing and outside the audited span, recorded so it is not mistaken for regression.** `physical.rs` does not appear in `git diff e20ed09e..09474993`.
 
+## Correction — 2026-08-22: there is a fourth site, and this ticket's closing condition would not have caught it
+
+The post-chain audit found a **fourth** wildcard defeating the same build trap, and it is not spelled `_ =>`. In `crates/tiler-compiler/src/physical.rs`, `verify_cooperative_contraction_subject_binding` writes `matches!(&region.index.program, RegionProgram::Numerical { scalar: ScalarProgram::StrictTensorContraction { .. }, .. } if ...)`. **`matches!` carries an implicit false arm**, so it is exhaustiveness-equivalent to `_ => false` and defeats the trap exactly as the three named sites do.
+
+**This matters more than one extra site.** The Facts above enumerate exactly three `_ =>` sites and the closing condition reads "No wildcard … matches `RegionProgram` or `ScalarProgram`". A worker repairing the three, watching the perturbation redden there, would close this ticket **with the fourth still standing** — a green close over a live gap. Amended here rather than left for that worker to discover.
+
+**Search for the pattern, not the spelling.** `matches!`, `if let` without an else arm, and `is_some_and` over a match all carry implicit false arms. Enumerate them at your base and say which forms you searched for.
+
 ## Required work
 
 - Re-audit both Facts at your base with a per-Fact verdict. Read all three wildcard sites in full; the audit's own count of the wider census failed to reconcile, so trust nothing here without reading.
