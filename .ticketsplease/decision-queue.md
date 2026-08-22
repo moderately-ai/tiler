@@ -78,7 +78,7 @@ Updated 2026-08-18: the compilation-selection provenance packet was parked as it
 
 ## 9. Live-extent artifact envelope row — blocked before decision
 
-- Ticket: `accept-the-live-extent-artifact-envelope-row` (`p1`, `blocked`).
+- Ticket: `accept-the-live-extent-artifact-envelope-row` (`p1`, **`todo` since 2026-08-22** — both stated hold conditions fired: the association derivation is `done` with its verdict transcribed into the ticket, and the packaging landing the note said the population waited on is `done`. It is the **only** remaining blocker on the p0 `bind-frozen-live-extent-bytes-at-declared-backend-transports`. Held from dispatch on `contracts/decisions` until the live gather lane merges).
 - Hold evidence: the draft row is currently attached to a fixed `[2,3]` semantic interface while tests execute bindings 14/15. It is unresolved whether `{ key, axis, value_type }` remains a complete row once the symbolic semantic source is carried.
 - Current recommendation: do not accept the row yet.
 - Release trigger: `associate-live-extent-operands-with-symbolic-semantic-interface-axes` produces an independently reviewed minimum complete schema/identity derivation and the packet is rewritten against that exact commit.

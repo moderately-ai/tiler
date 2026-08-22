@@ -1,7 +1,7 @@
 ---
 id: package-selected-physical-implementation-provenance-in-artifact-identity
 title: Package selected physical implementation provenance in artifact identity
-status: blocked
+status: todo
 priority: p1
 dependencies: [disclose-the-physical-provider-environment-a-compilation-was-offered, publish-occurrence-bound-selected-physical-implementation-evidence, replace-flat-selected-lowering-capability-keys-with-structured-subjects, decide-the-artifact-physical-selection-provenance-surface]
 related: [disclose-offered-and-selected-physical-provider-sets-separately, reconcile-the-operation-identity-and-governed-key-grammars]
@@ -116,6 +116,16 @@ positional `push_variant` call population is 65 across 13 source files; construc
 census is 69 calls in 15 source files; the artifact environment's
 `available()` has no consumer beyond its definition. These commands were run,
 not merely proposed.
+
+## Released to ready — 2026-08-22, the stop condition's decision landed four days ago
+
+Found by the deferred/blocked sweep, verified by the coordinator at `56eecba1`. The stop condition below parks this on `decide-the-artifact-physical-selection-provenance-surface`. That ticket is **`status: done`**, and its `## Accepted decision — 2026-08-18` says verbatim: *"Implementation flows through `package-selected-physical-implementation-provenance-in-artifact-identity`, which this acceptance unblocks."* All four declared dependencies are `done`. It sat blocked for four days after being explicitly unblocked.
+
+**This is high-leverage:** 13 non-terminal dependents, 7 of them p1 — including `promote-the-bounded-scalar-cpu-vertical-into-a-production-backend`, `decide-how-vector-requirements-cross-the-artifact-boundary`, `publish-the-backend-provider-conformance-suite`, and `prove-the-first-real-fixed-vector-cpu-execution-approach`.
+
+**Facts below predate several landings** — `tiler.kernel-program` v12→v13, `tiler.artifact-program` v20→v21, manifest (20,0)→(21,0), the retired contraction key, and the index-layer gather. Re-audit every Fact at your own base per the stale-Facts rule; repair the ticket and report the repair.
+
+**Scheduling.** Collides with the live gather lane on `contracts/decisions` **only**. **Release trigger: that lane merges or stops at a gated boundary.**
 
 **Stop condition.** No production work may start until Tom accepts or replaces
 the Pareto-complete exact surface in the new P1

@@ -1,7 +1,7 @@
 ---
 id: accept-the-exact-composed-reference-session-and-event-surface
 title: Accept the exact composed-reference session and event surface
-status: blocked
+status: todo
 priority: p1
 dependencies: []
 related: [implement-the-composed-realization-evaluation-driver, define-the-composed-realization-driver-subject-bridge, decide-the-safe-cross-crate-composed-reference-boundary]
@@ -15,6 +15,12 @@ tags: [decision, needs-tom, public-boundary, conformance, reference, numerics]
 Tom accepts or redirects the exact Rust surface by which the compiler's already-accepted composed-realization event stream drives the reference-owned, no-internal-tensor session. The implementation then has one unambiguous public spelling for every event descriptor, session transition, owned output, and typed refusal, without colliding with an existing reference type or inventing an unstated work-authority type.
 
 ## Dispatch hold
+
+## Hold released — 2026-08-22, its trigger fired
+
+The hold below required "an explicit coordinator observation that LiveRow is no longer active". **That observation is now made.** `.ticketsplease/decision-queue.md` item 6 records *Source-bound live-row-major access — ACCEPTED 2026-08-18*, `RESOLVED … option 1, the fieldless contextual marker`. The queue's companion gate is also clear: item 10's policy question was accepted 2026-08-18 and is recorded on `calibrate-the-physical-frontier-provider-and-outcome-budgets` under `## Accepted policy — 2026-08-18`.
+
+**What this releases is a presentation, not a worker lane.** The next step is re-running the decision-packet readiness gate and moving to `awaiting-decision` for Tom — not implementation. Re-audit the packet's Facts first; it has `dependencies: []` and was written 2026-08-17, before several landings.
 
 **Blocked, 2026-08-17.** Do not queue or present this packet while the current LiveRow decision is active. The trigger is an explicit coordinator observation that LiveRow is no longer active; only then may this move to `awaiting-decision`. This hold changes no technical conclusion below.
 

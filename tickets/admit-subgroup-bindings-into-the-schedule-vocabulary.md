@@ -1,7 +1,7 @@
 ---
 id: admit-subgroup-bindings-into-the-schedule-vocabulary
 title: Admit subgroup bindings and their reduction topology into the schedule vocabulary
-status: blocked
+status: todo
 priority: p2
 dependencies: [accept-adr-0094-subgroup-execution-tier, admit-shared-contributor-coverage-and-reduction-padding-identity, decide-the-subgroup-coordinate-binding-and-output-map, preserve-present-subgroup-requirements-in-the-artifact-resource-record]
 related: [design-the-subgroup-execution-tier, admit-vector-lane-bindings-into-the-schedule-vocabulary, compose-the-two-level-subgroup-and-workgroup-reduction]
@@ -10,6 +10,16 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [scheduling, ir, metal, subgroup, execution-hierarchy, public-boundary, decision, needs-tom]
 ---
+## Hold released — 2026-08-22, its one stated blocker is done
+
+The ticket stated it "remains blocked only on the shared contributor-coverage implementation". That is `admit-shared-contributor-coverage-and-reduction-padding-identity`, **`status: done`** — verified in source at `56eecba1`: `pub enum ReductionPaddingIdentity` exists in `crates/tiler-ir/src/schedule/model.rs`, and `ContributorCoverage::Exact` is consumed in `tiler-metal`, `tiler-conformance`, and `tiler-ir`. All four declared dependencies are `done`.
+
+**The work itself is not done** — this ticket's own subject is still a reservation.
+
+**Tag correction, verified at source and NOT to be restated from the body below.** This ticket says to append the new topology at tag `0x36`. `0x36` is **reserved for `CooperativeContractionSplit`**, owned by `decide-the-fixed-strided-contributor-membership-vocabulary`; `0x37` is `CooperativeContraction` and `0x38` is taken. Derive the next free tag at your own base. `realize-the-tiled-contraction-schedule-and-its-metal-emission` carries the same stale `0x36` claim — both were written before those landed.
+
+**Scheduling.** Collides with the live gather lane on `implementation/{ir,compiler}` + `contracts/decisions`. **Release trigger: that lane merges.**
+
 ## User-visible outcome
 
 A scheduled region can state that its work is spread across the lanes of a subgroup, and the intrinsic verifier discharges — or refuses, by name — every obligation that spread creates: coverage, ownership, the combine order the reduction consumes, and the numerical permissions a lane partition spends.
