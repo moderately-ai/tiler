@@ -1,7 +1,7 @@
 ---
 id: reattach-the-misplaced-execute-documentation-in-the-adapter-route-image
 title: Reattach the misplaced execute documentation in the adapter-route image
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [keep-the-path-shared-route-gate-spike-compiling-or-make-its-breakage-loud]
@@ -9,9 +9,6 @@ scopes: [implementation/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, runtime, test-fixture]
-claimed_from: todo
-assignee: worker-imagedoc
-lease_expires_at: 1787415365
 ---
 ## User-visible outcome
 
