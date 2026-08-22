@@ -1,7 +1,7 @@
 ---
 id: close-the-gather-review-findings-on-the-index-layer
 title: Close the gather review findings on the index layer
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [admit-the-selected-data-dependent-index-representation]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, gather, verification, test-coverage]
-claimed_from: todo
-assignee: worker-gatherfix
-lease_expires_at: 1787420972
 ---
 ## User-visible outcome
 
