@@ -92,6 +92,12 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
     // check, because an axis whose symbol the environment does not declare has
     // no binding a later evaluation could resolve.
     check_interface_symbol_coherence(envelope)?;
+    // After the coherence check, which owns the undeclared-symbol refusal. An
+    // axis naming a symbol the environment does not declare is an incoherent
+    // *interface* — invalid whether or not an operand row names that axis — so
+    // reporting it as an operand fault would name the narrower of the two
+    // causes. What is left for the association to decide is the root.
+    check_extent_operand_association(envelope)?;
     let facts = ExpressionFacts::derive(envelope.expressions());
     check_expression_closure(envelope)?;
     check_backend_entries(envelope)?;
@@ -429,8 +435,15 @@ fn check_extent_operands(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCode
 /// was fixed and this refused every declared row by name. The grammar now states
 /// each axis literal-or-symbol, so the question is asked of the axis the row
 /// actually names: a literal one is refused and reports its own extent, and a
-/// symbolic one is the case the row exists for and passes on to the association
-/// checks.
+/// symbolic one is the case the row exists for and is passed on to
+/// [`check_extent_operand_association`], which proves the root.
+///
+/// *(Corrected 2026-08-22. This read that a symbolic axis "passes on to the
+/// association checks" from the day the grammar narrowed, when no association
+/// check ran after this one at all: a decoded row over a symbolic axis was
+/// admitted whatever its symbol was rooted at, including roots that make the
+/// row one no builder could have written. The sentence describes what happens
+/// now that `check_extent_operand_association` runs.)*
 ///
 /// Deliberately after [`check_extent_operands`] and `check_entry_mappings`, so
 /// a row that is *also* structurally broken — misordered, duplicated, out of
@@ -546,6 +559,69 @@ fn check_interface_symbol_coherence(envelope: &ArtifactEnvelope) -> Result<(), A
                 rooted: symbol.to_string(),
                 declared: spelled.to_string(),
             });
+        }
+    }
+    Ok(())
+}
+
+/// Re-proves each live-extent operand row against the association its builder
+/// proved: the axis the row names is symbolic, its symbol is declared by the
+/// artifact's one retained environment, and that symbol is rooted at exactly
+/// that `(key, axis)` input dimension.
+///
+/// This runs the model's own `builder::check_extent_operand_association` rather
+/// than restating it. The gap it closes opened because one rule had two
+/// implementations and only one of them moved: while the interface grammar
+/// carried literal extents alone, every axis a row could name was fixed and
+/// [`check_extent_operand_static_axes`] refused every declared row, which left
+/// the symbolic arms unreachable and their absence here harmless. The per-axis
+/// narrowing at `tiler.artifact-program.v21` made them reachable and nothing
+/// carried them across. One authority cannot drift apart from itself that way,
+/// and a fifth arm added to the association is proven on decoded bytes without
+/// anyone remembering to copy it. The refusal carries the model's own typed
+/// [`ArtifactBuildError`], as this module's other re-proofs do, so it reads the
+/// same whether the artifact was refused at construction or at load.
+///
+/// Two of the association's four arms cannot fire from here, each because a
+/// narrower check already owns its fact and reports a better cause:
+///
+/// - a **static** axis is refused first by [`check_extent_operand_static_axes`],
+///   which names the one extent that axis is fixed at; and
+/// - a symbol the retained environment does not declare is refused first by
+///   [`check_interface_symbol_coherence`] as `UndeclaredInterfaceSymbol`. That
+///   is the more fundamental of the two faults: such an interface has an axis
+///   nothing can bind whether or not an operand row names it, so an operand
+///   refusal would describe a consequence rather than the cause.
+///
+/// What remains, and what makes this check load-bearing, is the *root*. A
+/// symbol rooted at a static extent or a target property is answered by that
+/// authority and never by a per-invocation operand; a symbol rooted at a
+/// different input dimension makes the row name an inferred occurrence rather
+/// than the source-bearing axis, and a loader freezing that axis's extent would
+/// bind an unrelated quantity that no retained constraint need prove equal.
+fn check_extent_operand_association(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecError> {
+    let bindings = envelope.semantic().retained_shape.bindings();
+    for variant in envelope.variants() {
+        // Enumerated per variant, which is the `entry` the model's own rules
+        // are numbered by: `check_entry` reports `LaunchDisagreement` against
+        // the same index, and a position flattened across variants would name a
+        // different entry than the builder does.
+        for (index, entry) in variant.entries.iter().enumerate() {
+            for operand in &entry.input_extents {
+                let input = envelope
+                    .inputs()
+                    .iter()
+                    .find(|input| input.key == operand.key)
+                    .expect("check_extent_operands proved every operand key is declared");
+                super::super::builder::check_extent_operand_association(
+                    index,
+                    &operand.key,
+                    operand.axis,
+                    &input.extents,
+                    bindings,
+                )
+                .map_err(rule)?;
+            }
         }
     }
     Ok(())
