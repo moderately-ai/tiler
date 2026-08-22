@@ -75,6 +75,8 @@ This was noticed while writing the generalization and has not been measured. It 
 
 `spikes/` is outside every gate. `make check` and `make full` compile, run, and lint nothing here, and there is no CI. **This harness breaks silently.** The protocol's own hazard section enumerates the concrete ways; the single tripwire is that `--mode validate` prints the population it is about to measure and fails against the frozen counts rather than proceeding with a shrunken one. A variant that stops compiling turns into a prepared-pipeline count of 20 against a floor of 21, and the run stops.
 
+**`make citations` does not reach this directory either, and that was confirmed by perturbation rather than assumed.** Appending a link to a nonexistent file to this README and re-running `make citations` left it **green, exit 0**, with every population count unchanged. The cause is in the checker's own populations: `check-citations.sh` builds its document set with `find docs -type f -name '*.md'` and documents its three populations as `tickets/**`, `docs/**`, and the tracked markdown at the repository root. `spikes/**` is in none of them. So every markdown link in this directory — and in the realization probe's README beside it — is unchecked by any gate, and a link that rots here fails nobody. The 16 local links across this README, the protocol, and the parent `spikes/scheduling/README.md` were therefore resolved by hand on 2026-08-22; a future editor of these files has to do the same, because nothing will do it for them.
+
 ## Reproduce
 
 No `make` target reaches `spikes/`. From **this directory**. No third-party package is needed in any mode.
