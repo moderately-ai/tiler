@@ -697,6 +697,33 @@ pub(crate) enum FeasibilityOutcome {
     Rejected(ReasonCode),
 }
 
+/// How one transient-residency predicate resolved against a target's budget.
+///
+/// A fourth vocabulary, and deliberately not a third arm of
+/// [`FeasibilityOutcome`]. That one is two-valued because the record carrying it
+/// holds a *required* and an *available* quantity and validates the outcome
+/// against their comparison — so every value it can take is a statement about
+/// two known numbers. This predicate's distinguishing case is that the second
+/// number does not exist: no target profile in the tree declares a
+/// transient-memory limit, so the budget is absent rather than large or small.
+/// Encoding that absence as an `available` of zero would manufacture a refusal,
+/// and as an `available` of `u64::MAX` would manufacture an admission; both
+/// invent an authority no profile supplied.
+///
+/// Three values for the reason [`SynchronizationOutcome`] and
+/// [`HonourabilityOutcome`] have three: the absence of a refusal is not an
+/// admission, and a reader must be able to see that nothing ever bounded this
+/// plan.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ResidencyOutcome {
+    /// A declared budget provably covers the requirement.
+    Fits,
+    /// A declared budget provably does not cover the requirement.
+    Exceeds,
+    /// No profile declares a budget. Neither an admission nor a refusal.
+    BudgetUndeclared,
+}
+
 /// How one complete synchronization subject resolved against a target.
 ///
 /// A third vocabulary, and not [`FeasibilityOutcome`]: a subject is matched by
@@ -904,6 +931,24 @@ pub(crate) enum ExplainEvent {
         stage: ExplainStage,
         reason: ReasonCode,
     },
+    /// One plan's transient-residency requirement against a declared budget.
+    ///
+    /// Separate from [`Self::Feasibility`] rather than an outcome added to it,
+    /// because that record's `available` is not optional and its validation ties
+    /// the outcome to `required > available`. A predicate whose budget may be
+    /// absent cannot be stated there without supplying a stand-in number, and
+    /// every stand-in is a claim: see [`ResidencyOutcome`].
+    ///
+    /// `tensors` is the plan's `n` — how many score-shaped intermediates the
+    /// plan holds live at once. It is carried because "this plan needs too much"
+    /// and "this *rung* of this plan needs too much" are different findings.
+    TransientResidency {
+        predicate: PredicateKey,
+        required: Quantity,
+        available: Option<Quantity>,
+        tensors: u32,
+        outcome: ResidencyOutcome,
+    },
 }
 
 impl ExplainEvent {
@@ -913,6 +958,7 @@ impl ExplainEvent {
             | Self::BudgetStop { stage, .. }
             | Self::CompilerFailure { stage, .. } => *stage,
             Self::Feasibility { .. }
+            | Self::TransientResidency { .. }
             | Self::DeferredTargetRequirement { .. }
             | Self::DeferredSubgroupWidthConfirmation { .. }
             | Self::NumericalHonourability { .. }
@@ -938,6 +984,10 @@ impl ExplainEvent {
             }
             | Self::Feasibility {
                 outcome: FeasibilityOutcome::Admitted,
+                ..
+            }
+            | Self::TransientResidency {
+                outcome: ResidencyOutcome::Fits,
                 ..
             }
             | Self::NumericalHonourability {
@@ -1008,6 +1058,14 @@ impl ExplainEvent {
             | Self::SubgroupRealization {
                 outcome: SynchronizationOutcome::Undeclared,
                 ..
+            }
+            // The requirement is exact and no budget exists to compare it
+            // against, so the plan is neither admitted nor refused. It lands
+            // here rather than beside the refusals below because a reader acting
+            // on it must widen or declare a budget, not change the plan.
+            | Self::TransientResidency {
+                outcome: ResidencyOutcome::BudgetUndeclared,
+                ..
             } => ExplainDisposition::DeferredUnsupported,
             Self::BudgetStop { .. } => ExplainDisposition::BudgetStopped,
             Self::CostAssessment {
@@ -1016,6 +1074,10 @@ impl ExplainEvent {
             } => ExplainDisposition::Reported,
             Self::Feasibility {
                 outcome: FeasibilityOutcome::Rejected(_),
+                ..
+            }
+            | Self::TransientResidency {
+                outcome: ResidencyOutcome::Exceeds,
                 ..
             }
             | Self::NumericalHonourability {
@@ -1148,6 +1210,43 @@ impl ExplainEvent {
                 let exceeds = required.value() > available.value();
                 if matches!(outcome, FeasibilityOutcome::Admitted) == exceeds {
                     return Err(ExplainError::InvalidQuantityRelation);
+                }
+            }
+            // Three separate consistency rules, because this record can be
+            // incoherent in three independent ways and collapsing them would let
+            // a wrong record through on the strength of a right one.
+            Self::TransientResidency {
+                required,
+                available,
+                outcome,
+                ..
+            } => {
+                // A residency requirement is a byte count in both halves. The
+                // shared-kind check the `Feasibility` arm performs is not enough
+                // on its own here, because a record with no budget has no second
+                // kind to agree with.
+                if !matches!(required, Quantity::Bytes(_)) {
+                    return Err(ExplainError::UnknownQuantityUnit);
+                }
+                match (outcome, available) {
+                    // A comparison outcome without a budget would state a verdict
+                    // the record does not carry the evidence for.
+                    (ResidencyOutcome::Fits | ResidencyOutcome::Exceeds, None)
+                    // ...and a budget alongside `BudgetUndeclared` would carry
+                    // evidence the verdict denies exists.
+                    | (ResidencyOutcome::BudgetUndeclared, Some(_)) => {
+                        return Err(ExplainError::InvalidQuantityRelation);
+                    }
+                    (ResidencyOutcome::BudgetUndeclared, None) => {}
+                    (ResidencyOutcome::Fits | ResidencyOutcome::Exceeds, Some(budget)) => {
+                        if !matches!(budget, Quantity::Bytes(_)) {
+                            return Err(ExplainError::QuantityKindMismatch);
+                        }
+                        let exceeds = required.value() > budget.value();
+                        if matches!(outcome, ResidencyOutcome::Exceeds) != exceeds {
+                            return Err(ExplainError::InvalidQuantityRelation);
+                        }
+                    }
                 }
             }
             Self::DeferredTargetRequirement {
@@ -2734,6 +2833,31 @@ fn render_event(output: &mut String, event: &ExplainEvent) {
                 available.value()
             );
         }
+        ExplainEvent::TransientResidency {
+            predicate,
+            required,
+            available,
+            tensors,
+            outcome,
+        } => {
+            let _ = write!(
+                output,
+                "transient-residency:{}:{}:tensors={tensors}:{}={}",
+                predicate.as_str(),
+                residency_text(*outcome),
+                quantity_name(*required),
+                required.value(),
+            );
+            // Rendered as an explicit word rather than omitted, so that a budget
+            // absent from the record cannot be mistaken for a budget the renderer
+            // merely did not print.
+            match available {
+                Some(budget) => {
+                    let _ = write!(output, ":budget={}", budget.value());
+                }
+                None => output.push_str(":budget=undeclared"),
+            }
+        }
         ExplainEvent::DeferredTargetRequirement {
             entry,
             predicate,
@@ -3114,6 +3238,18 @@ fn feasibility_text(outcome: &FeasibilityOutcome) -> String {
     }
 }
 
+/// The three residency spellings, each distinct from every other refusal word
+/// this renderer emits. `budget-undeclared` deliberately shares no prefix with
+/// `rejected`, because the whole point of the third value is that a reader must
+/// not act on it as a refusal.
+const fn residency_text(outcome: ResidencyOutcome) -> &'static str {
+    match outcome {
+        ResidencyOutcome::Fits => "within-budget",
+        ResidencyOutcome::Exceeds => "rejected:exceeds-budget",
+        ResidencyOutcome::BudgetUndeclared => "budget-undeclared",
+    }
+}
+
 const fn quantity_name(quantity: Quantity) -> &'static str {
     match quantity {
         Quantity::Count(_) => "count",
@@ -3414,6 +3550,40 @@ fn encode_event(bytes: &mut Vec<u8>, event: &ExplainEvent) {
             }
             encode_quantity(bytes, *required);
             encode_quantity(bytes, *available);
+        }
+        // Tag 16, the next unused value. `9` is free of any current event but is
+        // not taken here: nothing in this file records why it is absent, and a
+        // tag whose retirement is unexplained may already mean something to a
+        // decoder of an older trace. Every tag 1..=15 keeps its meaning and its
+        // bytes, so no previously encodable record encodes differently and the
+        // `tiler.explain.compilation.v1` and `tiler.explain.trace.v1` domains do
+        // not step.
+        ExplainEvent::TransientResidency {
+            predicate,
+            required,
+            available,
+            tensors,
+            outcome,
+        } => {
+            bytes.push(16);
+            push_slice(bytes, predicate.as_str().as_bytes());
+            bytes.push(match outcome {
+                ResidencyOutcome::Fits => 1,
+                ResidencyOutcome::Exceeds => 2,
+                ResidencyOutcome::BudgetUndeclared => 3,
+            });
+            bytes.extend_from_slice(&tensors.to_be_bytes());
+            encode_quantity(bytes, *required);
+            // The presence of a budget is encoded before its value, so a record
+            // with no budget cannot encode to the same bytes as one whose budget
+            // happens to be zero.
+            match available {
+                Some(budget) => {
+                    bytes.push(1);
+                    encode_quantity(bytes, *budget);
+                }
+                None => bytes.push(0),
+            }
         }
         ExplainEvent::DeferredTargetRequirement {
             entry,
@@ -5798,5 +5968,366 @@ mod tests {
             explain.verify(),
             Err(CompilationExplainError::StaleIdentity),
         );
+    }
+
+    /// The five findings a reader must be able to tell apart.
+    ///
+    /// Named for what a reader is expected to *do* about each, because that is
+    /// what makes them five findings rather than five spellings of "no plan":
+    /// a missing fusion role is answered by registering a role, a budget stop by
+    /// widening a bound, a target rejection by choosing another target or plan,
+    /// an undeclared residency budget by declaring one, and a dominance pruning
+    /// by nothing at all — the candidate lost to a better one that was kept.
+    const FIVE_FINDINGS: usize = 5;
+
+    fn five_distinguishable_findings() -> Vec<(&'static str, ExplainEvent)> {
+        vec![
+            (
+                "missing-fusion-role",
+                // Fails closed to `FusionLegality::Unknown`, which is why this is
+                // an `Unknown` assessment and not a `Disproved` one: no authority
+                // refused the fusion, the registry simply declares no role.
+                ExplainEvent::Check {
+                    stage: ExplainStage::CapabilityResolution,
+                    assessment: PredicateAssessment::unknown(
+                        "fusion.numerical-role",
+                        ReasonCode::new("unsupported-operation-capability").unwrap(),
+                    )
+                    .unwrap(),
+                    rejection: RejectionClass::IntrinsicInvalid,
+                },
+            ),
+            (
+                "budget-stop",
+                ExplainEvent::BudgetStop {
+                    stage: ExplainStage::RegionFormation,
+                    resource: ResourceKey::new("region-members").unwrap(),
+                    limit: 62,
+                    actual: 63,
+                },
+            ),
+            (
+                "target-rejection",
+                ExplainEvent::Feasibility {
+                    predicate: PredicateKey::new("target.workgroup-threads").unwrap(),
+                    outcome: FeasibilityOutcome::Rejected(
+                        ReasonCode::new("workgroup-threads-exceeded").unwrap(),
+                    ),
+                    required: Quantity::Threads(2_048),
+                    available: Quantity::Threads(1_024),
+                },
+            ),
+            (
+                "unknown-residency-feasibility",
+                ExplainEvent::TransientResidency {
+                    predicate: PredicateKey::new("target.transient-residency").unwrap(),
+                    // B1-d prefill, the `n = 1` best case.
+                    required: Quantity::Bytes(5_444_206_600),
+                    available: None,
+                    tensors: 1,
+                    outcome: ResidencyOutcome::BudgetUndeclared,
+                },
+            ),
+            (
+                "dominance-pruning",
+                ExplainEvent::CostAssessment {
+                    model: CostModelKey::new("cost.analytical").unwrap(),
+                    basis: EvidenceBasis::CheckedInvariant,
+                    terms: vec![CostTerm::new("work-span", Quantity::Operations(4_096)).unwrap()],
+                    disposition: CostDisposition::Dominated,
+                },
+            ),
+        ]
+    }
+
+    /// Each of the five renders as its own finding, and none renders as "not
+    /// fused".
+    ///
+    /// **What it would take for this to say *no*, and that the case is
+    /// reachable.** It says no if any two of the five produce the same rendered
+    /// line, or if any one of them renders text a reader could read as a bare
+    /// absence of fusion. Both arms are reachable and are demonstrated by
+    /// perturbation rather than asserted: collapsing `residency_text`'s three
+    /// arms to one string reddens the distinctness assertion, and giving any
+    /// finding the words "not fused" reddens the second.
+    ///
+    /// The population is sized from [`FIVE_FINDINGS`] rather than by counting
+    /// the vector, so deleting a case is a failure here instead of a census that
+    /// silently shrinks while still reporting no collision.
+    #[test]
+    fn the_five_findings_render_distinguishably_and_none_reads_as_not_fused() {
+        let request = request(2.0);
+        let findings = five_distinguishable_findings();
+        assert_eq!(
+            findings.len(),
+            FIVE_FINDINGS,
+            "a finding was dropped from the distinguishability population"
+        );
+
+        let mut rendered = Vec::new();
+        for (key, event) in findings {
+            let mut writer = ExplainWriter::new(&request).unwrap();
+            let subject = writer
+                .subject(SubjectKind::Candidate, format!("candidate:{key}"))
+                .unwrap();
+            writer
+                .push_detail(
+                    RuleRef::builtin("test.rule").unwrap(),
+                    vec![subject],
+                    event,
+                    Vec::new(),
+                )
+                .unwrap();
+            let text = finish_test_trace(writer).render();
+            let line = text
+                .lines()
+                .find(|line| line.contains(&format!("candidate:{key}")))
+                .unwrap_or_else(|| panic!("{key}: no rendered line names its subject"))
+                .to_owned();
+
+            // No finding may present as a bare absence of fusion.
+            assert!(
+                !line.contains("not fused") && !line.contains("not-fused"),
+                "{key} rendered as an unqualified absence of fusion: {line}"
+            );
+            rendered.push((key, line));
+        }
+
+        // Every pair differs. Compared pairwise with the offending pair named,
+        // because a deduplicated-length assertion reports only that two
+        // collapsed and not which two.
+        for (index, (left_key, left)) in rendered.iter().enumerate() {
+            for (right_key, right) in &rendered[index + 1..] {
+                assert_ne!(
+                    left, right,
+                    "{left_key} and {right_key} render identically: {left}"
+                );
+            }
+        }
+    }
+
+    /// The three residency verdicts render as three lines, and the undeclared
+    /// one is not spelled as a rejection.
+    #[test]
+    fn the_residency_outcomes_render_as_three_distinct_findings() {
+        let request = request(2.0);
+        let cases = [
+            (ResidencyOutcome::Fits, Some(Quantity::Bytes(u64::MAX))),
+            (ResidencyOutcome::Exceeds, Some(Quantity::Bytes(1))),
+            (ResidencyOutcome::BudgetUndeclared, None),
+        ];
+        assert_eq!(
+            std::mem::variant_count::<ResidencyOutcome>(),
+            cases.len(),
+            "an outcome was added to the vocabulary without a rendering case"
+        );
+
+        let mut lines = Vec::new();
+        for (outcome, available) in cases {
+            let mut writer = ExplainWriter::new(&request).unwrap();
+            let subject = writer
+                .subject(SubjectKind::Candidate, "candidate:residency")
+                .unwrap();
+            writer
+                .push_detail(
+                    RuleRef::builtin("test.rule").unwrap(),
+                    vec![subject],
+                    ExplainEvent::TransientResidency {
+                        predicate: PredicateKey::new("target.transient-residency").unwrap(),
+                        required: Quantity::Bytes(5_444_206_600),
+                        available,
+                        tensors: 1,
+                        outcome,
+                    },
+                    Vec::new(),
+                )
+                .unwrap();
+            lines.push(finish_test_trace(writer).render());
+        }
+
+        assert!(lines[0].contains("transient-residency:target.transient-residency:within-budget"));
+        assert!(lines[1].contains("rejected:exceeds-budget"));
+        assert!(lines[2].contains("budget-undeclared"));
+        // The undeclared line states the absence rather than omitting the field,
+        // and does not carry the refusal word.
+        assert!(lines[2].contains(":budget=undeclared"));
+        assert!(
+            !lines[2].contains("rejected"),
+            "the undeclared verdict rendered as a rejection: {}",
+            lines[2]
+        );
+        // ...and it still reports the exact requirement.
+        assert!(lines[2].contains("bytes=5444206600"));
+        assert!(lines[2].contains("tensors=1"));
+    }
+
+    /// A residency record whose halves disagree is refused, in each of the three
+    /// independent ways it can disagree.
+    #[test]
+    fn an_incoherent_residency_record_is_refused() {
+        let request = request(2.0);
+        let attempt = |required: Quantity, available: Option<Quantity>, outcome| {
+            let mut writer = ExplainWriter::new(&request).unwrap();
+            let subject = writer
+                .subject(SubjectKind::Candidate, "candidate:residency")
+                .unwrap();
+            writer.push_detail(
+                RuleRef::builtin("test.rule").unwrap(),
+                vec![subject],
+                ExplainEvent::TransientResidency {
+                    predicate: PredicateKey::new("target.transient-residency").unwrap(),
+                    required,
+                    available,
+                    tensors: 1,
+                    outcome,
+                },
+                Vec::new(),
+            )
+        };
+
+        // A verdict that claims a comparison, with nothing to compare against.
+        assert_eq!(
+            attempt(Quantity::Bytes(10), None, ResidencyOutcome::Fits),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
+        assert_eq!(
+            attempt(Quantity::Bytes(10), None, ResidencyOutcome::Exceeds),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
+        // A verdict that denies a budget exists, carrying one.
+        assert_eq!(
+            attempt(
+                Quantity::Bytes(10),
+                Some(Quantity::Bytes(10)),
+                ResidencyOutcome::BudgetUndeclared
+            ),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
+        // A verdict that contradicts its own two numbers, in both directions.
+        assert_eq!(
+            attempt(
+                Quantity::Bytes(10),
+                Some(Quantity::Bytes(100)),
+                ResidencyOutcome::Exceeds
+            ),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
+        assert_eq!(
+            attempt(
+                Quantity::Bytes(100),
+                Some(Quantity::Bytes(10)),
+                ResidencyOutcome::Fits
+            ),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
+        // A residency stated in something other than bytes.
+        assert_eq!(
+            attempt(
+                Quantity::Count(10),
+                None,
+                ResidencyOutcome::BudgetUndeclared
+            ),
+            Err(ExplainError::UnknownQuantityUnit)
+        );
+        assert_eq!(
+            attempt(
+                Quantity::Bytes(10),
+                Some(Quantity::Count(100)),
+                ResidencyOutcome::Fits
+            ),
+            Err(ExplainError::QuantityKindMismatch)
+        );
+
+        // ...and the coherent records are admitted, so the refusals above
+        // discriminate rather than refusing every residency record.
+        assert!(
+            attempt(
+                Quantity::Bytes(10),
+                None,
+                ResidencyOutcome::BudgetUndeclared
+            )
+            .is_ok()
+        );
+        assert!(
+            attempt(
+                Quantity::Bytes(10),
+                Some(Quantity::Bytes(100)),
+                ResidencyOutcome::Fits
+            )
+            .is_ok()
+        );
+        assert!(
+            attempt(
+                Quantity::Bytes(100),
+                Some(Quantity::Bytes(10)),
+                ResidencyOutcome::Exceeds
+            )
+            .is_ok()
+        );
+    }
+
+    /// The undeclared verdict is dispositioned as neither admitted nor refused.
+    ///
+    /// This is the claim that keeps such a candidate out of an executable
+    /// frontier: `DeferredUnsupported` is the same disposition the two other
+    /// `Undeclared` outcomes carry, and it is neither `Admitted` — which would
+    /// let an unbounded plan run — nor `RejectedTarget`, which would assert a
+    /// disproof no profile supplied.
+    #[test]
+    fn the_undeclared_residency_verdict_admits_nothing_and_refuses_nothing() {
+        let event = |outcome, available| ExplainEvent::TransientResidency {
+            predicate: PredicateKey::new("target.transient-residency").unwrap(),
+            required: Quantity::Bytes(10),
+            available,
+            tensors: 1,
+            outcome,
+        };
+        assert_eq!(
+            event(ResidencyOutcome::BudgetUndeclared, None).disposition(),
+            ExplainDisposition::DeferredUnsupported
+        );
+        // The two comparison outcomes keep the ordinary dispositions, so the
+        // third is distinguished by its verdict rather than by this record kind.
+        assert_eq!(
+            event(ResidencyOutcome::Fits, Some(Quantity::Bytes(100))).disposition(),
+            ExplainDisposition::Admitted
+        );
+        assert_eq!(
+            event(ResidencyOutcome::Exceeds, Some(Quantity::Bytes(1))).disposition(),
+            ExplainDisposition::RejectedTarget
+        );
+    }
+
+    /// An undeclared budget and a declared budget of zero encode differently.
+    ///
+    /// The distinction the whole third verdict rests on: "nothing bounds this
+    /// plan" and "this target permits no transient memory at all" are different
+    /// claims, and a canonical encoding that conflated them would let a trace
+    /// prove the wrong one.
+    #[test]
+    fn an_undeclared_budget_does_not_encode_as_a_zero_budget() {
+        let mut undeclared = Vec::new();
+        encode_event(
+            &mut undeclared,
+            &ExplainEvent::TransientResidency {
+                predicate: PredicateKey::new("target.transient-residency").unwrap(),
+                required: Quantity::Bytes(1),
+                available: None,
+                tensors: 1,
+                outcome: ResidencyOutcome::BudgetUndeclared,
+            },
+        );
+        let mut zero = Vec::new();
+        encode_event(
+            &mut zero,
+            &ExplainEvent::TransientResidency {
+                predicate: PredicateKey::new("target.transient-residency").unwrap(),
+                required: Quantity::Bytes(1),
+                available: Some(Quantity::Bytes(0)),
+                tensors: 1,
+                outcome: ResidencyOutcome::Exceeds,
+            },
+        );
+        assert_ne!(undeclared, zero);
     }
 }
