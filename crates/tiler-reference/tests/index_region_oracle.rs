@@ -19,9 +19,10 @@ use tiler_ir::semantic::{
     AttributeFieldId, CANONICAL_F32_ARITHMETIC_NAN_BITS, CanonicalField, CanonicalValue,
     CanonicalValueKind, CanonicalValueView, F32, FrozenSemanticRegistry, NormativeDefinitionRef,
     ProviderDiagnosticCode, ProviderIdentity, ResolvedValueType, TypeKey,
+    gather_index_resolved_type,
 };
 use tiler_ir::shape::{
-    BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
+    Axis, BindingSource, Extent, ExtentRelation, ExtentTerm, FactProvenance, InterfaceParameterKey,
     RootBinding, SemanticInputConstraint, Shape, ShapeEnvBuilder, ShapeSymbol, SourcedExtent,
     SymbolScope,
 };
@@ -1337,6 +1338,247 @@ fn scalar_reference_identity_is_deterministic_and_authority_complete() {
             false,
         )
         .canonical_identity()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The index-layer gather, evaluated
+// ---------------------------------------------------------------------------
+
+/// Builds `out = gather(source, index, axis)` as one region with one gather.
+///
+/// The result axes are laid out `[source axes before axis | index axes | source
+/// axes after axis]`, so the source-coordinate run is the outer and inner spans
+/// and the index-coordinate run is the middle span. Authoring the layout here
+/// rather than deriving it from the region under test is deliberate: a helper
+/// that recomputed the addressing would agree with the evaluator for reasons
+/// that say nothing about either being right.
+fn gather_read_region(
+    scalars: &FrozenScalarRegistry,
+    source_dims: &[u64],
+    index_dims: &[u64],
+    axis: u32,
+) -> Result<VerifiedIndexRegion, Box<dyn std::error::Error>> {
+    let mut builder = IndexRegionBuilder::new(scalars.clone())?;
+    let split = axis as usize;
+    let result: Vec<u64> = source_dims[..split]
+        .iter()
+        .chain(index_dims)
+        .chain(&source_dims[split + 1..])
+        .copied()
+        .collect();
+    let dimensions: Vec<DimensionId> = result
+        .iter()
+        .map(|extent| builder.dimension(DomainRole::Parallel, Extent::new(*extent)))
+        .collect::<Result<_, _>>()?;
+    let source = builder.tensor(
+        TensorRole::Input,
+        f32_type(),
+        Shape::try_from_dims(source_dims.iter().copied())?,
+    )?;
+    let index = builder.tensor(
+        TensorRole::Input,
+        gather_index_resolved_type(),
+        Shape::try_from_dims(index_dims.iter().copied())?,
+    )?;
+    let out = builder.tensor(
+        TensorRole::Output,
+        f32_type(),
+        Shape::try_from_dims(result.iter().copied())?,
+    )?;
+    let coordinates: Vec<IndexExprId> = dimensions
+        .iter()
+        .map(|dimension| builder.dimension_expr(*dimension))
+        .collect::<Result<_, _>>()?;
+    let span = index_dims.len();
+    let source_coordinates: Vec<IndexExprId> = (0..split)
+        .chain((split + span)..result.len())
+        .map(|position| coordinates[position])
+        .collect();
+    let index_coordinates: Vec<IndexExprId> = (split..split + span)
+        .map(|position| coordinates[position])
+        .collect();
+    let value = builder.gather_read(
+        source,
+        index,
+        &dimensions,
+        &source_coordinates,
+        &index_coordinates,
+        Axis::new(axis),
+    )?;
+    let write = builder.write(out, &dimensions, &coordinates)?;
+    builder.output(write, value)?;
+    Ok(builder.build()?)
+}
+
+/// An exact U32 index operand, big-endian per element.
+fn u32_tensor(dims: &[u64], values: &[u32]) -> Tensor {
+    Tensor::dense(
+        gather_index_resolved_type(),
+        Shape::try_from_dims(dims.iter().copied()).unwrap(),
+        values
+            .iter()
+            .map(|value| ReferenceElement::new(value.to_be_bytes()).unwrap())
+            .collect(),
+    )
+    .unwrap()
+}
+
+/// Binds the two operands by *value type*, not by region order.
+///
+/// Compaction orders the input boundaries, so a positional binding would pin
+/// the compaction order rather than the gather, and would silently swap the two
+/// payloads if that order ever changed.
+fn gather_inputs<'a>(
+    region: &VerifiedIndexRegion,
+    source: &'a Tensor,
+    index: &'a Tensor,
+) -> Vec<IndexRegionInput<'a>> {
+    region
+        .tensors()
+        .filter(|tensor| tensor.role() == TensorRole::Input)
+        .map(|tensor| {
+            let bound = if *tensor.value_type() == gather_index_resolved_type() {
+                index
+            } else {
+                source
+            };
+            IndexRegionInput::new(tensor.id(), bound)
+        })
+        .collect()
+}
+
+fn evaluate_gather(
+    scalars: &FrozenScalarRegistry,
+    region: &VerifiedIndexRegion,
+    source: &Tensor,
+    index: &Tensor,
+) -> Result<Vec<f32>, IndexRegionEvaluationError> {
+    let bindings = gather_inputs(region, source, index);
+    let evaluation =
+        evaluator(scalars).evaluate(region, IndexRegionAuthority::new(scalars), &bindings)?;
+    Ok(f32_values(&evaluation.into_outputs()[0]))
+}
+
+fn only_gather_access(region: &VerifiedIndexRegion) -> VerifiedTensorAccessId {
+    region
+        .accesses()
+        .find(|access| access.view().gather_read().is_some())
+        .expect("the fixture authors exactly one gather")
+        .id()
+}
+
+/// A `[4, 4]` source whose element at `[i, j]` is `10i + j`.
+///
+/// Each element names its own coordinate pair, so an evaluator that read the
+/// wrong element produces a visibly wrong value rather than a coincidence, and
+/// the two digits separate a wrong row from a wrong column.
+fn addressed_source() -> Tensor {
+    f32_tensor(
+        Shape::from_dims([4, 4]),
+        (0..4_u8).flat_map(|i| (0..4_u8).map(move |j| f32::from(10 * i + j))),
+    )
+}
+
+/// The gather loads its address from the index operand and selects with it.
+///
+/// Driven at axis **0 and** axis 1 of the same square source with the same
+/// index operand, because the two axes are not interchangeable evidence. Only
+/// axis 0 constrains *where* the loaded address is spliced into the
+/// source-coordinate run: the gathered axis is the last source axis at axis 1,
+/// so appending and inserting agree there and the case cannot see the
+/// difference. The expectations are written out by hand from the source's own
+/// `10i + j` addressing rather than recomputed.
+#[test]
+fn a_gather_read_selects_the_element_its_loaded_address_names() {
+    let scalars = scalar_registry(1);
+    let source = addressed_source();
+    // Neither 3 nor 1 is a fixed point of the addressing, and they are distinct,
+    // so a transposed or constant selection moves every element of the result.
+    let index = u32_tensor(&[2], &[3, 1]);
+
+    // Axis 0 gathers rows: result is `[2, 4]`, and `out[k][j] == source[idx[k]][j]`.
+    let rows = gather_read_region(&scalars, &[4, 4], &[2], 0).unwrap();
+    assert_eq!(
+        evaluate_gather(&scalars, &rows, &source, &index).unwrap(),
+        [30.0, 31.0, 32.0, 33.0, 10.0, 11.0, 12.0, 13.0],
+        "row 3 then row 1, each whole and in source-column order",
+    );
+
+    // Axis 1 gathers columns: result is `[4, 2]`, and `out[i][k] == source[i][idx[k]]`.
+    let columns = gather_read_region(&scalars, &[4, 4], &[2], 1).unwrap();
+    assert_eq!(
+        evaluate_gather(&scalars, &columns, &source, &index).unwrap(),
+        [3.0, 1.0, 13.0, 11.0, 23.0, 21.0, 33.0, 31.0],
+        "column 3 then column 1, once per source row",
+    );
+}
+
+/// The address is decoded big-endian, which the axis extent alone would hide.
+///
+/// `1` decoded from the other byte order is `16777216`, far outside a source
+/// axis of four — so a little-endian evaluator refuses here instead of
+/// returning a neighbouring element, and the two orders cannot be confused.
+///
+/// Gathers the **last** source axis on purpose, so that inserting the loaded
+/// address and appending it agree: this case must redden for the byte order and
+/// for nothing else, and at axis 0 it would also redden for a wrong splice
+/// position and could not say which of the two had moved.
+#[test]
+fn the_loaded_address_is_decoded_most_significant_byte_first() {
+    let scalars = scalar_registry(1);
+    let region = gather_read_region(&scalars, &[4, 4], &[1], 1).unwrap();
+    let source = addressed_source();
+    assert_eq!(
+        evaluate_gather(&scalars, &region, &source, &u32_tensor(&[1], &[1])).unwrap(),
+        [1.0, 11.0, 21.0, 31.0],
+        "the element holding `00 00 00 01` addresses column one",
+    );
+}
+
+/// An out-of-range address refuses, naming its position in the index operand.
+///
+/// The offending element is the *second*, so the reported `index_offset` cannot
+/// be satisfied by an evaluator that always reports the first, and it is an
+/// address in the index operand rather than a result coordinate — the result
+/// point that fails is `[1, 0]`, whose row-major result offset is four.
+#[test]
+fn an_out_of_range_address_refuses_and_names_its_index_offset() {
+    let scalars = scalar_registry(1);
+    let region = gather_read_region(&scalars, &[4, 4], &[2], 0).unwrap();
+    let source = addressed_source();
+    assert_eq!(
+        evaluate_gather(&scalars, &region, &source, &u32_tensor(&[2], &[1, 7])),
+        Err(IndexRegionEvaluationError::GatherIndexOutOfBounds {
+            access: only_gather_access(&region),
+            index_offset: 1,
+            value: 7,
+            extent: 4,
+        }),
+        "the refusal names the offending index element, its value, and the axis",
+    );
+}
+
+/// The bounds decision precedes the source read, so nothing is clamped.
+///
+/// `u32::MAX` cannot be an offset into any bound payload, so an evaluator that
+/// read first and checked afterwards would report `CoordinateOutOfBounds`
+/// against the *source* — a different diagnostic naming a different subject.
+/// A clamping evaluator would return row three and refuse nothing.
+#[test]
+fn an_address_past_every_payload_refuses_before_the_source_is_read() {
+    let scalars = scalar_registry(1);
+    let region = gather_read_region(&scalars, &[4, 4], &[1], 0).unwrap();
+    let source = addressed_source();
+    assert_eq!(
+        evaluate_gather(&scalars, &region, &source, &u32_tensor(&[1], &[u32::MAX])),
+        Err(IndexRegionEvaluationError::GatherIndexOutOfBounds {
+            access: only_gather_access(&region),
+            index_offset: 0,
+            value: u32::MAX,
+            extent: 4,
+        }),
+        "the address is judged against the gathered axis before any source read",
     );
 }
 

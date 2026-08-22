@@ -189,15 +189,33 @@ impl AccessData {
     /// expressions an access retains and which they are, never by proof or
     /// encoding logic — those must distinguish the two runs and so match on the
     /// kind instead.
-    pub(super) fn coordinate_ordinals(&self) -> Vec<u32> {
+    ///
+    /// Borrows rather than materializing. Both kinds are projected as a pair of
+    /// slices so the two arms share one iterator type: a direct access is its
+    /// coordinate run followed by nothing, and a gather is its two runs in
+    /// order. Every caller iterates or counts, and this runs once per access
+    /// inside compaction's reachability walk, so returning an owned `Vec` here
+    /// allocated on a hot path and cloned the direct arm for nothing.
+    pub(super) fn coordinate_ordinals(&self) -> impl Iterator<Item = u32> + '_ {
+        let (first, second): (&[u32], &[u32]) = match self {
+            Self::Direct(direct) => (&direct.coordinates, &[]),
+            Self::GatherRead(gather) => (&gather.source_coordinates, &gather.index_coordinates),
+        };
+        first.iter().chain(second).copied()
+    }
+
+    /// Returns how many coordinate expressions this access retains.
+    ///
+    /// Answered from the run lengths rather than by walking
+    /// [`Self::coordinate_ordinals`], because the two resource sites that ask
+    /// need only the count.
+    pub(super) fn coordinate_ordinal_count(&self) -> usize {
         match self {
-            Self::Direct(direct) => direct.coordinates.clone(),
+            Self::Direct(direct) => direct.coordinates.len(),
             Self::GatherRead(gather) => gather
                 .source_coordinates
-                .iter()
-                .chain(gather.index_coordinates.iter())
-                .copied()
-                .collect(),
+                .len()
+                .saturating_add(gather.index_coordinates.len()),
         }
     }
 }

@@ -863,6 +863,8 @@ fn the_gather_access_frame_pins_its_exact_field_order() {
     assert_eq!(
         encoded_region_len(&region, None),
         start + width + 8 * 4,
-        "the sizing helper accounts for the gather frame exactly as the encoder          writes it; a disagreement would trip `encode_region`'s own capacity          assertion before any identity was returned",
+        "the sizing helper accounts for the gather frame exactly as the encoder \
+         writes it; a disagreement would trip `encode_region`'s own capacity \
+         assertion before any identity was returned",
     );
 }

@@ -1811,7 +1811,7 @@ impl IndexRegionBuilder {
             index_coordinates: index_coords,
         });
         // Two tensor ordinals and one axis beyond a direct access's header.
-        let bytes = 36 + 4 * (data.domain().len() + data.coordinate_ordinals().len());
+        let bytes = 36 + 4 * (data.domain().len() + data.coordinate_ordinal_count());
         Ok((data, bytes))
     }
     fn access(
@@ -1890,7 +1890,7 @@ impl IndexRegionBuilder {
             domain: domain_set.iter().copied().collect(),
             coordinates: coords,
         });
-        let bytes = 24 + 4 * (data.domain().len() + data.coordinate_ordinals().len());
+        let bytes = 24 + 4 * (data.domain().len() + data.coordinate_ordinal_count());
         Ok((data, bytes))
     }
 
