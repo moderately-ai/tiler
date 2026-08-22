@@ -1,7 +1,7 @@
 ---
 id: repair-the-deferred-trigger-checks-that-cannot-report-a-firing
 title: Repair the deferred trigger checks that cannot report a firing
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [refresh-the-deferred-triggers-whose-stated-reason-is-now-false, size-the-governed-key-census-from-the-type-across-the-deferred-pool]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [graph-hygiene, deferred-triggers, unfireable-checks]
+claimed_from: todo
+assignee: worker-triggerfix
+lease_expires_at: 1787435006
 ---
 ## User-visible outcome
 

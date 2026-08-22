@@ -1,7 +1,7 @@
 ---
 id: admit-the-selected-data-dependent-index-representation
 title: Admit the selected data-dependent index representation
-status: todo
+status: done
 priority: p1
 dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, decide-the-data-dependent-index-representation-public-surface]
 related: [revise-adr-0108-with-a-complete-data-dependent-index-vertical, admit-an-invocation-scoped-gather-index-validation-receipt, emit-the-indirect-gather-on-metal]
