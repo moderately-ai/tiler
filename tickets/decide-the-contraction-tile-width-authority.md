@@ -1,7 +1,7 @@
 ---
 id: decide-the-contraction-tile-width-authority
 title: Decide the contraction tile-width authority
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, offer-the-tiled-contraction-alternative-in-physical-planning]
@@ -9,6 +9,9 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, target-profiles, scheduling]
+claimed_from: todo
+assignee: worker-tilewidth
+lease_expires_at: 1787428751
 ---
 ## User-visible outcome
 
