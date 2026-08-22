@@ -65,9 +65,47 @@ use tiler_ir::semantic::SemanticProgram;
 
 use crate::image::{ScalarEntry, ScalarImage, ScalarImageRefusal, decode};
 use crate::profile::{
-    BACKEND_KEY, PROFILE_KEY, REPRESENTATION_KEY, SOURCE_REPRESENTATION_KEY, TARGET_TRIPLE,
-    TOOLCHAIN_KEY,
+    BACKEND_KEY, IOS_TARGET_TRIPLE, MACOS_TARGET_TRIPLE, PROFILE_KEY, REPRESENTATION_KEY,
+    SOURCE_REPRESENTATION_KEY, TOOLCHAIN_KEY,
 };
+
+/// One artifact family this backend builds for, at one delivery position.
+///
+/// **A family is a build target, not a compiler profile.** Both members compile
+/// under the one profile `crate::profile` declares — see [`IOS_TARGET_TRIPLE`]
+/// for why every axis that profile states holds for both — so a selection
+/// naming both is one compilation, one selected plan, one kernel program, and
+/// one translated image per family, carried into one envelope at one delivery
+/// position each.
+///
+/// The order a caller states is the delivery order and nothing here re-derives
+/// it: [`ALL`](Self::ALL) exists so a case that wants both in their conventional
+/// order says so once, not so any function may assume that order.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum ScalarHostFamily {
+    /// The macOS build target, `aarch64-apple-darwin`.
+    MacOs,
+    /// The iOS build target, `aarch64-apple-ios`.
+    IOs,
+}
+
+impl ScalarHostFamily {
+    /// Every family this backend builds for, in their conventional order.
+    ///
+    /// Sized by [`variant_count`](core::mem::variant_count), so a family added
+    /// to the enum and not to this list is an array-length error here rather
+    /// than a delivery run that silently stops covering its own vocabulary.
+    pub const ALL: [Self; core::mem::variant_count::<Self>()] = [Self::MacOs, Self::IOs];
+
+    /// Returns the declared target triple this family builds for.
+    #[must_use]
+    pub const fn triple(self) -> &'static str {
+        match self {
+            Self::MacOs => MACOS_TARGET_TRIPLE,
+            Self::IOs => IOS_TARGET_TRIPLE,
+        }
+    }
+}
 
 /// Governed launch-time property this backend's entries place a floor on.
 pub const SCRATCH_PROPERTY_KEY: &str = "tiler.test.scalar-host.launch.scratch-bytes";
@@ -285,11 +323,20 @@ pub fn require_compiled_under(compilation: &Compilation) -> Result<(), ScalarHos
 /// `n` occupies transport `bindings - 1 - n` — so a consumer that assumed the
 /// two coincide binds the wrong storage and this suite's validation says so.
 ///
+/// `family` reaches the image through [`symbol_for`] alone, which is what makes
+/// two families' objects two byte runs rather than one shared run: a translator
+/// that ignored it would emit the same image for every build target, and an
+/// object delivered at the other family's position would then be
+/// indistinguishable from the right one by anything that reads the bytes.
+///
 /// # Errors
 ///
 /// Returns the first kernel this bounded backend cannot place, naming its
 /// ordinal. A wider signature is refused rather than partially bound.
-pub fn emit(kernels: &[&VerifiedKernel]) -> Result<ScalarImage, ScalarHostRefusal> {
+pub fn emit(
+    kernels: &[&VerifiedKernel],
+    family: ScalarHostFamily,
+) -> Result<ScalarImage, ScalarHostRefusal> {
     let mut entries = Vec::with_capacity(kernels.len());
     for (entry, kernel) in kernels.iter().enumerate() {
         let buffers: Vec<_> = kernel.buffers().collect();
@@ -310,7 +357,7 @@ pub fn emit(kernels: &[&VerifiedKernel]) -> Result<ScalarImage, ScalarHostRefusa
             .rev()
             .collect();
         entries.push(ScalarEntry {
-            symbol: symbol_for(kernel),
+            symbol: symbol_for(kernel, family),
             transports,
             work_items: write.element_count,
         });
@@ -318,14 +365,27 @@ pub fn emit(kernels: &[&VerifiedKernel]) -> Result<ScalarImage, ScalarHostRefusa
     Ok(ScalarImage { entries })
 }
 
-/// Derives one entry-point symbol from a kernel's canonical identity.
+/// Derives one entry-point symbol from a kernel's canonical identity and family.
 ///
 /// Identity-derived rather than named, so two implementations of one region
 /// cannot collide on a symbol and a renamed kernel cannot silently keep one.
+///
+/// **The family is folded in, so a target-mangled symbol is what separates two
+/// families' objects.** Real linkers mangle their target into a symbol and this
+/// one does the same; the consequence that matters here is that the image built
+/// for one family declares no symbol the *other* family's artifact entry maps,
+/// so [`validate_from_bytes`] refuses a swapped object at
+/// [`ScalarHostRefusal::UnmappedSymbol`] rather than executing it. The standard
+/// Metal path cannot do that — a wrong-family `metallib` loads and dispatches on
+/// the host GPU without complaint — which is why the delivery seam's own
+/// identity refusal, and not a backend's from-bytes check, is what protects the
+/// Metal case.
 #[must_use]
-pub fn symbol_for(kernel: &VerifiedKernel) -> String {
+pub fn symbol_for(kernel: &VerifiedKernel, family: ScalarHostFamily) -> String {
+    let mut preimage = kernel.canonical_identity().as_bytes().to_vec();
+    preimage.extend_from_slice(family.triple().as_bytes());
     let digest = DigestAlgorithm::GOVERNED
-        .digest(SYMBOL_DOMAIN, kernel.canonical_identity().as_bytes())
+        .digest(SYMBOL_DOMAIN, &preimage)
         .label();
     format!("scalar_host_{}", &digest[..16])
 }
@@ -342,6 +402,7 @@ pub fn symbol_for(kernel: &VerifiedKernel) -> String {
 pub fn payload_metadata(
     kernels: &[&VerifiedKernel],
     image: &ScalarImage,
+    family: ScalarHostFamily,
 ) -> Result<PayloadMetadata, ScalarHostRefusal> {
     let mut source = Vec::new();
     let mut entries = Vec::with_capacity(kernels.len());
@@ -359,7 +420,7 @@ pub fn payload_metadata(
         source,
         provenance: PayloadProvenance {
             toolchain: TOOLCHAIN_KEY.to_owned(),
-            target: TARGET_TRIPLE.to_owned(),
+            target: family.triple().to_owned(),
             family: BACKEND_KEY.to_owned(),
             language: "tiler.test.scalar-host-image".to_owned(),
             // This backend translates kernel IR to its own host image. There is
@@ -420,6 +481,8 @@ impl PayloadDeclaration {
 
 /// One translated image, its compilation subject, and what it declares.
 pub struct PreparedScalarPayload {
+    /// The artifact family this payload was translated for.
+    pub family: ScalarHostFamily,
     /// The image this backend translated the kernels into.
     pub image: ScalarImage,
     /// The compilation subject the artifact layer digests this payload under.
@@ -428,15 +491,29 @@ pub struct PreparedScalarPayload {
     pub declaration: PayloadDeclaration,
 }
 
-/// Translates one plan's kernels and derives everything the cache seam needs.
+impl PreparedScalarPayload {
+    /// The content a sound compile step produces for this payload.
+    #[must_use]
+    pub fn content(&self) -> PayloadContent {
+        PayloadContent {
+            metadata: self.metadata.clone(),
+            code: crate::image::encode(&self.image),
+        }
+    }
+}
+
+/// Translates one plan's kernels for one family and derives what the seam needs.
 ///
 /// # Errors
 ///
 /// Returns this backend's translation refusal or the artifact layer's typed key
 /// or digest failure.
-pub fn prepare(kernels: &[&VerifiedKernel]) -> Result<PreparedScalarPayload, ScalarHostRefusal> {
-    let image = emit(kernels)?;
-    let metadata = payload_metadata(kernels, &image)?;
+pub fn prepare(
+    kernels: &[&VerifiedKernel],
+    family: ScalarHostFamily,
+) -> Result<PreparedScalarPayload, ScalarHostRefusal> {
+    let image = emit(kernels, family)?;
+    let metadata = payload_metadata(kernels, &image, family)?;
     let digest = metadata.identity()?;
     Ok(PreparedScalarPayload {
         declaration: PayloadDeclaration {
@@ -451,6 +528,7 @@ pub fn prepare(kernels: &[&VerifiedKernel]) -> Result<PreparedScalarPayload, Sca
             compilation: digest.as_bytes().to_vec(),
             digest,
         },
+        family,
         image,
         metadata,
     })
@@ -511,11 +589,17 @@ pub struct EntryPerturbation {
 
 /// Assembles one verified artifact through the neutral build orchestration seam.
 ///
-/// The two closures are the whole of what this backend states: which payload it
+/// The two closures are the whole of what this backend states: which payloads it
 /// carries, and — per stage — how each binding is transported, whether a
 /// zero-thread launch is skippable, and what must hold at launch time. The
 /// launch precondition is minted on the builder the facade hands over, so its
 /// handle belongs to that builder and one from anywhere else is a typed refusal.
+///
+/// `contents` is a **delivery-ordered run**: one object per delivery position,
+/// in the order the caller built its artifact families. The order is the whole
+/// content of the delivery contract, so it is preserved by consuming the run
+/// rather than by keying it — a caller states which family it built first and
+/// this places that object at position 0.
 ///
 /// # Errors
 ///
@@ -523,7 +607,7 @@ pub struct EntryPerturbation {
 pub fn assemble(
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
-    content: PayloadContent,
+    contents: Vec<PayloadContent>,
     perturbation: EntryPerturbation,
 ) -> Result<VerifiedArtifactProgram, ScalarHostRefusal> {
     Ok(assemble_plan_artifact(
@@ -531,17 +615,20 @@ pub fn assemble(
         plan,
         PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
-            builder
-                .push_carried_payload(
-                    backend(),
-                    representation(),
-                    PAYLOAD_SCHEMA,
-                    profile,
-                    ArtifactExecutionPolicy::NativeImage,
-                    None,
-                    content,
-                )
-                .map(|payload| vec![payload])
+            contents
+                .into_iter()
+                .map(|content| {
+                    builder.push_carried_payload(
+                        backend(),
+                        representation(),
+                        PAYLOAD_SCHEMA,
+                        profile.clone(),
+                        ArtifactExecutionPolicy::NativeImage,
+                        None,
+                        content,
+                    )
+                })
+                .collect()
         },
         |builder, stage| entry_declaration(builder, stage, perturbation),
     )?)
@@ -554,13 +641,16 @@ pub fn assemble(
 /// their canonical identities to agree and two copies that could drift apart
 /// would fail that agreement rather than the statement they disagreed about.
 ///
+/// `declarations` is delivery-ordered, exactly as [`assemble`]'s run is, and the
+/// two are what the seam compares position by position.
+///
 /// # Errors
 ///
 /// Returns the neutral facade's typed refusal.
 pub fn assemble_pending(
     semantic: &SemanticProgram,
     plan: PlanAlternative<'_>,
-    declaration: &PayloadDeclaration,
+    declarations: &[PayloadDeclaration],
     perturbation: EntryPerturbation,
 ) -> Result<VerifiedArtifactProgram, ScalarHostRefusal> {
     Ok(assemble_plan_artifact(
@@ -568,17 +658,20 @@ pub fn assemble_pending(
         plan,
         PlanDeterminismDeclaration::Unclaimed,
         |builder, profile| {
-            builder
-                .push_payload(BackendPayloadDescriptor {
-                    backend: declaration.backend.clone(),
-                    representation: declaration.representation.clone(),
-                    payload_schema: declaration.payload_schema,
-                    compatibility: profile,
-                    execution_policy: declaration.execution_policy,
-                    digest: declaration.digest.clone(),
-                    environment: None,
+            declarations
+                .iter()
+                .map(|declaration| {
+                    builder.push_payload(BackendPayloadDescriptor {
+                        backend: declaration.backend.clone(),
+                        representation: declaration.representation.clone(),
+                        payload_schema: declaration.payload_schema,
+                        compatibility: profile.clone(),
+                        execution_policy: declaration.execution_policy,
+                        digest: declaration.digest.clone(),
+                        environment: None,
+                    })
                 })
-                .map(|payload| vec![payload])
+                .collect()
         },
         |builder, stage| entry_declaration(builder, stage, perturbation),
     )?)

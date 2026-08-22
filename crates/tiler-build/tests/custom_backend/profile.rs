@@ -51,12 +51,41 @@ pub const SOURCE_REPRESENTATION_KEY: &str = "tiler.test.scalar-host-kernel-ident
 /// Governed toolchain identity of this backend's in-process translator.
 pub const TOOLCHAIN_KEY: &str = "tiler.test.scalar-host-translator";
 
-/// Declared target triple this profile is about.
+/// Declared target triple of this profile's macOS artifact family.
 ///
 /// A string rather than a typed axis, because the profile vocabulary has no
 /// target-triple axis; it survives only inside the profile key and the payload
 /// provenance. ADR 0090 item 14 names that gap.
-pub const TARGET_TRIPLE: &str = "aarch64-apple-darwin";
+pub const MACOS_TARGET_TRIPLE: &str = "aarch64-apple-darwin";
+
+/// Declared target triple of this profile's iOS artifact family.
+///
+/// **Two build targets under one compiler profile, which is what makes a second
+/// delivery position expressible here.** Every axis this profile declares —
+/// grid extent, workgroup threads, buffer bindings, index arithmetic, address
+/// width, device and local memory, the f32 numerical rows, and dtype
+/// dispatchability — is a property of the aarch64 Darwin scalar execution model
+/// and is identical for both triples, so the two families compile under one
+/// profile key and one byte-identical canonical descriptor. What differs is the
+/// build target a consumer's `cfg` resolves to, which the profile vocabulary
+/// cannot express and which reaches the artifact only through the payload
+/// provenance and the emitted image.
+///
+/// It is `-ios` rather than a second architecture because the key above names
+/// `aarch64-darwin`, and iOS is Darwin on aarch64: a second architecture would
+/// be a second profile and could not share a delivery run at all. That is the
+/// same shape the standard Metal path has, where the authority ledger records
+/// `MetalTargetFacts::platform` as backend-only.
+///
+/// **This states no numerical measurement about iOS, and could not.** The
+/// scalar-host backend runs no target compiler: its payload is an image its own
+/// in-process translator wrote, so the only iOS-specific claim this fixture makes
+/// is the triple string in the provenance and the target-mangled entry-point
+/// symbols derived from it. The standard Metal path is the opposite case — a second
+/// Apple family there needs its own measured rows, which is why
+/// `first-authoritative-ios-metal-compile-declaration` is a measurement ticket
+/// and why no fixture may wear the macOS rows under another platform.
+pub const IOS_TARGET_TRIPLE: &str = "aarch64-apple-ios";
 
 /// Threads per workgroup this scalar execution model admits.
 pub const WORKGROUP_THREADS: u32 = 1;

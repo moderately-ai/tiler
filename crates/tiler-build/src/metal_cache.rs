@@ -507,3 +507,235 @@ fn elided_retention(refusal: &RetentionRefusal) -> DebugRetention {
         // resolves to the same "nothing to show" a non-retaining build leaves.
         .unwrap_or_else(|_| DebugRetention::none())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use tiler_cache::expansion::MAX_RETAINED_RUNS;
+    use tiler_metal_aot::diagnostic::CompileStage;
+    use tiler_metal_aot::driver::Toolchain;
+    use tiler_metal_aot::input::{
+        ApplePlatform, CompileRequest, DeploymentMinimum, MetalTarget, MslVersion,
+        NumericalRealization, OptimizationLevel,
+    };
+    use tiler_metal_aot::record::StageOutputs;
+
+    use super::{stage_label, stage_retention};
+
+    const METAL_TEXT: &str = "warning: the front end said this";
+    const METALLIB_TEXT: &str = "warning: the linker said this";
+
+    fn scratch(label: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tiler-build-metal-cache-{label}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id(),
+        ));
+        std::fs::create_dir_all(&path).expect("the scratch directory is creatable");
+        path
+    }
+
+    fn write_executable(path: &Path, body: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        std::fs::write(path, body).expect("the fake tool is writable");
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .expect("the fake tool is executable");
+    }
+
+    /// A fake toolchain whose two stages write distinguishable text and succeed.
+    ///
+    /// Fake rather than real for the reason `metal_plan`'s own fixture is: the
+    /// installed `metal` warns about whatever it chooses to, so a case built on
+    /// real warning text would assert on this host's compiler release rather than
+    /// on the retention. What is under test here is the labelling, not the
+    /// compiler.
+    fn talking_toolchain(directory: &Path) -> Toolchain {
+        let metal = directory.join("metal");
+        let metallib = directory.join("metallib");
+        let launcher = directory.join("xcrun");
+        write_executable(
+            &metal,
+            &format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"--version\" ]; then echo 'Metal retention-v1'; exit 0; fi\n\
+                 printf '%s' '{METAL_TEXT}' >&2\n\
+                 while [ \"$#\" -gt 0 ]; do\n\
+                   if [ \"$1\" = \"-o\" ]; then shift; printf AIR > \"$1\"; exit 0; fi\n\
+                   shift\n\
+                 done\n\
+                 exit 1\n",
+            ),
+        );
+        write_executable(
+            &metallib,
+            &format!(
+                "#!/bin/sh\n\
+                 if [ \"$1\" = \"--version\" ]; then echo 'metallib retention-v1'; exit 0; fi\n\
+                 printf '%s' '{METALLIB_TEXT}' >&2\n\
+                 while [ \"$#\" -gt 0 ]; do\n\
+                   if [ \"$1\" = \"-o\" ]; then shift; printf MTLBcache > \"$1\"; exit 0; fi\n\
+                   shift\n\
+                 done\n\
+                 exit 1\n",
+            ),
+        );
+        write_executable(
+            &launcher,
+            &format!(
+                "#!/bin/sh\n\
+                 shift 2\n\
+                 case \"$1\" in\n\
+                   --find) if [ \"$2\" = \"metal\" ]; then echo '{}'; else echo '{}'; fi ;;\n\
+                   --show-sdk-version) echo 26.5 ;;\n\
+                   --show-sdk-build-version) echo 25F70 ;;\n\
+                   *) exit 1 ;;\n\
+                 esac\n",
+                metal.display(),
+                metallib.display(),
+            ),
+        );
+        Toolchain::with_launcher(launcher)
+    }
+
+    /// Runs one fake compilation and returns exactly what its stages wrote.
+    ///
+    /// A real driver run rather than a hand-built value, because
+    /// [`StageOutputs`] is `#[non_exhaustive]` and has no out-of-crate literal:
+    /// the only honest way to hold one here is to have produced it. That is also
+    /// the stronger fixture — the retained bytes are what the capture path
+    /// actually carried, not what a test assumed it would.
+    fn compiled_stage_outputs(directory: &Path) -> StageOutputs {
+        let toolchain = talking_toolchain(directory);
+        let target = MetalTarget::new(
+            ApplePlatform::MacOs,
+            DeploymentMinimum::new(26, 0),
+            MslVersion::Metal4_0,
+        )
+        .expect("macOS at its MSL 4.0 floor is a governed compilation target");
+        let request = CompileRequest::new(
+            "kernel void nothing() {}",
+            target,
+            OptimizationLevel::Default,
+            NumericalRealization::strict_baseline(),
+        );
+        toolchain
+            .prepare(&request)
+            .expect("the fake toolchain resolves")
+            .compile()
+            .expect("the fake toolchain compiles")
+            .stage_outputs
+    }
+
+    /// Each delivery position's stage runs are retained under their own label.
+    ///
+    /// **The two positions carry byte-identical output on purpose.** That is the
+    /// case a label naming only the stage cannot survive: two runs would fight
+    /// over `tiler.metal.metal`, `retaining_with_stated_total` refuses a
+    /// duplicate label rather than merging it, and `stage_retention`'s
+    /// all-or-nothing arm would replace the whole set with the elision run. So a
+    /// position dropped from [`stage_label`] is not a subtle mislabelling here —
+    /// it removes every stage run in the selection.
+    ///
+    /// This is the surviving half of the multi-position retention evidence the
+    /// required compilation-selection provenance took with the test-only second
+    /// Metal declaration: an end-to-end two-family Metal publication now needs
+    /// two *measured* declarations, which is
+    /// `first-authoritative-ios-metal-compile-declaration`, while the labelling
+    /// this function owns is reachable from one compilation's output.
+    #[test]
+    fn every_delivery_positions_stage_is_retained_under_its_own_governed_label() {
+        let directory = scratch("per-position-labels");
+        let outputs = compiled_stage_outputs(&directory);
+        assert_eq!(outputs.metal.as_bytes(), METAL_TEXT.as_bytes());
+        assert_eq!(outputs.metallib.as_bytes(), METALLIB_TEXT.as_bytes());
+
+        let retention = stage_retention(&[outputs.clone(), outputs]);
+        let actual: Vec<(&str, &[u8], u64)> = retention
+            .runs()
+            .iter()
+            .map(|run| (run.label(), run.as_bytes(), run.total_bytes()))
+            .collect();
+        let expected: Vec<(&str, &[u8], u64)> = vec![
+            (
+                "tiler.metal.0.metal",
+                METAL_TEXT.as_bytes(),
+                METAL_TEXT.len() as u64,
+            ),
+            (
+                "tiler.metal.0.metallib",
+                METALLIB_TEXT.as_bytes(),
+                METALLIB_TEXT.len() as u64,
+            ),
+            (
+                "tiler.metal.1.metal",
+                METAL_TEXT.as_bytes(),
+                METAL_TEXT.len() as u64,
+            ),
+            (
+                "tiler.metal.1.metallib",
+                METALLIB_TEXT.as_bytes(),
+                METALLIB_TEXT.len() as u64,
+            ),
+        ];
+        assert_eq!(
+            actual, expected,
+            "each stage of each delivery position keeps its own label, bytes, and stated total",
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+
+    /// Every stage of every position is named, in position-then-stage order.
+    ///
+    /// The label derivation on its own, so a change to its shape fails at the
+    /// derivation rather than only inside the census above. The stage list is
+    /// [`CompileStage::ALL`], which is sized by `variant_count`, so a third
+    /// offline stage is an array-length error there rather than a run this test
+    /// silently stops naming.
+    #[test]
+    fn a_stage_label_names_its_position_and_its_tool() {
+        let labels: Vec<String> = (0..2)
+            .flat_map(|delivery| CompileStage::ALL.map(|stage| stage_label(delivery, stage)))
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                "tiler.metal.0.metal",
+                "tiler.metal.0.metallib",
+                "tiler.metal.1.metal",
+                "tiler.metal.1.metallib",
+            ],
+        );
+    }
+
+    /// A selection too wide to retain states that, rather than retaining part of it.
+    ///
+    /// The all-or-nothing arm, which no one-position selection can reach:
+    /// [`MAX_RETAINED_RUNS`] is 16 and each position contributes one run per
+    /// stage, so the first refusable width is nine positions. A partial run set
+    /// would read as a selection with fewer positions than it had, and a reader
+    /// could not tell which — so the whole set is replaced by one run that says
+    /// why.
+    #[test]
+    fn a_selection_wider_than_the_run_limit_states_the_elision() {
+        let directory = scratch("elided-retention");
+        let outputs = compiled_stage_outputs(&directory);
+        let positions = MAX_RETAINED_RUNS / CompileStage::ALL.len() + 1;
+        let wide = vec![outputs; positions];
+
+        let retention = stage_retention(&wide);
+        let [elided] = retention.runs() else {
+            panic!(
+                "an elided retention is exactly one run: {:?}",
+                retention.runs()
+            );
+        };
+        assert_eq!(elided.label(), "tiler.metal.retention-elided");
+        assert_eq!(
+            String::from_utf8_lossy(elided.as_bytes()),
+            "no Metal stage output was retained: a retention carries at most 16 runs",
+        );
+        let _ = std::fs::remove_dir_all(directory);
+    }
+}
