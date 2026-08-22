@@ -13,6 +13,26 @@ claimed_from: todo
 assignee: worker-provenance
 lease_expires_at: 1787429727
 ---
+## Re-audit at the implementation base — 2026-08-22
+
+Every Fact below was re-read in source at
+`e1ada8512c0beb3ddaef3e7a866b141e66275232` before any production edit, as the
+`AGENTS.md` stale-Facts rule requires. Facts 1-6 and 8-10 re-verified with their
+anchors resolving in the files they name. **Fact 7 was false** and is repaired
+in place; the whole census paragraph was stale in every figure and is repaired
+in place. The repairs change the owning version numbers this ticket steps, but
+not what the ticket is for: the accepted packet's
+`## Accepted decision — 2026-08-18` already requires rederiving them at the
+implementation base.
+
+The accepted packet and the current tree do **not** disagree about the surface.
+Its exact insertion seam re-verified here: `program::model::push_variant`,
+`codec::encode::encode_variants`, and `codec::decode::parse_variants` all still
+place target-profile key/descriptor and feasibility-rule key plus a fixed `u32`
+revision immediately before the deferred-predicate run. The compiler's three
+stable proposal-kind strings are still `scheduled-kernel`, `kernel-subprogram`,
+and `opaque-call`, with `View` still rejected before selection.
+
 ## Exact-base Fact audit and stop — 2026-08-16
 
 Audited at exact base `4e02be6f4aed72209bb15019c43c247abf530e17`
@@ -53,10 +73,19 @@ exact-base audit.
    packaged provider row is artifact-global lowering `SelectedProvider`.
    Files: artifact `builder.rs`, `model.rs`, and codec `model.rs`/`view.rs`.
    Anchors are those six type names.
-7. **Verified.** Live owners are `tiler.artifact-program.v18`, lowering
-   provider key `tiler.artifact-program.provider.v3`, and manifest schema
-   18.0. Files: artifact `model.rs` and codec `encode.rs`. Anchors:
-   `ARTIFACT_DOMAIN`, `PROVIDER_KEY_DOMAIN`, and `MANIFEST_SCHEMA`.
+7. **False at the 2026-08-16 base's successors — repaired 2026-08-22 at
+   `e1ada8512c0beb3ddaef3e7a866b141e66275232`.** The claim named artifact
+   `v18` and manifest 18.0. The live owners are `tiler.artifact-program.v21`
+   and manifest schema `(21, 0)`; the lowering provider key is still
+   `tiler.artifact-program.provider.v3`, and `STAGE_KEY_DOMAIN` has separately
+   reached `v4`. Files: artifact `model.rs` and codec `encode.rs`. Anchors:
+   `ARTIFACT_DOMAIN`, `PROVIDER_KEY_DOMAIN`, `STAGE_KEY_DOMAIN`, and
+   `MANIFEST_SCHEMA`. The owning step this ticket performs is therefore
+   **v21 to v22 and 21.0 to 22.0**, not the `v19`/19.0 the accepted packet's
+   prose names. That is not a departure from the accepted surface: its
+   `## Accepted decision — 2026-08-18` requires this ticket to "rederive the
+   exact artifact/manifest version numbers at its own base if another accepted
+   step lands first".
 8. **Imprecise — repaired by a prerequisite.** The Required delivery fixes the
    semantic row but did not fix the consequential public Rust record,
    constructor/accessor/error surface, insertion topology, limits, or wire
@@ -112,13 +141,20 @@ rg -n 'if stages != spec\.entries\.len\(\)|limit\(stages, MAX_VARIANT_ENTRIES|pu
 rg -n 'pub const MAX_PROGRAM_STAGES' crates/tiler-ir/src/program/mod.rs
 ```
 
-The exact broader anchored `crates prototypes spikes` literal census is 13;
-the root `crates` textual population is 11 but includes the struct declaration,
-function signatures, and rustdoc examples rather than eleven literals. The
-positional `push_variant` call population is 65 across 13 source files; constructor
-census is 69 calls in 15 source files; the artifact environment's
-`available()` has no consumer beyond its definition. These commands were run,
-not merely proposed.
+**Census repaired 2026-08-22 at `e1ada851`; every number below the 2026-08-16
+audit stated has moved.** The exact broader anchored `crates prototypes spikes`
+`VariantSpec` literal census is **15 across 13 files** (was 13). The positional
+`push_variant` call population is **67 across 32 source files** (was 65 across
+13 — the file count in particular was badly stale). The
+`CompilationEnvironment::new` constructor census is **72 calls across 34 source
+files** (was 69 across 15). `SelectedProvider` references are **54 across 20
+files** (was 50 across 17); `select_provider` calls **64 across 32 files** (was
+61 across 13); `selected_providers()` calls **8 across 5 files** (was 8 across
+3). The artifact environment's `available()` still has no consumer beyond its
+definition. Counts are reported as **matched lines** from `rg -n … | wc -l`;
+the `push_variant` figure was cross-checked with `rg -o` and agrees at 67, so
+no line carries two calls. These commands were rerun at this base, not
+inherited.
 
 ## Released to ready — 2026-08-22, the stop condition's decision landed four days ago
 
