@@ -55,3 +55,96 @@ The reassociated split alternatives, which are [`admit-reassociated-contraction-
 ## Closes when
 
 Both structures have a `direct` realization bit-identical to the reference at the C1 prefill extents, `tiled` is available where its precondition holds and demonstrated refusing where it does not, and both are timed at the C1 row and at least two B1 rows with the measurement boundary stated.
+
+## Source-first Fact audit — 2026-08-22, exact base `1fb3675c0ccfca68f62c5d810bd01c2fb5f31c13`
+
+Every Fact re-read in the file or document it names, at this base, by `worker-attention`.
+
+| # | Fact as stated | Verdict | Evidence |
+| --- | --- | --- | --- |
+| 1 | `tiled` refuses a contracted extent that is not a multiple of 16 rather than padding it | **Verified** | `crates/tiler-ir/src/schedule/blocked.rs`, anchor `ContractedTileNotDivisible`, returned by `exact_quotients` on the `AxisKind::Contracted` arm. The refusal carries `contracted` and `tile`, so it names both the precondition and the observed extent. |
+| 2 | The `tiled` admissibility table for structure 3 (`no` at C1 prefill; only `S = 16` across C1 decode; `yes` at B1-a prefill; 8 of 128 B1-a decode steps; `yes` at B1-d prefill) | **Verified, and now checked** | Every row re-derived against the admission authority in `crates/tiler-ir/tests/attention_tiled_admission.rs`, anchor `the_tiled_admissibility_table_holds_at_every_row_the_design_states`. The "8 of the 128 steps" figure is counted rather than restated. |
+| 3 | Structure 2's contracted extent is the static 128 and always passes | **Verified** | Same test file, anchor `the_score_structures_contracted_extent_admits_at_every_row`. |
+| 4 | `direct` has no structural precondition beyond a positive contracted extent | **Verified** | `crates/tiler-compiler/src/physical.rs`, anchor `pub(crate) fn contraction_region`, is shape-generic: it reads `normalized.output_shape` and `normalized.contracted_shape` with no rank or extent special-casing, and returns a region infallibly. Confirmed empirically at rank four — see the outcome below. |
+| 5 | No cell of either structure has been timed at any shape | **Verified** | `docs/research/scheduling/first-metal-contraction-realizations.md` scopes its realizations, attribution corpus, and timing rows to structure 1, and names this ticket as owning the measurements that close it. No `result_sha256` exists for either attention structure, which is why the conformance module added here compares two quantities rather than three. |
+| 6 | The repository no longer has only a zero-synchronization profile; an unavailable topology must refuse for its current missing proof, not the retired no-barrier claim | **Verified, and this is the Fact that changed the lane** | `ReductionTopology::CooperativeContraction` (tag `0x37`) and `SynchronizationPoint` both exist and are accepted. Re-deriving *which* reduction implementations the attention realizations may use produced the finding below: the current reason the cooperative topology is unavailable for these two structures is **output rank**, not the absence of a barrier construct. |
+| 7 | Padding structure 3's contracted extent would owe a neutrality proof, and the padded contributors are `+0.0 x v` whose sign follows `v` | **Verified** | Retained as the reason the refusal is the correct outcome, pinned structurally by `no_contracted_extent_is_rounded_up_to_the_tile_width`: every extent strictly between two tile multiples refuses, so no extent is quietly rounded. |
+
+### The wall this lane found: the cooperative contraction vocabulary is rank-two-output
+
+**Fact.** Both attention structures produce a **rank-four** result — `grtd,gsd->grts` gives `[g, r, t, s]` and `grts,gsd->grtd` gives `[g, r, t, d]`. The tiled cooperative realization is rank-two-output at three independent layers, each verified by reading the file:
+
+- `crates/tiler-ir/src/schedule/cooperative.rs`, `blocked_operand_tile` — the one tile shape three layers construct — builds a rank-two participant space and says so at anchor `Rank two, deliberately`.
+- `crates/tiler-ir/src/schedule/builder/contraction.rs` couples that space to the binding's block through `participant_space_matches_block`, which compares ranks and returns `BlockedWorkgroupRule::ParticipantBlockMismatch`.
+- `crates/tiler-ir/src/kernel/lower.rs`, `cooperative_contraction_plan`, refuses any region whose `iteration_shape.rank() != 2` with `KernelDiagnostic::CooperativeLoweringShape`.
+
+**Inference — this is a distinct refusal from the `K` precondition and must not be reported as it.** The contracted-extent refusal is a property of one row's `S` and disappears at `S = 128`. The rank wall is a property of the realization's vocabulary and holds at **every** row of **both** structures, including the rows the admissibility table marks admissible. Pinned separately by `the_accepted_blocked_tile_cannot_cover_a_rank_four_attention_output`, which asserts the exact typed `OutputBlockRankMismatch { output_rank: 4, block_rank: 2 }`.
+
+**Consequence for this ticket's Required delivery.** "`tiled` for both structures" is **not achievable at this base** and not for a reason any choice of tile width or extent repairs. What the attention contractions need is a *batched* cooperative contraction — two batch axes (`g`, `r`) carried outside the blocked `(m, n)` pair — which is new schedule, lowering, and emission vocabulary rather than a widening of an existing precondition. That is filed rather than attempted; see the remainder below.
+
+### Why the tiled offer was out of scope regardless
+
+Independently of rank, `tiler-compiler` constructs no cooperative-contraction region at all. `COOPERATIVE_CONTRACTION_REGION` exists at `RegionId::new(9)` and its own doc states *"Nothing in this crate constructs a region with this identifier: the tiled alternative is not offered yet."* Offering it is owned by [`offer-the-tiled-contraction-alternative-once-a-width-authority-exists`](offer-the-tiled-contraction-alternative-once-a-width-authority-exists.md), which depends on a tile-width authority that [`decide-the-contraction-tile-width-authority`](decide-the-contraction-tile-width-authority.md) deliberately declined to declare until a sweep exists, and that sweep ([`calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol`](calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol.md)) is `blocked`. This lane therefore neither offered a tiled alternative nor selected a width, and its `MEASURED_TILE` constant is documented as a measurement used to interrogate the admission authority, never to select a width for a plan.
+
+## Delivered — 2026-08-22
+
+### `direct` for both structures, bit-identical to the reference
+
+**`crates/tiler-compiler/src/governed/attention_conformance.rs`** — a new crate-private conformance module, the sibling of `contraction_conformance` for the two attention structures. It compares the **emitted index region** the governed lowering actually returned, executed by `tiler-reference`'s independent index-region oracle, against the **registered reference evaluator**, on exact `f32` bit patterns.
+
+**Fact — nothing needed widening, which is the substantive result.** `contraction_region` and the governed `StrictTensorContractionF32` lowering are shape-generic, and both five-index structures reached a complete refined region and evaluated correctly at first run with no production change. The structures are spelled with non-dense frontend labels so the renaming-invariant canonicalization is exercised rather than assumed.
+
+Rows reached, and why these:
+
+| Row | fold steps | outcome |
+| --- | --- | --- |
+| C1 prefill, `T = S = 10`, both structures | 204,800 | agrees bit for bit |
+| B1-a decode, `T = 1`, `S = 256`, both structures | 524,288 | agrees bit for bit |
+| B1-a prefill, `T = S = 128`, both structures | 33,554,432 | refused by the oracle's step budget, asserted |
+
+**"At least one B1 extent" is met by a decode row, deliberately.** The prefill B1 rows are beyond the index-region oracle's budget. The decode rows are cheap precisely because `T = 1` — one query position against a grown context — so a genuine B1 extent is reached without relaxing a bound that protects the host.
+
+**Measurement boundary, stated: a host comparison is not a dispatched one.** These tests establish that the emitted region computes the same bits as the registered reference. No attention contraction has been dispatched on a device, and no `result_sha256` exists for either structure, so the module compares two quantities where `contraction_conformance` compares three — and says so rather than implying a device baseline it does not have.
+
+### `tiled`'s precondition as a typed refusal, watched firing
+
+**`crates/tiler-ir/tests/attention_tiled_admission.rs`** — the refusal demonstrated firing at `S = 10`, asserted as an exact typed value rather than through a string, plus the L4 admissibility table turned into a checked property, plus the no-padding rule pinned structurally, plus the rank wall named separately from the precondition.
+
+### Perturbations, subject not assertion, with the failure text each produced
+
+| Guard | Perturbation | What it said |
+| --- | --- | --- |
+| the `K` precondition and the no-padding rule | `exact_quotients` made to `div_ceil` instead of refusing | `10 is not a multiple of 16, so the tiled realization must refuse it: ()`; `C1 prefill, S = 10`; `an extent strictly between tile multiples must refuse, never round: ()` — three tests, while the rank and control tests still passed |
+| the rank wall | the rank guard deleted from `ceiling_quotients` only | `a rank-four output cannot take a rank-two block: PredicatedCooperativeContraction { ... work_items: 1600, grid_threads: 256 }` — the guard's own justification, since that launch covers 256 of 1,600 output positions |
+| the emitted-region/reference agreement | the reference's contributor order reversed | `Score/c1_prefill: the emitted region disagrees with the reference evaluator` — so the comparison is between two genuinely independent computations and is order-sensitive |
+| the oracle budget boundary | `MAX_EVALUATION_STEPS` raised 16Mi to 64Mi | **the refusal still fired**, which refuted this module's own first draft — see below |
+
+**A claim of my own that the perturbation refuted, corrected rather than quietly dropped.** The module first documented the prefill row as refused "at twice the cap", reasoning from fold steps. Raising the constant fourfold left the refusal firing unchanged, so the oracle's budget is not counted in fold steps — it counts scalar applications and index-expression evaluations, of which one fold step performs several. The comment now states the sufficiency direction correctly and records the observation that refuted the earlier wording.
+
+**A second wrong derivation of mine, also recorded in place.** The perturbation test first moved an operand by one unit in the last place, copying the projection harness's phrasing that this is "the smallest change the fold can observe at all". It is not transferable: one ULP of an operand enters the sum multiplied by the other operand, so its contribution falls *below* the accumulator's own ULP and is rounded away. Observed at both `head_dim = 128` (96 outputs bit-identical) and at a contracted extent of four (24 outputs bit-identical) — so shrinking the fold does not fix it, because the fold's magnitude does not fall proportionally with its length. The projection harness's `k = 4` cell flips a bit by luck of its operands, not by a property its instrument has. `PERTURBATION_OFFSET` documents the derivation and perturbs by a whole unit, which discriminates the same defects deterministically.
+
+### Identity consequences, derived on this tree
+
+| Domain | Moves? | Derivation |
+| --- | --- | --- |
+| `tiler.schedule.v7` | **no** | No encoder byte was touched; no `ReductionTopology` variant, tag, or field was added or reordered. The reduction-topology tag run is unchanged at `0x31`-`0x35`, `0x37`, `0x38`, and **`0x36` was not taken** — it stays reserved for `CooperativeContractionSplit`. |
+| `tiler.kernel-program`, `tiler.artifact-program`, manifest pair | **no** | Nothing in `tiler-ir/src/kernel` or the artifact layer was edited. |
+| Target-profile declaration/descriptor `v11` | **no** | No profile row, policy family, or key was added. No tile-width authority was declared. |
+| Every landed Metal golden | **no** | `tiler-metal` was not edited; no golden added or changed. |
+| Public surface | **no additions** | Both new files are test-only — one `#[cfg(test)] mod`, one `tests/` integration target. The only non-test edit in the diff is the three-line module declaration in `governed.rs`. |
+
+**Nothing that was expected not to move, moved.** The whole delivery is test-only plus one module declaration, which is why every identity domain above is derived to be unchanged rather than re-pinned.
+
+## Remainder — enumerated and filed, not attempted
+
+Three of this ticket's Required delivery items are not met, each for a stated reason and each with a ticket rather than a note.
+
+1. **`tiled` for both structures** is blocked by the rank wall above, and filed as [`admit-a-batched-cooperative-contraction-for-the-attention-structures`](admit-a-batched-cooperative-contraction-for-the-attention-structures.md). What was delivered instead is the half that is real today: the precondition as a typed refusal, watched firing at `S = 10`, with the admissibility table checked and the no-padding rule pinned. The realization itself needs batched cooperative vocabulary, which is a public boundary and not this ticket's to invent.
+2. **Timings at the C1 row and two B1 rows** are filed as [`time-the-attention-contractions-under-the-l3-procedure`](time-the-attention-contractions-under-the-l3-procedure.md), status `blocked`. The `m3` bench host was at load averages `2.44 2.39 2.33` when probed here, against the 0.5 gate the contraction tile-width protocol freezes. Measured, not inherited. Separately, **no contraction equivalent of the device dispatch harness exists** — `crates/tiler-conformance/src/dispatch.rs` covers the serial sum, and the projection contraction reaches a device only through the two `prototypes/` binaries — so a dispatch route for these structures is a prerequisite of that ticket rather than a step inside it.
+3. **A refusal for every uncovered realization, naming reassociation, permutation, and absent distributivity separately**, is filed as [`record-typed-refusals-for-uncovered-contraction-realizations`](record-typed-refusals-for-uncovered-contraction-realizations.md). The contraction arm of `govern_spelling` records no decline at all today; the vocabulary to say it already exists on `StrategyDeclineCause` and needs no widening, which is why this is a contained compiler lane rather than a public-surface change.
+
+**The schedule-set re-derivation this ticket asked for was done, and the rank wall is its result.** The Fact correction in Required delivery asked that an unavailable topology refuse for its current missing proof rather than for the retired claim that no barrier construct exists. Re-derived at this base: the barrier construct does exist and is accepted, and the reason the cooperative topology is unavailable for these two structures is output rank. That refusal is typed, is asserted as an exact value, and has been watched firing.
+
+## Unsupported cases, stated
+
+No attention contraction has been dispatched on a device. No `result_sha256` exists for either structure, so nothing here is compared against a measured device result — unlike the projection structure, which has one. The B1 *prefill* rows are beyond the index-region oracle's budget and are asserted refused rather than evaluated. The `tiled` realization cannot represent either structure at any extent. No tile width was selected and no target-profile row was declared.

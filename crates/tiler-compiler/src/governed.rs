@@ -2575,6 +2575,9 @@ fn occurrence_error(rule: &'static str) -> LoweringEmitError {
 }
 
 #[cfg(test)]
+mod attention_conformance;
+
+#[cfg(test)]
 mod contraction_conformance;
 
 #[cfg(test)]
