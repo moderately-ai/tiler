@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-citation-checker-should-reach-spike-records
 title: Decide whether the citation checker should reach spike records
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [reach-every-spike-record-from-the-experiment-catalog, state-the-spike-currency-convention-where-readers-look]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace]
 shared_scopes: [project/tickets]
 paths: []
 tags: [gates, documentation, spikes, blind-spot]
+claimed_from: todo
+assignee: worker-citegate
+lease_expires_at: 1787431855
 ---
 ## User-visible outcome
 

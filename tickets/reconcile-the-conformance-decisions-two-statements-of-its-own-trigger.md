@@ -1,14 +1,17 @@
 ---
 id: reconcile-the-conformance-decisions-two-statements-of-its-own-trigger
 title: Reconcile the conformance decision's two statements of its own trigger
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-the-backend-provider-conformance-harness-public-surface, publish-the-backend-provider-conformance-suite, supply-the-second-independently-authored-backend-fixture]
-scopes: [project/tickets]
-shared_scopes: []
+scopes: []
+shared_scopes: [project/tickets]
 paths: []
 tags: [decisions, backend-providers, graph-hygiene]
+claimed_from: todo
+assignee: worker-trigger
+lease_expires_at: 1787431855
 ---
 ## User-visible outcome
 
