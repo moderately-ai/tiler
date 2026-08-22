@@ -29,11 +29,13 @@
 //! folds the artifact's own subjects on
 //! top of each variant's complete program identity: the governed component
 //! schemas, the semantic graph and the *reached* definition and admission
-//! provenance, the routing policy and every guard, the neutral ABI and launch
-//! contracts, the declared target requirements, deferred predicates, and
-//! live-device route requirements, the
-//! payload descriptors and their entry mappings, and the capability providers
-//! the plan actually selected.
+//! provenance, the retained shape environment, the routing policy and every
+//! guard, the neutral ABI and launch contracts, the declared target
+//! requirements, deferred predicates, and live-device route requirements, the
+//! payload descriptors and their entry mappings, the lowering-capability
+//! providers the plan actually selected, and each variant's run of selected
+//! physical implementations — which physical authority, under which
+//! implementation proposal, implemented each cover-region occurrence.
 //!
 //! Every one of those subjects is a compilation **input**, including each
 //! payload descriptor: its digest identifies the payload's compilation subject
@@ -50,9 +52,12 @@
 //!
 //! It excludes the compilation environment's unused remainder in the strongest
 //! available way: those providers are never retained. A
-//! [`CompilationEnvironment`](crate::program::CompilationEnvironment) is a
+//! [`CompilationEnvironment`](crate::program::CompilationEnvironment) holds the
+//! offered providers in the two roles a provider can be offered in — lowering a
+//! capability and implementing a region — and is a
 //! construction-time authority used to prove
-//! that a selected provider was really offered, and
+//! that a selected provider was really offered *in the role it was selected
+//! for*, and
 //! [`tiler_ir::semantic::SemanticIdentity`]'s registry-snapshot subject — which
 //! *does* change when an unused provider changes — is deliberately not folded
 //! in. A provider that was available and never used cannot invalidate an
