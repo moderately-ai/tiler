@@ -172,26 +172,49 @@ pub(super) fn access_read_key(
     tensors: &[TensorData],
     expressions: &[DraftIndexExpr],
 ) -> Vec<u8> {
-    let tensor = &tensors[data.tensor as usize];
-    let role_ordinal = tensors[..data.tensor as usize]
-        .iter()
-        .filter(|candidate| candidate.role == tensor.role)
-        .count();
-    let mut output = b"tiler.index.access-read.v1\0".to_vec();
-    output.push(match tensor.role {
-        TensorRole::Input => 1,
-        TensorRole::Output => 2,
-    });
-    push_len(&mut output, role_ordinal);
-    encode_u32s(&mut output, &data.domain);
-    push_len(&mut output, data.coordinates.len());
-    for coordinate in &data.coordinates {
-        push_slice(
-            &mut output,
-            &expressions[*coordinate as usize].structural_key,
-        );
+    let boundary = |output: &mut Vec<u8>, ordinal: u32| {
+        let tensor = &tensors[ordinal as usize];
+        let role_ordinal = tensors[..ordinal as usize]
+            .iter()
+            .filter(|candidate| candidate.role == tensor.role)
+            .count();
+        output.push(match tensor.role {
+            TensorRole::Input => 1,
+            TensorRole::Output => 2,
+        });
+        push_len(output, role_ordinal);
+    };
+    let coordinates = |output: &mut Vec<u8>, run: &[u32]| {
+        push_len(output, run.len());
+        for coordinate in run {
+            push_slice(output, &expressions[*coordinate as usize].structural_key);
+        }
+    };
+    // The direct arm writes exactly the bytes it always did under exactly its
+    // former domain literal, so every existing scalar value's structural key —
+    // and therefore its interning and its retained byte budget — is unchanged.
+    // The gather arm opens with a domain literal of its own, which is what
+    // keeps a gather's F32 result from interning against a direct read of the
+    // same source at the same coordinates.
+    match data {
+        AccessData::Direct(direct) => {
+            let mut output = b"tiler.index.access-read.v1\0".to_vec();
+            boundary(&mut output, direct.tensor);
+            encode_u32s(&mut output, &direct.domain);
+            coordinates(&mut output, &direct.coordinates);
+            output
+        }
+        AccessData::GatherRead(gather) => {
+            let mut output = b"tiler.index.access-gather-read.v1\0".to_vec();
+            boundary(&mut output, gather.source);
+            boundary(&mut output, gather.index);
+            output.extend_from_slice(&gather.axis.to_be_bytes());
+            encode_u32s(&mut output, &gather.domain);
+            coordinates(&mut output, &gather.source_coordinates);
+            coordinates(&mut output, &gather.index_coordinates);
+            output
+        }
     }
-    output
 }
 pub(super) fn nested_operation_key(
     key: &ScalarOpKey,
@@ -491,13 +514,35 @@ pub(super) fn encode_region(
     }
     push_len(&mut out, accesses.len());
     for a in accesses {
-        out.push(match a.mode {
-            AccessMode::Read => 1,
-            AccessMode::Write => 2,
-        });
-        out.extend_from_slice(&a.tensor.to_be_bytes());
-        encode_u32s(&mut out, &a.domain);
-        encode_u32s(&mut out, &a.coordinates);
+        match a {
+            // `0x01` and `0x02` keep their tags and their exact field layouts,
+            // so no previously encodable region's bytes move and
+            // `tiler.index-region.v11` deliberately does not step.
+            CompactedAccess::Direct(direct) => {
+                out.push(match direct.mode {
+                    AccessMode::Read => 1,
+                    AccessMode::Write => 2,
+                });
+                out.extend_from_slice(&direct.tensor.to_be_bytes());
+                encode_u32s(&mut out, &direct.domain);
+                encode_u32s(&mut out, &direct.coordinates);
+            }
+            // Appended at the next free value. A reader that reaches `0x03` is
+            // reading an access the earlier vocabulary could not express, never
+            // an earlier access under a new interpretation. The two tensor
+            // ordinals and the two coordinate runs are written in a fixed
+            // order, each run length-framed, so swapping a source for an index
+            // or dropping the axis frame changes the bytes.
+            CompactedAccess::GatherRead(gather) => {
+                out.push(3);
+                out.extend_from_slice(&gather.source.to_be_bytes());
+                out.extend_from_slice(&gather.index.to_be_bytes());
+                out.extend_from_slice(&gather.axis.to_be_bytes());
+                encode_u32s(&mut out, &gather.domain);
+                encode_u32s(&mut out, &gather.source_coordinates);
+                encode_u32s(&mut out, &gather.index_coordinates);
+            }
+        }
     }
     let mut assessments = index_domain_evidence
         .iter()
@@ -591,10 +636,18 @@ pub(super) fn encoded_region_len(
     }
     bytes = bytes.saturating_add(8);
     for access in accesses {
-        bytes = bytes
-            .saturating_add(5)
-            .saturating_add(encoded_u32s_len(access.domain.len()))
-            .saturating_add(encoded_u32s_len(access.coordinates.len()));
+        bytes = match access {
+            CompactedAccess::Direct(direct) => bytes
+                .saturating_add(5)
+                .saturating_add(encoded_u32s_len(direct.domain.len()))
+                .saturating_add(encoded_u32s_len(direct.coordinates.len())),
+            // Tag, two tensor ordinals, and the axis, then three framed runs.
+            CompactedAccess::GatherRead(gather) => bytes
+                .saturating_add(13)
+                .saturating_add(encoded_u32s_len(gather.domain.len()))
+                .saturating_add(encoded_u32s_len(gather.source_coordinates.len()))
+                .saturating_add(encoded_u32s_len(gather.index_coordinates.len())),
+        };
     }
     bytes = bytes.saturating_add(8).saturating_add(
         index_domain_evidence

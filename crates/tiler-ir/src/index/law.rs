@@ -3624,9 +3624,15 @@ mod tests {
         value: VerifiedScalarValueId,
     ) -> Option<super::super::VerifiedTensorId> {
         match region.scalar_value(value).unwrap().definition() {
-            ScalarValueDefinitionView::AccessRead(access) => {
-                Some(region.access(access).unwrap().tensor())
-            }
+            ScalarValueDefinitionView::AccessRead(access) => Some(
+                region
+                    .access(access)
+                    .unwrap()
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .tensor(),
+            ),
             ScalarValueDefinitionView::OperationResult { .. } => None,
         }
     }
@@ -4616,7 +4622,15 @@ mod tests {
         assert_eq!(region.outputs().len(), 3, "one write root per operand");
         let written = region
             .outputs()
-            .map(|root| region.access(root.access()).unwrap().tensor())
+            .map(|root| {
+                region
+                    .access(root.access())
+                    .unwrap()
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .tensor()
+            })
             .collect::<std::collections::BTreeSet<_>>();
         assert_eq!(written.len(), 1, "the three roots partition one output");
         for root in region.outputs() {
@@ -4625,6 +4639,9 @@ mod tests {
                     region
                         .access(root.access())
                         .unwrap()
+                        .view()
+                        .direct()
+                        .expect("a direct access")
                         .write_ownership_proof(),
                     Some(WriteOwnershipProofView::PartitionMember {
                         joint: JointPartitionProofView::Interval {
@@ -5189,7 +5206,11 @@ mod tests {
             region
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof()
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
                     == Some(BoundsProofView::Interval {
                         facts: IndexDomainFactSource::ShapeEnvironment,
                     })),
@@ -5313,7 +5334,12 @@ mod tests {
             region
                 .accesses()
                 .filter(|access| access.mode() == AccessMode::Read)
-                .all(|access| access.bounds_proof().is_none()),
+                .all(|access| access
+                    .view()
+                    .direct()
+                    .expect("a direct access")
+                    .bounds_proof()
+                    .is_none()),
             "no bounds proof may be recorded when the check cannot close"
         );
     }

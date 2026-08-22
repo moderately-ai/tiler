@@ -7,6 +7,7 @@ use crate::semantic::ResolvedValueType;
 use super::{
     DimensionId, IndexRegionBuilder, ScalarRegistryError, ScalarValueId, TensorAccessId, TensorId,
 };
+use crate::shape::{Axis, Shape};
 
 /// A governed structural resource in the canonical index profile.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
@@ -198,6 +199,102 @@ pub enum IndexBuildError {
     },
     /// Output tensor and scalar value types differ.
     OutputTypeMismatch,
+    /// One tensor was named as both the gather source and its index.
+    ///
+    /// The two operands are distinct semantic roles, and one handle cannot play
+    /// both. Two handles referring to storage a future alias model proves
+    /// equivalent are neither detected nor authorized here.
+    GatherAliasedTensors {
+        /// Handle supplied for both roles.
+        tensor: TensorId,
+    },
+    /// The gather source is not a program input boundary.
+    GatherSourceNotInput {
+        /// Offending source handle.
+        tensor: TensorId,
+    },
+    /// The gather index is not a program input boundary.
+    GatherIndexNotInput {
+        /// Offending index handle.
+        tensor: TensorId,
+    },
+    /// The gather source is not exactly `tiler::f32@1`.
+    GatherSourceNotF32 {
+        /// Offending source handle.
+        tensor: TensorId,
+        /// The type it actually carries.
+        actual: Arc<ResolvedValueType>,
+    },
+    /// The gather index is not exactly `tiler::u32@1`.
+    ///
+    /// A signed index is refused here rather than admitted and reinterpreted,
+    /// because a signed index raises negative indexing, which this family does
+    /// not answer.
+    GatherIndexNotU32 {
+        /// Offending index handle.
+        tensor: TensorId,
+        /// The type it actually carries.
+        actual: Arc<ResolvedValueType>,
+    },
+    /// The gather source boundary shape was not authored wholly literal.
+    ///
+    /// Means `SourcedShape::as_static()` returned `None`. An environment that
+    /// happens to determine every symbol does **not** turn authored sourced
+    /// spelling into a literal boundary; sourced gather boundaries need their
+    /// own accepted decision.
+    GatherSourceShapeNotLiteral {
+        /// Offending source handle.
+        tensor: TensorId,
+    },
+    /// The gather index boundary shape was not authored wholly literal.
+    GatherIndexShapeNotLiteral {
+        /// Offending index handle.
+        tensor: TensorId,
+    },
+    /// The gather source has rank zero and so has no axis to gather along.
+    GatherSourceRankZero {
+        /// Offending source handle.
+        tensor: TensorId,
+    },
+    /// The gathered axis is not an axis of the source.
+    GatherAxisOutOfRange {
+        /// Supplied axis.
+        axis: Axis,
+        /// The source's rank.
+        source_rank: usize,
+    },
+    /// The source-coordinate run does not supply every non-gathered source axis.
+    GatherSourceCoordinateRank {
+        /// Required count, one per source axis except the gathered one.
+        expected: usize,
+        /// Supplied count.
+        actual: usize,
+    },
+    /// The index-coordinate run does not supply every index axis.
+    GatherIndexCoordinateRank {
+        /// Required count, one per index axis.
+        expected: usize,
+        /// Supplied count.
+        actual: usize,
+    },
+    /// A supplied result-domain dimension's extent is not authored literal.
+    ///
+    /// Reports the **first** such dimension in the supplied order, so a caller
+    /// repairs one cause at a time.
+    GatherDomainExtentNotLiteral {
+        /// Offending dimension handle.
+        dimension: DimensionId,
+    },
+    /// The supplied result domain does not match the derived result shape.
+    ///
+    /// Raised only after all three literal-shape refusals, so a nonliteral
+    /// boundary is never reported as a shape disagreement.
+    GatherDomainShape {
+        /// Shape derived by splicing the index shape into the source at `axis`.
+        expected: Shape,
+        /// Shape the supplied domain declares.
+        actual: Shape,
+    },
     /// Scalar authority rejected registration, typing, or application.
     ScalarAuthority(Arc<ScalarRegistryError>),
     /// A governed construction resource exceeded its limit.
@@ -229,6 +326,47 @@ impl From<ScalarRegistryError> for IndexBuildError {
     fn from(value: ScalarRegistryError) -> Self {
         Self::ScalarAuthority(Arc::new(value))
     }
+}
+
+/// Which whole-region gather obligation one access failed.
+///
+/// `#[non_exhaustive]` publicly so a later admitted obligation is additive for
+/// downstream readers, while every match inside `tiler-ir` stays total — the
+/// crate must prove it considered each rule, and a caller must not assume the
+/// list is closed.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GatherAccessRule {
+    /// The source is not a program input boundary.
+    SourceRole,
+    /// The index is not a program input boundary.
+    IndexRole,
+    /// The source is not exactly `tiler::f32@1`.
+    SourceType,
+    /// The index is not exactly `tiler::u32@1`.
+    IndexType,
+    /// The source boundary shape is not authored wholly literal.
+    SourceShapeLiteral,
+    /// The index boundary shape is not authored wholly literal.
+    IndexShapeLiteral,
+    /// The source has rank zero.
+    SourceRank,
+    /// The gathered axis is not an axis of the source.
+    Axis,
+    /// The source-coordinate arity is wrong.
+    SourceCoordinateRank,
+    /// The index-coordinate arity is wrong.
+    IndexCoordinateRank,
+    /// A domain dimension's extent is not authored literal.
+    DomainExtentLiteral,
+    /// The declared domain disagrees with the derived result shape.
+    DomainShape,
+    /// A source coordinate leaves the access domain.
+    SourceCoordinateScope,
+    /// An index coordinate leaves the access domain.
+    IndexCoordinateScope,
+    /// The retained bounds resolution does not match the access.
+    BoundsResolution,
 }
 
 /// One deterministic whole-region verification failure.
@@ -291,6 +429,19 @@ pub enum IndexRegionDiagnostic {
     OutputPartitionDoubleWritten {
         /// Output boundary whose roots collide.
         tensor: TensorId,
+    },
+    /// Whole-region revalidation refused one gather access.
+    ///
+    /// Owns corruption and any future internal construction. The builder's
+    /// structured errors win for caller input; this is the later verifier's
+    /// owner and deliberately does **not** collapse into
+    /// [`Self::CoordinateOutOfBounds`], because invocation-required data is not
+    /// an observed bad coordinate.
+    GatherAccess {
+        /// Offending access.
+        access: TensorAccessId,
+        /// The rule it violated.
+        rule: GatherAccessRule,
     },
     /// A reachable scalar value retained an unreduced dimension.
     FreeReductionDimension {

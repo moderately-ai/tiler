@@ -90,7 +90,12 @@ impl IndexRegionBuilder {
         let mut index_domain_evidence = Vec::new();
         let mut unknown_index_domain_predicates = Vec::new();
         for pending in index_domain_predicates {
-            let access = &self.accesses[pending.access as usize];
+            // Index-domain predicates are minted only for direct accesses; a
+            // gather's obligation is the total bounds resolution on the access
+            // itself, so no pending predicate can name one.
+            let access = self.accesses[pending.access as usize]
+                .direct()
+                .expect("an index-domain predicate names a direct access");
             let subject = VerifiedTensorAccessId::from_verified(owner, access_map[&pending.access]);
             let expression = VerifiedIndexExprId::from_verified(
                 owner,
@@ -206,8 +211,8 @@ impl IndexRegionBuilder {
         let tensor_map = map_order(&tensor_order);
         let mut expr_reached = BTreeSet::new();
         for access in &reachable_accesses {
-            for expr in &self.accesses[*access as usize].coordinates {
-                self.mark_expr(*expr, &mut expr_reached);
+            for expr in self.accesses[*access as usize].coordinate_ordinals() {
+                self.mark_expr(expr, &mut expr_reached);
             }
         }
         let mut expr_order: Vec<_> = expr_reached.into_iter().collect();
@@ -219,25 +224,55 @@ impl IndexRegionBuilder {
         });
         let expr_map = map_order(&expr_order);
         let mut access_order: Vec<_> = reachable_accesses.into_iter().collect();
+        // The leading kind ordinal is what keeps the two access kinds from
+        // interleaving on a shared tensor ordinal: a gather names two tensors,
+        // so there is no single tensor position that would order it against a
+        // direct access consistently. Direct accesses keep their exact former
+        // key in the exact former order, which is why no previously encodable
+        // region's canonical access order — and therefore no old byte — moves.
         access_order.sort_by_key(|i| {
             let a = &self.accesses[*i as usize];
-            (
-                tensor_map[&a.tensor],
-                a.mode,
-                {
-                    let mut domain = a
-                        .domain
-                        .iter()
-                        .map(|dimension| dimension_map[dimension])
-                        .collect::<Vec<_>>();
-                    domain.sort_unstable();
-                    domain
-                },
-                a.coordinates
+            let remapped_domain = {
+                let mut domain = a
+                    .domain()
                     .iter()
-                    .map(|e| expr_map[e])
-                    .collect::<Vec<_>>(),
-            )
+                    .map(|dimension| dimension_map[dimension])
+                    .collect::<Vec<_>>();
+                domain.sort_unstable();
+                domain
+            };
+            match a {
+                AccessData::Direct(direct) => (
+                    0_u8,
+                    tensor_map[&direct.tensor],
+                    0_u32,
+                    direct.mode,
+                    remapped_domain,
+                    direct
+                        .coordinates
+                        .iter()
+                        .map(|e| expr_map[e])
+                        .collect::<Vec<_>>(),
+                    Vec::new(),
+                ),
+                AccessData::GatherRead(gather) => (
+                    1_u8,
+                    tensor_map[&gather.source],
+                    tensor_map[&gather.index],
+                    AccessMode::Read,
+                    remapped_domain,
+                    gather
+                        .source_coordinates
+                        .iter()
+                        .map(|e| expr_map[e])
+                        .collect::<Vec<_>>(),
+                    gather
+                        .index_coordinates
+                        .iter()
+                        .map(|e| expr_map[e])
+                        .collect::<Vec<_>>(),
+                ),
+            }
         });
         let access_map = map_order(&access_order);
         let reachable_ops: BTreeSet<_> = reachable_values
@@ -309,9 +344,44 @@ impl IndexRegionBuilder {
             values,
             outputs,
         } = compacted;
+        // Every gather's bounds obligation is discharged exactly here, once the
+        // canonical region identity the proof or requirement binds exists and
+        // before any caller can observe the region. A direct access is carried
+        // across unchanged, so no old byte and no old retained proof moves.
+        let owner = self.owner.verified_owner();
+        let accesses = accesses
+            .into_iter()
+            .enumerate()
+            .map(|(position, access)| match access {
+                CompactedAccess::Direct(direct) => VerifiedAccessData::Direct(direct),
+                CompactedAccess::GatherRead(gather) => {
+                    let access =
+                        VerifiedTensorAccessId::from_verified(owner, bounded_index(position));
+                    let bounds_resolution = derive_gather_index_bounds(
+                        &identity,
+                        access,
+                        owner,
+                        &gather,
+                        &tensors,
+                        &dimensions,
+                        &expressions,
+                        self.sources.as_ref(),
+                    );
+                    VerifiedAccessData::GatherRead(Box::new(VerifiedGatherReadAccessData {
+                        source: gather.source,
+                        index: gather.index,
+                        axis: gather.axis,
+                        domain: gather.domain,
+                        source_coordinates: gather.source_coordinates,
+                        index_coordinates: gather.index_coordinates,
+                        bounds_resolution,
+                    }))
+                }
+            })
+            .collect::<Vec<_>>();
         Ok(VerifiedIndexRegion {
             data: Arc::new(VerifiedIndexRegionData {
-                owner: self.owner.verified_owner(),
+                owner,
                 sources: self.sources.clone(),
                 dimensions,
                 tensors,
@@ -335,8 +405,43 @@ impl IndexRegionBuilder {
         dimension_map: &BTreeMap<u32, u32>,
         index_domain_predicates: &[PendingIndexDomainPredicate],
         partition_proofs: &BTreeMap<u32, JointPartitionProof>,
-    ) -> VerifiedAccessData {
-        let access = &self.accesses[old as usize];
+    ) -> CompactedAccess {
+        let remap_domain = |domain: &[u32]| {
+            let mut remapped = domain
+                .iter()
+                .map(|dimension| dimension_map[dimension])
+                .collect::<Vec<_>>();
+            remapped.sort_unstable();
+            remapped
+        };
+        // A gather is remapped as one unit: both tensor ordinals, its domain,
+        // and both coordinate runs move together. Its bounds resolution is
+        // deliberately *not* minted here — the proof binds the canonical region
+        // identity, which is computed from these compacted accesses, so the
+        // resolution is derived in `finish_compaction` once that identity
+        // exists. `CompactedAccess` is the type that makes that ordering
+        // unrepresentable to get wrong.
+        let access = match &self.accesses[old as usize] {
+            AccessData::Direct(direct) => direct,
+            AccessData::GatherRead(gather) => {
+                return CompactedAccess::GatherRead(Box::new(CompactedGatherReadAccess {
+                    source: tensor_map[&gather.source],
+                    index: tensor_map[&gather.index],
+                    axis: gather.axis,
+                    domain: remap_domain(&gather.domain),
+                    source_coordinates: gather
+                        .source_coordinates
+                        .iter()
+                        .map(|expression| expression_map[expression])
+                        .collect(),
+                    index_coordinates: gather
+                        .index_coordinates
+                        .iter()
+                        .map(|expression| expression_map[expression])
+                        .collect(),
+                }));
+            }
+        };
         let shape = &self.tensors[access.tensor as usize].shape;
         let points = self.domain_points(&access.domain);
         // The retained evidence names how the access was *actually* proved, so
@@ -349,18 +454,10 @@ impl IndexRegionBuilder {
         let interval = visited && self.interval_verdict(access, shape).interval_proved;
         let extent_equality =
             visited && !interval && self.coordinates_are_bounded_dimensions(access, shape);
-        VerifiedAccessData {
+        CompactedAccess::Direct(VerifiedDirectAccessData {
             tensor: tensor_map[&access.tensor],
             mode: access.mode,
-            domain: {
-                let mut domain = access
-                    .domain
-                    .iter()
-                    .map(|dimension| dimension_map[dimension])
-                    .collect::<Vec<_>>();
-                domain.sort_unstable();
-                domain
-            },
+            domain: remap_domain(&access.domain),
             coordinates: access
                 .coordinates
                 .iter()
@@ -412,7 +509,7 @@ impl IndexRegionBuilder {
                     }
                 }
             }),
-        }
+        })
     }
 
     pub(super) fn reachable_values(&self) -> BTreeSet<u32> {
@@ -554,10 +651,10 @@ impl IndexRegionBuilder {
             return;
         }
         let access = &self.accesses[access as usize];
-        for coordinate in &access.coordinates {
-            self.visit_expression_dimensions(*coordinate, order, assigned, visited_expressions);
+        for coordinate in access.coordinate_ordinals() {
+            self.visit_expression_dimensions(coordinate, order, assigned, visited_expressions);
         }
-        let mut domain = access.domain.clone();
+        let mut domain = access.domain().to_vec();
         domain.sort_by(|left, right| {
             let left = &self.dimensions[*left as usize];
             let right = &self.dimensions[*right as usize];
@@ -696,27 +793,60 @@ impl IndexRegionBuilder {
 
     pub(super) fn alpha_access_key(&self, access: u32, dimensions: &BTreeMap<u32, u32>) -> Vec<u8> {
         let data = &self.accesses[access as usize];
-        let tensor = &self.tensors[data.tensor as usize];
-        let role_ordinal = self.tensors[..data.tensor as usize]
-            .iter()
-            .filter(|candidate| candidate.role == tensor.role)
-            .count();
         let mut key = b"tiler.index.access-read.alpha.v1\0".to_vec();
-        key.push(match tensor.role {
-            TensorRole::Input => 1,
-            TensorRole::Output => 2,
-        });
-        push_len(&mut key, role_ordinal);
-        let mut domain: Vec<_> = data
-            .domain
-            .iter()
-            .map(|dimension| dimensions[dimension])
-            .collect();
-        domain.sort_unstable();
-        encode_u32s(&mut key, &domain);
-        push_len(&mut key, data.coordinates.len());
-        for coordinate in &data.coordinates {
-            push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
+        let push_boundary = |key: &mut Vec<u8>, ordinal: u32| {
+            let tensor = &self.tensors[ordinal as usize];
+            let role_ordinal = self.tensors[..ordinal as usize]
+                .iter()
+                .filter(|candidate| candidate.role == tensor.role)
+                .count();
+            key.push(match tensor.role {
+                TensorRole::Input => 1,
+                TensorRole::Output => 2,
+            });
+            push_len(key, role_ordinal);
+        };
+        // The direct arm writes exactly the bytes it always did, with no kind
+        // tag ahead of them, so every alpha key an existing region produces is
+        // unchanged. The gather arm opens with its own framed domain tag, which
+        // the earlier vocabulary could not write, so the two families cannot
+        // collide even though neither is length-prefixed as a whole.
+        match data {
+            AccessData::Direct(direct) => {
+                push_boundary(&mut key, direct.tensor);
+                let mut domain: Vec<_> = direct
+                    .domain
+                    .iter()
+                    .map(|dimension| dimensions[dimension])
+                    .collect();
+                domain.sort_unstable();
+                encode_u32s(&mut key, &domain);
+                push_len(&mut key, direct.coordinates.len());
+                for coordinate in &direct.coordinates {
+                    push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
+                }
+            }
+            AccessData::GatherRead(gather) => {
+                key.extend_from_slice(b"tiler.index.access-gather-read.alpha.v1\0");
+                push_boundary(&mut key, gather.source);
+                push_boundary(&mut key, gather.index);
+                key.extend_from_slice(&gather.axis.to_be_bytes());
+                let mut domain: Vec<_> = gather
+                    .domain
+                    .iter()
+                    .map(|dimension| dimensions[dimension])
+                    .collect();
+                domain.sort_unstable();
+                encode_u32s(&mut key, &domain);
+                push_len(&mut key, gather.source_coordinates.len());
+                for coordinate in &gather.source_coordinates {
+                    push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
+                }
+                push_len(&mut key, gather.index_coordinates.len());
+                for coordinate in &gather.index_coordinates {
+                    push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
+                }
+            }
         }
         key
     }

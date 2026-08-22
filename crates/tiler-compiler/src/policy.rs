@@ -1141,14 +1141,15 @@ mod tests {
     /// The other four state coordinate relations that are functions of the
     /// iteration coordinate, so the region vocabulary could spell them and in two
     /// cases now does. This one's coordinate is an element of a second operand.
-    /// `AccessData` carries one tensor ordinal and `IndexNode` has no variant
-    /// that reads tensor data, so no index region can express the access at all.
-    /// ADR 0108 was returned for a complete comparison of a verified nested
-    /// read/value expression with an append-only tagged access; neither route is
-    /// admitted, and neither has yet shown how it preserves ADR 0046's verifier
-    /// guarantees end to end. So the entry here is not "not yet planned" but
-    /// "planned by a route that does not exist and whose admission is its own
-    /// decision".
+    /// An index region *can* now express the access: accepted ADR 0108 selected
+    /// the append-only tagged form, and `IndexRegionBuilder::gather_read`
+    /// authors one compound access naming both tensors, with the address held
+    /// on the access rather than in an `IndexNode` — which is how ADR 0046's
+    /// direct-access guarantees stay untouched. What is still absent is
+    /// everything *above* the index region: no schedule access relation, no
+    /// realization law row, and no lowering capability names this family, so
+    /// the entry here is "expressible at the index layer, and not yet routed
+    /// past it", each remaining step being its own admission.
     ///
     /// It correspondingly holds **no** fusion role in `crate::fusion_legality`,
     /// which is where it parts company with the concatenate and the selection.

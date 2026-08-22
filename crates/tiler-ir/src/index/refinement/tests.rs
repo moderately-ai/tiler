@@ -1662,7 +1662,13 @@ fn whole_call_ledger_preserves_an_earlier_group_before_later_exhaustion() {
     let earlier_access_ref = earlier_region.accesses().next().unwrap();
     let earlier_access = earlier_access_ref.id();
     let dimension = earlier_access_ref.domain().next().unwrap();
-    let coordinate = earlier_access_ref.coordinates().next().unwrap();
+    let coordinate = earlier_access_ref
+        .view()
+        .direct()
+        .expect("a direct access")
+        .coordinates()
+        .next()
+        .unwrap();
     let earlier_obligation = UnknownIndexDomainPredicate {
         subject: earlier_access,
         predicate: IndexDomainPredicate::LessThanExtent {
@@ -2947,6 +2953,9 @@ fn ownership(
     region
         .access(binding.write_access())
         .unwrap()
+        .view()
+        .direct()
+        .expect("a direct access")
         .write_ownership_proof()
 }
 

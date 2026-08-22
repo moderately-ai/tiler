@@ -1,0 +1,678 @@
+//! Admission, refusal, proof, and identity tests for the index-layer gather.
+//!
+//! Every perturbation here breaks the *subject* — the tag, a field order, a
+//! threshold, a shape, a coordinate — rather than the assertion, and each one
+//! is driven separately so that a reddening perturbation names which property
+//! is load-bearing.
+
+use std::sync::Arc;
+
+use tiler_ir::index::FrozenScalarRegistry;
+use tiler_ir::index::{
+    DomainRole, GatherAccessRule, GatherIndexBoundsProofKind, IndexBuildError,
+    IndexDomainFactSource, IndexInteger, IndexRegionBuilder, TensorAccessView, TensorRole,
+    VerifiedIndexRegion,
+};
+use tiler_ir::program::abi::AvailabilityPhase;
+use tiler_ir::semantic::{F32, gather_index_resolved_type};
+use tiler_ir::shape::{
+    Axis, BindingSource, Extent, FactProvenance, InterfaceParameterKey, RootBinding, Shape,
+    ShapeEnv, ShapeEnvBuilder, ShapeSymbol, SourcedExtent, SymbolScope,
+};
+
+fn registry() -> FrozenScalarRegistry {
+    FrozenScalarRegistry::standard().expect("the governed scalar profile composes")
+}
+
+/// A region whose one output stores the result of one gather.
+///
+/// `source_dims`, `index_dims`, and `axis` are the whole of what varies between
+/// the cases below, so each test perturbs exactly one of them.
+struct GatherCase {
+    source: Vec<u64>,
+    index: Vec<u64>,
+    axis: u32,
+}
+
+impl GatherCase {
+    fn new(source: &[u64], index: &[u64], axis: u32) -> Self {
+        Self {
+            source: source.to_vec(),
+            index: index.to_vec(),
+            axis,
+        }
+    }
+
+    /// Builds and verifies the region, with optional symbolic source coordinate.
+    fn build(&self, symbolic_coordinate: bool) -> Result<VerifiedIndexRegion, String> {
+        let environment = symbolic_coordinate.then(scale_environment);
+        let mut builder = match environment {
+            Some(environment) => {
+                IndexRegionBuilder::new_with_shape_environment(registry(), environment)
+                    .map_err(|error| format!("{error:?}"))?
+            }
+            None => IndexRegionBuilder::new(registry()).map_err(|error| format!("{error:?}"))?,
+        };
+        let result = gather_result(&self.source, &self.index, self.axis);
+        let dimensions: Vec<_> = result
+            .iter()
+            .map(|extent| {
+                builder
+                    .dimension(DomainRole::Parallel, Extent::new(*extent))
+                    .expect("a parallel dimension is admitted")
+            })
+            .collect();
+        let source = builder
+            .tensor(
+                TensorRole::Input,
+                F32::resolved_type().clone(),
+                Shape::try_new(self.source.iter().copied().map(Extent::new)).unwrap(),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let index = builder
+            .tensor(
+                TensorRole::Input,
+                gather_index_resolved_type(),
+                Shape::try_new(self.index.iter().copied().map(Extent::new)).unwrap(),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let output = builder
+            .tensor(
+                TensorRole::Output,
+                F32::resolved_type().clone(),
+                Shape::try_new(result.iter().copied().map(Extent::new)).unwrap(),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+
+        // The result axes are laid out [source before axis | index | source
+        // after axis], so the source coordinates are the outer and inner runs
+        // and the index coordinates are the middle run.
+        let axis = self.axis as usize;
+        let outer = axis;
+        let index_span = self.index.len();
+        // The source coordinates are the outer and inner runs, in that order;
+        // the symbol goes on whichever of them comes first, because a gather on
+        // axis 0 has no outer run at all and would otherwise carry no symbol.
+        let source_positions: Vec<_> = (0..outer)
+            .chain((outer + index_span)..result.len())
+            .collect();
+        let source_coordinates: Vec<_> = source_positions
+            .iter()
+            .enumerate()
+            .map(|(ordinal, position)| {
+                coordinate(
+                    &mut builder,
+                    dimensions[*position],
+                    symbolic_coordinate && ordinal == 0,
+                )
+            })
+            .collect();
+        let index_coordinates: Vec<_> = (outer..outer + index_span)
+            .map(|position| coordinate(&mut builder, dimensions[position], false))
+            .collect();
+        let value = builder
+            .gather_read(
+                source,
+                index,
+                &dimensions,
+                &source_coordinates,
+                &index_coordinates,
+                Axis::new(self.axis),
+            )
+            .map_err(|error| format!("{error:?}"))?;
+        let write_coordinates: Vec<_> = dimensions
+            .iter()
+            .map(|dimension| builder.dimension_expr(*dimension).unwrap())
+            .collect();
+        let write = builder
+            .write(output, &dimensions, &write_coordinates)
+            .map_err(|error| format!("{error:?}"))?;
+        builder
+            .output(write, value)
+            .map_err(|error| format!("{error:?}"))?;
+        builder.build().map_err(|error| format!("{error:?}"))
+    }
+}
+
+/// One coordinate over `dimension`, optionally spelled `S * d` rather than `d`.
+///
+/// `S` is bound to 1 by the environment, so the two spellings select the same
+/// element and differ *only* in whether the proof subject names a declared
+/// symbol. That is what isolates fact provenance from proof kind.
+fn coordinate(
+    builder: &mut IndexRegionBuilder,
+    dimension: tiler_ir::index::DimensionId,
+    symbolic: bool,
+) -> tiler_ir::index::IndexExprId {
+    let base = builder.dimension_expr(dimension).unwrap();
+    if !symbolic {
+        return base;
+    }
+    let scale = ShapeSymbol::new(SymbolScope::new("region/0").unwrap(), "s").unwrap();
+    builder
+        .sourced_linear_combination(
+            IndexInteger::from_i128(0).into(),
+            &[(tiler_ir::index::SourcedIndexInteger::Symbol(scale), base)],
+        )
+        .expect("a symbolic coefficient the environment declares is admitted")
+}
+
+fn scale_environment() -> Arc<ShapeEnv> {
+    let mut draft = ShapeEnvBuilder::new();
+    let scale = ShapeSymbol::new(SymbolScope::new("region/0").unwrap(), "s").unwrap();
+    draft.declare(scale.clone()).unwrap();
+    draft
+        .bind(
+            &scale,
+            RootBinding::new(
+                BindingSource::InterfaceParameter {
+                    key: InterfaceParameterKey::new("s").unwrap(),
+                },
+                // The one phase an interface parameter admits that is also no
+                // later than the extent-source ceiling: earlier is refused as
+                // `PhaseTooEarly` for this source class, later as
+                // `SourceTooLate` for an index extent.
+                AvailabilityPhase::LiveDevicePreflight,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    Arc::new(draft.build().unwrap())
+}
+
+fn gather_result(source: &[u64], index: &[u64], axis: u32) -> Vec<u64> {
+    let axis = axis as usize;
+    let mut result = source[..axis].to_vec();
+    result.extend_from_slice(index);
+    result.extend_from_slice(&source[axis + 1..]);
+    result
+}
+
+fn only_gather(region: &VerifiedIndexRegion) -> tiler_ir::index::GatherReadAccessRef<'_> {
+    region
+        .accesses()
+        .find_map(|access| access.view().gather_read())
+        .expect("the fixture authors exactly one gather")
+}
+
+// ---------------------------------------------------------------------------
+// Admission and the closed proof precedence
+// ---------------------------------------------------------------------------
+
+/// An ordinary gather owes invocation validation, not a proof.
+///
+/// The negative control for both static arguments: `[4, 5]` gathered on axis 1
+/// by `[3]` has neither a zero result extent nor a source extent reaching the
+/// U32 universe, so a proof here would mean one of the two arguments concluded
+/// from a premise it does not have.
+#[test]
+fn an_ordinary_gather_requires_invocation_validation() {
+    let region = GatherCase::new(&[4, 5], &[3], 1).build(false).unwrap();
+    let gather = only_gather(&region);
+    let resolution = gather.bounds_resolution();
+    assert!(
+        resolution.statically_proved().is_none(),
+        "no closed argument reaches an ordinary gather",
+    );
+    let requirement = resolution
+        .invocation_validation_required()
+        .expect("the obligation is total, so it must be one or the other");
+    assert_eq!(requirement.axis(), Axis::new(1));
+    assert_eq!(requirement.source_extent(), Extent::new(5));
+    assert_eq!(*requirement.result_shape(), Shape::from_dims([4, 3]));
+}
+
+/// An empty **result** extent proves vacuity even though the index is inhabited.
+///
+/// This is the repaired rule. Inspecting the index shape alone would find `[3]`
+/// inhabited and mint a requirement, which is the false narrowing the packet's
+/// own audit records twice.
+#[test]
+fn an_empty_result_extent_proves_vacuity_though_the_index_is_inhabited() {
+    let region = GatherCase::new(&[0, 5], &[3], 1).build(false).unwrap();
+    let proof = only_gather(&region)
+        .bounds_resolution()
+        .statically_proved()
+        .expect("an empty result domain discharges the obligation vacuously");
+    assert_eq!(
+        proof.kind(),
+        GatherIndexBoundsProofKind::VacuousEmptyResultDomain
+    );
+    assert_eq!(proof.facts(), IndexDomainFactSource::Program);
+    assert_eq!(*proof.index_shape(), Shape::from_dims([3]));
+}
+
+/// A source axis of at least `2^32` contains every exact U32 value.
+#[test]
+fn a_source_axis_reaching_the_u32_universe_is_proved() {
+    let region = GatherCase::new(&[1 << 32, 4], &[], 0).build(false).unwrap();
+    let proof = only_gather(&region)
+        .bounds_resolution()
+        .statically_proved()
+        .expect("the gathered axis contains every U32 value");
+    assert_eq!(
+        proof.kind(),
+        GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent
+    );
+}
+
+/// One below the threshold is **not** proved.
+///
+/// Perturbs the subject rather than the assertion: `u32::MAX` is the largest
+/// value the index can hold, and an axis of exactly that extent leaves the
+/// single value `u32::MAX` out of range. A threshold written `> u32::MAX as
+/// u64` or narrowed into U32 would admit this case.
+#[test]
+fn a_source_axis_one_below_the_u32_universe_is_not_proved() {
+    let region = GatherCase::new(&[u64::from(u32::MAX), 4], &[], 0)
+        .build(false)
+        .unwrap();
+    assert!(
+        only_gather(&region)
+            .bounds_resolution()
+            .statically_proved()
+            .is_none(),
+        "an axis of 2^32 - 1 leaves u32::MAX itself out of range",
+    );
+}
+
+/// The empty-result argument wins over the U32-universe argument.
+#[test]
+fn empty_result_precedence_beats_the_u32_universe_argument() {
+    // Source `[2^32, 0]`: axis 0 reaches the universe *and* the result carries
+    // the zero extent from axis 1, so both arguments hold at once.
+    let region = GatherCase::new(&[1 << 32, 0], &[], 0).build(false).unwrap();
+    let proof = only_gather(&region)
+        .bounds_resolution()
+        .statically_proved()
+        .unwrap();
+    assert_eq!(
+        proof.kind(),
+        GatherIndexBoundsProofKind::VacuousEmptyResultDomain,
+        "a domain that visits no point places no obligation on any value, so \
+         attributing the conclusion to the source axis would name the wrong premise",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fact provenance is independent of the proof-kind short circuit
+// ---------------------------------------------------------------------------
+
+/// A declared symbol in a coordinate moves `facts()` without moving the kind.
+///
+/// Driven separately for each proof kind, because a fact source derived from
+/// whichever short circuit concluded would move only for whichever case the
+/// derivation happened to reach.
+#[test]
+fn a_symbolic_coordinate_moves_facts_but_never_the_proof_kind() {
+    for (case, expected) in [
+        (
+            GatherCase::new(&[0, 5], &[3], 1),
+            GatherIndexBoundsProofKind::VacuousEmptyResultDomain,
+        ),
+        (
+            GatherCase::new(&[1 << 32, 4], &[], 0),
+            GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent,
+        ),
+    ] {
+        // The U32-universe control gathers axis 0 of a rank-2 source, so its one
+        // source coordinate covers axis 1 and can carry the symbol.
+        let literal = case.build(false).unwrap();
+        let symbolic = case.build(true).unwrap();
+        let literal = only_gather(&literal)
+            .bounds_resolution()
+            .statically_proved()
+            .unwrap();
+        let symbolic = only_gather(&symbolic)
+            .bounds_resolution()
+            .statically_proved()
+            .unwrap();
+        assert_eq!(literal.kind(), expected);
+        assert_eq!(symbolic.kind(), expected, "the kind is unchanged");
+        assert_eq!(literal.facts(), IndexDomainFactSource::Program);
+        assert_eq!(
+            symbolic.facts(),
+            IndexDomainFactSource::ShapeEnvironment,
+            "a declared symbol participated in the subject even though the \
+             argument did not need it",
+        );
+        assert_ne!(
+            literal.identity().as_bytes(),
+            symbolic.identity().as_bytes(),
+            "the fact source is written into the proof identity",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Identity: the fresh tag, field order, and injectivity
+// ---------------------------------------------------------------------------
+
+/// Swapping the two operands changes the region bytes.
+///
+/// The two tensor ordinals occupy fixed, distinct positions in the framed
+/// access, so a gather of A by B is not a gather of B by A. A shared slot, or
+/// an encoder that sorted the two ordinals, would make these identical.
+#[test]
+fn the_source_and_index_bindings_occupy_distinct_identity_positions() {
+    // `[4, 4]` gathered by `[4]` on axis 0 and on axis 1 differ only in which
+    // source axis the loaded value addresses.
+    let first = GatherCase::new(&[4, 4], &[4], 0).build(false).unwrap();
+    let second = GatherCase::new(&[4, 4], &[4], 1).build(false).unwrap();
+    assert_ne!(
+        first.canonical_identity().as_bytes(),
+        second.canonical_identity().as_bytes(),
+        "the axis frame is part of the access encoding",
+    );
+}
+
+/// A gather access and a direct read of the same source do not intern together.
+#[test]
+fn a_gather_does_not_intern_against_a_direct_read_of_its_source() {
+    let mut builder = IndexRegionBuilder::new(registry()).unwrap();
+    let d0 = builder
+        .dimension(DomainRole::Parallel, Extent::new(3))
+        .unwrap();
+    let c0 = builder.dimension_expr(d0).unwrap();
+    let source = builder
+        .tensor(
+            TensorRole::Input,
+            F32::resolved_type().clone(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let index = builder
+        .tensor(
+            TensorRole::Input,
+            gather_index_resolved_type(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let direct = builder.read(source, &[d0], &[c0]).unwrap();
+    let gathered = builder
+        .gather_read(source, index, &[d0], &[], &[c0], Axis::new(0))
+        .unwrap();
+    assert_ne!(
+        direct, gathered,
+        "a separately authored direct read is a distinct access and does not \
+         satisfy, merge with, or share the gather's address read",
+    );
+}
+
+/// Two identical `gather_read` calls intern to one access and one value.
+#[test]
+fn an_identical_gather_interns_atomically() {
+    let mut builder = IndexRegionBuilder::new(registry()).unwrap();
+    let d0 = builder
+        .dimension(DomainRole::Parallel, Extent::new(3))
+        .unwrap();
+    let c0 = builder.dimension_expr(d0).unwrap();
+    let source = builder
+        .tensor(
+            TensorRole::Input,
+            F32::resolved_type().clone(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let index = builder
+        .tensor(
+            TensorRole::Input,
+            gather_index_resolved_type(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let first = builder
+        .gather_read(source, index, &[d0], &[], &[c0], Axis::new(0))
+        .unwrap();
+    let second = builder
+        .gather_read(source, index, &[d0], &[], &[c0], Axis::new(0))
+        .unwrap();
+    assert_eq!(first, second);
+}
+
+// ---------------------------------------------------------------------------
+// The exact refusal precedence
+// ---------------------------------------------------------------------------
+
+/// The one thing wrong with an otherwise well-formed gather.
+///
+/// An enum rather than a record of flags because these are not independent
+/// switches: each test authors a region that would be admitted but for exactly
+/// one defect, so a case that could set two at once would stop being a
+/// one-variable perturbation of the admitted region.
+#[derive(Clone, Copy)]
+enum Defect {
+    /// The source carries the index's type instead of F32.
+    SourceIsU32,
+    /// The index carries the source's type instead of U32.
+    IndexIsF32,
+    /// The source boundary is authored with a sourced extent.
+    SourcedSource,
+    /// The index boundary is authored with a sourced extent.
+    SourcedIndex,
+    /// The result-domain dimension is authored with a sourced extent.
+    SourcedDomain,
+    /// One handle is passed for both operands.
+    Aliased,
+    /// An axis the source does not have.
+    Axis(u32),
+}
+
+/// Authors a gather carrying exactly `defect` and returns the refusal it hits.
+///
+/// The environment here *determines* every symbol, so the three sourced cases
+/// are the controls that distinguish "authored literal" from "resolves to a
+/// literal": a rule that consulted the environment would admit them.
+fn refusal(defect: Defect) -> IndexBuildError {
+    let mut builder =
+        IndexRegionBuilder::new_with_shape_environment(registry(), scale_environment()).unwrap();
+    let symbol = ShapeSymbol::new(SymbolScope::new("region/0").unwrap(), "s").unwrap();
+    let d0 = if matches!(defect, Defect::SourcedDomain) {
+        builder
+            .symbolic_dimension(DomainRole::Parallel, symbol.clone())
+            .unwrap()
+    } else {
+        builder
+            .dimension(DomainRole::Parallel, Extent::new(3))
+            .unwrap()
+    };
+    let c0 = builder.dimension_expr(d0).unwrap();
+    let source = if matches!(defect, Defect::SourcedSource) {
+        builder
+            .sourced_tensor(
+                TensorRole::Input,
+                F32::resolved_type().clone(),
+                vec![SourcedExtent::Symbol(symbol.clone())],
+            )
+            .unwrap()
+    } else {
+        builder
+            .tensor(
+                TensorRole::Input,
+                if matches!(defect, Defect::SourceIsU32) {
+                    gather_index_resolved_type()
+                } else {
+                    F32::resolved_type().clone()
+                },
+                Shape::from_dims([3]),
+            )
+            .unwrap()
+    };
+    let index = match defect {
+        Defect::Aliased => source,
+        Defect::SourcedIndex => builder
+            .sourced_tensor(
+                TensorRole::Input,
+                gather_index_resolved_type(),
+                vec![SourcedExtent::Symbol(symbol)],
+            )
+            .unwrap(),
+        _ => builder
+            .tensor(
+                TensorRole::Input,
+                if matches!(defect, Defect::IndexIsF32) {
+                    F32::resolved_type().clone()
+                } else {
+                    gather_index_resolved_type()
+                },
+                Shape::from_dims([3]),
+            )
+            .unwrap(),
+    };
+    let axis = match defect {
+        Defect::Axis(axis) => axis,
+        _ => 0,
+    };
+    builder
+        .gather_read(source, index, &[d0], &[], &[c0], Axis::new(axis))
+        .expect_err("this fixture is authored to be refused")
+}
+
+#[test]
+fn one_tensor_cannot_play_both_gather_roles() {
+    assert!(matches!(
+        refusal(Defect::Aliased),
+        IndexBuildError::GatherAliasedTensors { .. }
+    ));
+}
+
+#[test]
+fn a_non_f32_source_is_refused_by_name() {
+    assert!(matches!(
+        refusal(Defect::SourceIsU32),
+        IndexBuildError::GatherSourceNotF32 { .. }
+    ));
+}
+
+#[test]
+fn a_non_u32_index_is_refused_by_name() {
+    assert!(matches!(
+        refusal(Defect::IndexIsF32),
+        IndexBuildError::GatherIndexNotU32 { .. }
+    ));
+}
+
+/// Each of the three literal refusals fires independently and *before* the
+/// domain-shape comparison.
+///
+/// The environment here determines every symbol, so a rule that consulted it
+/// would derive a concrete shape and report a shape disagreement — or worse,
+/// admit the region. Reporting the authored spelling is what keeps sourced
+/// gather support a named refusal rather than an accident of binding.
+#[test]
+fn each_sourced_boundary_and_domain_extent_is_refused_before_the_domain_shape() {
+    assert!(
+        matches!(
+            refusal(Defect::SourcedSource),
+            IndexBuildError::GatherSourceShapeNotLiteral { .. }
+        ),
+        "a sourced source boundary is refused under its own name",
+    );
+    assert!(
+        matches!(
+            refusal(Defect::SourcedIndex),
+            IndexBuildError::GatherIndexShapeNotLiteral { .. }
+        ),
+        "a sourced index boundary is refused under its own name",
+    );
+    assert!(
+        matches!(
+            refusal(Defect::SourcedDomain),
+            IndexBuildError::GatherDomainExtentNotLiteral { .. }
+        ),
+        "a sourced result-domain extent is refused under its own name",
+    );
+}
+
+#[test]
+fn an_axis_outside_the_source_is_refused() {
+    assert!(matches!(
+        refusal(Defect::Axis(7)),
+        IndexBuildError::GatherAxisOutOfRange { source_rank: 1, .. }
+    ));
+}
+
+/// A declared domain that disagrees with the derived result shape is refused.
+#[test]
+fn a_domain_disagreeing_with_the_derived_result_shape_is_refused() {
+    let mut builder = IndexRegionBuilder::new(registry()).unwrap();
+    let d0 = builder
+        .dimension(DomainRole::Parallel, Extent::new(7))
+        .unwrap();
+    let c0 = builder.dimension_expr(d0).unwrap();
+    let source = builder
+        .tensor(
+            TensorRole::Input,
+            F32::resolved_type().clone(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let index = builder
+        .tensor(
+            TensorRole::Input,
+            gather_index_resolved_type(),
+            Shape::from_dims([3]),
+        )
+        .unwrap();
+    let error = builder
+        .gather_read(source, index, &[d0], &[], &[c0], Axis::new(0))
+        .expect_err("a domain of [7] is not the derived [3]");
+    assert!(matches!(error, IndexBuildError::GatherDomainShape { .. }));
+}
+
+// ---------------------------------------------------------------------------
+// The exhaustive view
+// ---------------------------------------------------------------------------
+
+/// Every access answers exactly one arm of the exhaustive view.
+#[test]
+fn the_access_view_is_exhaustive_and_the_arms_are_exclusive() {
+    let region = GatherCase::new(&[4, 5], &[3], 1).build(false).unwrap();
+    let mut direct = 0_usize;
+    let mut gathered = 0_usize;
+    for access in region.accesses() {
+        match access.view() {
+            TensorAccessView::Direct(_) => direct += 1,
+            TensorAccessView::GatherRead(_) => gathered += 1,
+        }
+        assert_ne!(
+            access.view().direct().is_some(),
+            access.view().gather_read().is_some(),
+            "an access is exactly one kind",
+        );
+    }
+    assert_eq!(gathered, 1, "the fixture authors exactly one gather");
+    assert_eq!(direct, 1, "and exactly one direct write");
+}
+
+/// `GatherAccessRule` is inspectable and its whole-region owner is distinct.
+///
+/// The rule vocabulary is what the later verifier reports under; naming it here
+/// keeps the enum reachable from outside the crate and pins that the diagnostic
+/// does not collapse into `CoordinateOutOfBounds`.
+#[test]
+fn the_gather_rule_vocabulary_is_publicly_inspectable() {
+    let rules = [
+        GatherAccessRule::SourceRole,
+        GatherAccessRule::IndexRole,
+        GatherAccessRule::SourceType,
+        GatherAccessRule::IndexType,
+        GatherAccessRule::SourceShapeLiteral,
+        GatherAccessRule::IndexShapeLiteral,
+        GatherAccessRule::SourceRank,
+        GatherAccessRule::Axis,
+        GatherAccessRule::SourceCoordinateRank,
+        GatherAccessRule::IndexCoordinateRank,
+        GatherAccessRule::DomainExtentLiteral,
+        GatherAccessRule::DomainShape,
+        GatherAccessRule::SourceCoordinateScope,
+        GatherAccessRule::IndexCoordinateScope,
+        GatherAccessRule::BoundsResolution,
+    ];
+    for (position, rule) in rules.iter().enumerate() {
+        for other in &rules[position + 1..] {
+            assert_ne!(rule, other, "each rule names one obligation");
+        }
+    }
+}

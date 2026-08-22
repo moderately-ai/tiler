@@ -108,13 +108,19 @@ fn downstream_can_inspect_each_exact_discharged_predicate() {
     assert_eq!(records.len(), 4);
 
     for access in region.accesses() {
-        let expression = access.coordinates().next().unwrap();
+        let expression = access
+            .view()
+            .direct()
+            .expect("a direct access")
+            .coordinates()
+            .next()
+            .unwrap();
         for predicate in [
             IndexDomainPredicate::NonNegative { expression },
             IndexDomainPredicate::LessThanExtent {
                 expression,
                 extent: IndexExtentRef::TensorAxis {
-                    tensor: access.tensor(),
+                    tensor: access.view().direct().expect("a direct access").tensor(),
                     axis: 0,
                 },
             },
@@ -142,9 +148,21 @@ fn lookup_refuses_foreign_subjects_and_predicates() {
     let foreign = verified_copy();
     let local_access = region.accesses().next().unwrap();
     let subject = local_access.id();
-    let local_expression = local_access.coordinates().next().unwrap();
+    let local_expression = local_access
+        .view()
+        .direct()
+        .expect("a direct access")
+        .coordinates()
+        .next()
+        .unwrap();
     let foreign_access = foreign.accesses().next().unwrap();
-    let foreign_expression = foreign_access.coordinates().next().unwrap();
+    let foreign_expression = foreign_access
+        .view()
+        .direct()
+        .expect("a direct access")
+        .coordinates()
+        .next()
+        .unwrap();
 
     assert!(matches!(
         region.index_domain_evidence(
@@ -170,7 +188,11 @@ fn lookup_refuses_foreign_subjects_and_predicates() {
             IndexDomainPredicate::LessThanExtent {
                 expression: local_expression,
                 extent: IndexExtentRef::TensorAxis {
-                    tensor: foreign_access.tensor(),
+                    tensor: foreign_access
+                        .view()
+                        .direct()
+                        .expect("a direct access")
+                        .tensor(),
                     axis: 0,
                 },
             },
@@ -287,6 +309,9 @@ fn unknown_lookup_is_exact_region_owned_and_contains_no_physical_guard() {
         .accesses()
         .find(|access| access.id() != subject && access.mode() == tiler_ir::index::AccessMode::Read)
         .expect("the fixture has a second read")
+        .view()
+        .direct()
+        .expect("a direct access")
         .tensor();
     let IndexDomainPredicate::LessThanExtent { expression, .. } = record.predicate() else {
         panic!("the retained read predicate is its upper bound");

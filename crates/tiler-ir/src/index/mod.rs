@@ -17,8 +17,8 @@ pub use builder::{
     ScalarResults,
 };
 pub use error::{
-    IndexBuildError, IndexEntityKind, IndexLimitKind, IndexRegionBuildError, IndexRegionDiagnostic,
-    ProofResource, VerifiedIndexHandleError,
+    GatherAccessRule, IndexBuildError, IndexEntityKind, IndexLimitKind, IndexRegionBuildError,
+    IndexRegionDiagnostic, ProofResource, VerifiedIndexHandleError,
 };
 pub use handles::{
     DimensionId, IndexExprId, ScalarOperationId, ScalarResultIndex, ScalarValueId, TensorAccessId,
@@ -30,12 +30,15 @@ pub use integer::IndexInteger;
 pub use integer::{IndexIntegerDecodeError, IndexIntegerSign};
 pub use law::IndexRealizationLaw;
 pub use model::{
-    AccessMode, BoundsProofView, CanonicalIndexRegionIdentity, DomainDimensionRef, DomainRole,
-    IndexExprClass, IndexExprRef, IndexExprView, JointPartitionProofView, LinearTermRef,
-    LinearTerms, OutputRef, ReducerBodyOperationRef, ReducerBodyValueDefinitionView,
-    ReducerBodyValueRef, ReductionTraversal, ScalarOperationKindRef, ScalarOperationRef,
-    ScalarReducerBodyRef, ScalarReductionRef, ScalarValueDefinitionView, ScalarValueRef,
-    TensorAccessRef, TensorRef, TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
+    AccessMode, BoundsProofView, CanonicalIndexRegionIdentity, DirectTensorAccessRef,
+    DomainDimensionRef, DomainRole, GatherIndexBoundsProof, GatherIndexBoundsProofIdentity,
+    GatherIndexBoundsProofKind, GatherIndexBoundsResolution, GatherIndexValidationRequirement,
+    GatherIndexValidationRequirementIdentity, GatherReadAccessRef, IndexExprClass, IndexExprRef,
+    IndexExprView, JointPartitionProofView, LinearTermRef, LinearTerms, OutputRef,
+    ReducerBodyOperationRef, ReducerBodyValueDefinitionView, ReducerBodyValueRef,
+    ReductionTraversal, ScalarOperationKindRef, ScalarOperationRef, ScalarReducerBodyRef,
+    ScalarReductionRef, ScalarValueDefinitionView, ScalarValueRef, TensorAccessRef,
+    TensorAccessView, TensorRef, TensorRole, VerifiedIndexRegion, WriteOwnershipProofView,
 };
 pub use predicate::{
     CanonicalIndexDomainObligationKey, DischargedIndexDomainPredicate, IndexDomainEvidence,

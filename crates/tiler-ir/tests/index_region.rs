@@ -1386,7 +1386,11 @@ fn conservative_interval_overlap_uses_finite_proof() {
     // A wholly literal region: no environment exists to consult, so the walked
     // extents and divisors are the program's own.
     assert!(region.accesses().any(|access| {
-        access.bounds_proof()
+        access
+            .view()
+            .direct()
+            .expect("a direct access")
+            .bounds_proof()
             == Some(BoundsProofView::Exhaustive {
                 points: 5,
                 facts: IndexDomainFactSource::Program,
@@ -1479,7 +1483,14 @@ fn partition_ownership(
     region
         .accesses()
         .filter(|access| access.mode() == tiler_ir::index::AccessMode::Write)
-        .map(|access| access.write_ownership_proof().unwrap())
+        .map(|access| {
+            access
+                .view()
+                .direct()
+                .expect("a direct access")
+                .write_ownership_proof()
+                .unwrap()
+        })
         .collect()
 }
 
@@ -1692,7 +1703,11 @@ fn a_zero_extent_partition_member_owns_nothing_and_is_admitted() {
     // The empty root's own bounds obligation is vacuous rather than unproved:
     // it has no point at which a coordinate could leave the boundary.
     assert!(
-        region.accesses().any(|access| access.bounds_proof()
+        region.accesses().any(|access| access
+            .view()
+            .direct()
+            .expect("a direct access")
+            .bounds_proof()
             == Some(BoundsProofView::VacuousEmptyDomain {
                 facts: IndexDomainFactSource::Program,
             })),
@@ -1911,13 +1926,25 @@ fn empty_reduction_read_is_vacuous_and_parallel_write_is_proved() {
     let region = builder.build().unwrap();
     let mut accesses = region.accesses();
     assert_eq!(
-        accesses.next().unwrap().bounds_proof(),
+        accesses
+            .next()
+            .unwrap()
+            .view()
+            .direct()
+            .expect("a direct access")
+            .bounds_proof(),
         Some(BoundsProofView::VacuousEmptyDomain {
             facts: IndexDomainFactSource::Program,
         })
     );
     assert_eq!(
-        accesses.next().unwrap().write_ownership_proof(),
+        accesses
+            .next()
+            .unwrap()
+            .view()
+            .direct()
+            .expect("a direct access")
+            .write_ownership_proof(),
         Some(WriteOwnershipProofView::CoordinatePermutation {
             facts: IndexDomainFactSource::Program,
         })
@@ -2008,7 +2035,11 @@ fn non_permutation_write_retains_bounded_exhaustive_evidence() {
         .find(|access| access.mode() == tiler_ir::index::AccessMode::Write)
         .unwrap();
     assert_eq!(
-        write.write_ownership_proof(),
+        write
+            .view()
+            .direct()
+            .expect("a direct access")
+            .write_ownership_proof(),
         Some(WriteOwnershipProofView::Exhaustive {
             points: 4,
             facts: IndexDomainFactSource::Program,
@@ -2261,7 +2292,11 @@ fn late_zero_domain_is_vacuous_before_cardinality_overflow() {
     builder.output(write, value).unwrap();
     let region = builder.build().unwrap();
     assert!(region.accesses().all(|access| {
-        access.bounds_proof()
+        access
+            .view()
+            .direct()
+            .expect("a direct access")
+            .bounds_proof()
             == Some(BoundsProofView::VacuousEmptyDomain {
                 facts: IndexDomainFactSource::Program,
             })
@@ -2769,14 +2804,22 @@ fn a_contraction_emits_two_operand_projections_dropping_different_coordinates() 
     // contraction does not pay for an exhaustive proof.
     for access in &accesses[..2] {
         assert_eq!(
-            access.bounds_proof(),
+            access
+                .view()
+                .direct()
+                .expect("a direct access")
+                .bounds_proof(),
             Some(BoundsProofView::Interval {
                 facts: IndexDomainFactSource::Program,
             })
         );
     }
     assert_eq!(
-        accesses[2].write_ownership_proof(),
+        accesses[2]
+            .view()
+            .direct()
+            .expect("a direct access")
+            .write_ownership_proof(),
         Some(WriteOwnershipProofView::CoordinatePermutation {
             facts: IndexDomainFactSource::Program,
         })

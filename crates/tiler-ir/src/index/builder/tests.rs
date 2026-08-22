@@ -14,8 +14,9 @@ use super::{
     map_scalar_apply_error, minimum_reducer_body, with_admitted_proof_budget,
 };
 use crate::index::model::{
-    IndexNode, ReducerBodyOperationData, ReducerBodyValueData, ReducerBodyValueSource,
-    ScalarReducerBodyData, WriteOwnershipProof,
+    CompactedAccess, CompactedGatherReadAccess, IndexNode, ReducerBodyOperationData,
+    ReducerBodyValueData, ReducerBodyValueSource, ScalarReducerBodyData, VerifiedAccessData,
+    VerifiedDirectAccessData, WriteOwnershipProof,
 };
 use crate::index::scalar::{ScalarApplyError, ScalarInferenceHostFailure};
 use crate::index::{
@@ -93,6 +94,24 @@ fn reducer_test_registry(calls: Arc<AtomicUsize>) -> FrozenScalarRegistry {
         )
         .unwrap();
     scalar.freeze()
+}
+
+/// Re-stages verified accesses for a re-encoding test.
+///
+/// Encoding reads [`CompactedAccess`], which by design cannot carry a gather's
+/// bounds resolution — the proof binds the identity these tests recompute. The
+/// fixtures here author only direct accesses, so the mapping is total; a gather
+/// fixture would have to re-derive its resolution rather than carry one across.
+fn compacted_accesses(accesses: &[VerifiedAccessData]) -> Vec<CompactedAccess> {
+    accesses
+        .iter()
+        .map(|access| match access {
+            VerifiedAccessData::Direct(direct) => CompactedAccess::Direct(direct.clone()),
+            VerifiedAccessData::GatherRead(_) => {
+                unreachable!("these identity fixtures author only direct accesses")
+            }
+        })
+        .collect()
 }
 
 fn verified_copy() -> VerifiedIndexRegion {
@@ -326,8 +345,14 @@ fn every_coordinate_predicate_retains_exact_inspectable_evidence() {
     assert_eq!(accesses.len(), 2);
     assert_eq!(records.len(), 4);
     for access in accesses {
-        let expression = access.coordinates().next().unwrap();
-        let tensor = access.tensor();
+        let expression = access
+            .view()
+            .direct()
+            .expect("a direct access")
+            .coordinates()
+            .next()
+            .unwrap();
+        let tensor = access.view().direct().expect("a direct access").tensor();
         let expected = [
             IndexDomainPredicate::NonNegative { expression },
             IndexDomainPredicate::LessThanExtent {
@@ -396,7 +421,7 @@ fn retained_ownership_proof_metadata_does_not_enter_region_identity() {
         dimensions: data.dimensions.clone(),
         tensors: data.tensors.clone(),
         expressions: data.expressions.clone(),
-        accesses: data.accesses.clone(),
+        accesses: compacted_accesses(&data.accesses),
         index_domain_evidence: data.index_domain_evidence.clone(),
         unknown_index_domain_predicates: data.unknown_index_domain_predicates.clone(),
         operations: data.operations.clone(),
@@ -411,8 +436,13 @@ fn retained_ownership_proof_metadata_does_not_enter_region_identity() {
     let write = compacted
         .accesses
         .iter_mut()
-        .find(|access| access.mode == crate::index::AccessMode::Write)
-        .expect("the existing copy fixture has one write");
+        .find_map(|access| match access {
+            CompactedAccess::Direct(direct) if direct.mode == crate::index::AccessMode::Write => {
+                Some(direct)
+            }
+            _ => None,
+        })
+        .expect("the existing copy fixture has one direct write");
     write.ownership_proof = Some(WriteOwnershipProof::CoordinatePermutation {
         facts: IndexDomainFactSource::ShapeEnvironment,
     });
@@ -425,8 +455,13 @@ fn retained_ownership_proof_metadata_does_not_enter_region_identity() {
     let write = compacted
         .accesses
         .iter_mut()
-        .find(|access| access.mode == crate::index::AccessMode::Write)
-        .expect("the existing copy fixture has one write");
+        .find_map(|access| match access {
+            CompactedAccess::Direct(direct) if direct.mode == crate::index::AccessMode::Write => {
+                Some(direct)
+            }
+            _ => None,
+        })
+        .expect("the existing copy fixture has one direct write");
     write.ownership_proof = Some(WriteOwnershipProof::Exhaustive {
         points: 987,
         facts: IndexDomainFactSource::ShapeEnvironment,
@@ -446,7 +481,7 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
         dimensions: data.dimensions.clone(),
         tensors: data.tensors.clone(),
         expressions: data.expressions.clone(),
-        accesses: data.accesses.clone(),
+        accesses: compacted_accesses(&data.accesses),
         index_domain_evidence: data.index_domain_evidence.clone(),
         unknown_index_domain_predicates: data.unknown_index_domain_predicates.clone(),
         operations: data.operations.clone(),
@@ -599,12 +634,18 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
 /// The index-expression vocabulary ADR 0107 left unchanged, sized from its
 /// types.
 ///
-/// ADR 0107 admitted `tiler::gather-f32@1` as a semantic family "and as nothing
-/// below it", and the substance of that record is a *negative*: no `IndexNode`
-/// form reads tensor data and no `IndexExprClass` member is data-dependent, so a
-/// gather occurrence reaches no index region. ADR 0108 was returned for revision
-/// and chooses no future representation. These checks pin only that current
-/// no-admission boundary while the complete comparison is redone.
+/// ADR 0107 admitted `tiler::gather-f32@1` as a semantic family, and accepted
+/// ADR 0108 then chose *where* a data-dependent coordinate lives: on the
+/// **access**, as an append-only tagged form, rather than inside an index
+/// expression. The census below holds the second half of that choice. A gather
+/// now does reach an index region — through `IndexRegionBuilder::gather_read` —
+/// but no `IndexNode` form reads tensor data and no `IndexExprClass` member is
+/// data-dependent, and admitting either would move the address out of the
+/// access and into the expression vocabulary ADR 0108 deliberately left closed.
+///
+/// These pins therefore guard a boundary that is now *load-bearing* rather than
+/// provisional: the direct-access verifier guarantees ADR 0046 requires rest on
+/// every index expression remaining a function of the iteration coordinate.
 ///
 /// A negative decision with no check erodes silently, because the way to break
 /// it is to *add* something and nothing is watching the count. These pins are
@@ -633,8 +674,8 @@ fn the_index_expression_vocabulary_admits_no_data_dependent_form() {
     const NODE_FORMS: usize = 5;
     const _: () = assert!(
         variant_count::<IndexNode>() == NODE_FORMS,
-        "ADR 0107 fixes the current no-index-layer admission and ADR 0108 remains \
-proposed after revision; decide and amend the governing contract before widening `IndexNode`."
+        "accepted ADR 0108 sites the data-dependent coordinate on the access, not in an \
+index expression; amend that decision before widening `IndexNode`."
     );
     // Three current reasons, each carrying its own documented meaning. They do
     // not collectively promise eventual closure, and this census neither
@@ -677,5 +718,151 @@ identity cases, exhaustive consumers, and governing decision together."
         variant_count::<IndexNode>(),
         CLASSES.len(),
         variant_count::<IndexDomainUnknownReason>(),
+    );
+}
+
+/// The three access-encoding tags are pairwise distinct and append-only.
+///
+/// Sized from the type: `CompactedAccess` has one variant per admitted access
+/// kind and `AccessMode` one per direct mode, so widening either vocabulary
+/// without extending this census is an array-length build error rather than a
+/// population that silently shrinks while still reporting no collision.
+///
+/// The direct tags are pinned at their exact historical values because moving
+/// either would reinterpret every retained `tiler.index-region.v11` value; the
+/// gather tag is pinned at the next free one because a reader that reaches it
+/// must be reading an access the earlier vocabulary could not express.
+#[test]
+fn every_access_kind_has_one_append_only_encoding_tag() {
+    const DIRECT_MODES: usize = variant_count::<crate::index::AccessMode>();
+    const ACCESS_KINDS: usize = variant_count::<CompactedAccess>();
+    // One tag per direct mode, plus one for each non-direct kind.
+    const TAGS: usize = DIRECT_MODES + ACCESS_KINDS - 1;
+
+    let direct = |mode| {
+        CompactedAccess::Direct(VerifiedDirectAccessData {
+            tensor: 0,
+            mode,
+            domain: Vec::new(),
+            coordinates: Vec::new(),
+            bounds_proof: None,
+            bounds_facts: IndexDomainFactSource::Program,
+            ownership_proof: None,
+        })
+    };
+    let accesses: [CompactedAccess; TAGS] = [
+        direct(crate::index::AccessMode::Read),
+        direct(crate::index::AccessMode::Write),
+        CompactedAccess::GatherRead(Box::new(CompactedGatherReadAccess {
+            source: 0,
+            index: 0,
+            axis: 0,
+            domain: Vec::new(),
+            source_coordinates: Vec::new(),
+            index_coordinates: Vec::new(),
+        })),
+    ];
+
+    let tag = |access: &CompactedAccess| {
+        let region = CompactedRegion {
+            dimensions: Vec::new(),
+            tensors: Vec::new(),
+            expressions: Vec::new(),
+            accesses: vec![access.clone()],
+            index_domain_evidence: Vec::new(),
+            unknown_index_domain_predicates: Vec::new(),
+            operations: Vec::new(),
+            values: Vec::new(),
+            outputs: Vec::new(),
+        };
+        let bytes = encode_region(&region, None, encoded_region_len(&region, None));
+        // The access run follows the domain separator, the absent-environment
+        // marker, and three empty length frames.
+        let start = super::INDEX_REGION_DOMAIN.len() + 1 + 8 * 3 + 8;
+        bytes.as_bytes()[start]
+    };
+
+    let tags: Vec<u8> = accesses.iter().map(tag).collect();
+    assert_eq!(
+        tags,
+        vec![1, 2, 3],
+        "the direct read and write tags are frozen and the gather takes the \
+         next free value",
+    );
+    for (position, left) in tags.iter().enumerate() {
+        for right in &tags[position + 1..] {
+            assert_ne!(
+                left, right,
+                "two access kinds encoding to one tag would make the region \
+                 encoder non-injective",
+            );
+        }
+    }
+}
+
+/// The gather access frame's exact bytes, field by field.
+///
+/// A behavioural comparison cannot catch a *consistent* reordering of this
+/// frame: the source must be F32 and the index U32, so no two constructible
+/// regions differ only by which tensor plays which role, and swapping the two
+/// writes in the encoder relabels every gather identically. Only an exact byte
+/// pin distinguishes "source then index" from "index then source", which is why
+/// the field order is pinned here rather than inferred from a pair of regions.
+#[test]
+fn the_gather_access_frame_pins_its_exact_field_order() {
+    let region = CompactedRegion {
+        dimensions: Vec::new(),
+        tensors: Vec::new(),
+        expressions: Vec::new(),
+        accesses: vec![CompactedAccess::GatherRead(Box::new(
+            CompactedGatherReadAccess {
+                source: 0x0000_0007,
+                index: 0x0000_0009,
+                axis: 0x0000_0002,
+                domain: vec![4, 5],
+                source_coordinates: vec![6],
+                index_coordinates: vec![7, 8],
+            },
+        ))],
+        index_domain_evidence: Vec::new(),
+        unknown_index_domain_predicates: Vec::new(),
+        operations: Vec::new(),
+        values: Vec::new(),
+        outputs: Vec::new(),
+    };
+    let bytes = encode_region(&region, None, encoded_region_len(&region, None));
+    let start = super::INDEX_REGION_DOMAIN.len() + 1 + 8 * 3 + 8;
+    // Tag, two ordinals, and the axis, then three framed runs. Sliced rather
+    // than taken to the end, so the pin describes the access frame alone and
+    // not the empty sections that follow it.
+    let width = 13 + 8 + 4 * 2 + 8 + 4 + 8 + 4 * 2;
+    let access = &bytes.as_bytes()[start..start + width];
+    assert_eq!(
+        access,
+        &[
+            // tag
+            3, //
+            // source tensor ordinal, then index tensor ordinal — distinct
+            // values so a swap moves these bytes
+            0, 0, 0, 7, //
+            0, 0, 0, 9, //
+            // gathered axis
+            0, 0, 0, 2, //
+            // domain: count then members
+            0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 4, 0, 0, 0, 5, //
+            // source coordinates: count then members
+            0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 6, //
+            // index coordinates: count then members
+            0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 7, 0, 0, 0, 8,
+        ],
+        "the gather frame is tag, source, index, axis, domain, source \
+         coordinates, index coordinates, in exactly that order",
+    );
+    // Four empty length frames follow the access run: the index-domain
+    // assessments, operations, values, and outputs.
+    assert_eq!(
+        encoded_region_len(&region, None),
+        start + width + 8 * 4,
+        "the sizing helper accounts for the gather frame exactly as the encoder          writes it; a disagreement would trip `encode_region`'s own capacity          assertion before any identity was returned",
     );
 }

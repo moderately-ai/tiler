@@ -57,7 +57,7 @@ impl IndexRegionBuilder {
         // exclusively: a reduction dimension is never in a write's domain, so
         // testing membership first would rename every unreduced value.
         for output in &self.outputs {
-            let domain = &self.accesses[output.access as usize].domain;
+            let domain = self.accesses[output.access as usize].domain();
             for dimension in &self.values[output.value as usize].free_dimensions {
                 let value = ScalarValueId {
                     owner: self.owner,
@@ -100,7 +100,7 @@ impl IndexRegionBuilder {
         // two regions that mean the same thing would not share an identity.
         let used_parallel: BTreeSet<u32> = reachable_accesses
             .iter()
-            .flat_map(|access| self.accesses[*access as usize].domain.iter().copied())
+            .flat_map(|access| self.accesses[*access as usize].domain().iter().copied())
             .chain(
                 reachable_values
                     .iter()
@@ -151,7 +151,12 @@ impl IndexRegionBuilder {
         let mut roots: BTreeMap<u32, Vec<u32>> = BTreeMap::new();
         for output in &self.outputs {
             roots
-                .entry(self.accesses[output.access as usize].tensor)
+                .entry(
+                    self.accesses[output.access as usize]
+                        .direct()
+                        .expect("an output root is a direct write")
+                        .tensor,
+                )
                 .or_default()
                 .push(output.access);
         }
@@ -192,7 +197,7 @@ impl IndexRegionBuilder {
             let index = bounded_index(i);
             if !reachable_accesses
                 .iter()
-                .any(|a| self.accesses[*a as usize].tensor == index)
+                .any(|a| self.accesses[*a as usize].touches_tensor(index))
             {
                 diagnostics.push(IndexRegionDiagnostic::UnusedInputTensor {
                     tensor: TensorId {
@@ -217,7 +222,16 @@ impl IndexRegionBuilder {
         let mut exhaustive_accesses = Vec::new();
         let partitioned = self.partitioned_outputs();
         for access_index in accesses {
-            let access = &self.accesses[*access_index as usize];
+            // Only a direct access reaches the machinery below. A gather read's
+            // bounds obligation is total and is discharged at compaction by
+            // `derive_gather_index_bounds`; the interval, permutation, and
+            // enumeration arguments here reason about one tensor and one
+            // authored coordinate run, neither of which describes a gather.
+            // Its own obligations are revalidated whole instead.
+            let Some(access) = self.accesses[*access_index as usize].direct() else {
+                self.verify_gather_access(*access_index, diagnostics);
+                continue;
+            };
             let shape = &self.tensors[access.tensor as usize].shape;
             // A partition member owes totality over its own rectangle, not over
             // the boundary, so every per-access ownership demand below is asked
@@ -353,7 +367,9 @@ impl IndexRegionBuilder {
                         continue;
                     };
                     for root in roots {
-                        let access = &self.accesses[*root as usize];
+                        let access = self.accesses[*root as usize]
+                            .direct()
+                            .expect("a partition root is a direct write");
                         let points = u128::from(
                             self.domain_points(&access.domain)
                                 .expect("a scheduled walk has determined domain extents"),
@@ -391,7 +407,9 @@ impl IndexRegionBuilder {
                     }
                 }
                 for access_index in &exhaustive_accesses {
-                    let access = &self.accesses[*access_index as usize];
+                    let access = self.accesses[*access_index as usize]
+                        .direct()
+                        .expect("only a direct access is scheduled for enumeration");
                     let shape = &self.tensors[access.tensor as usize].shape;
                     // An undetermined domain or boundary has no extent vector
                     // to walk. Its exact read predicates remain unknown; a
@@ -452,7 +470,9 @@ impl IndexRegionBuilder {
             }
             let mut blocked_write = false;
             for access_index in &exhaustive_accesses {
-                let access = &self.accesses[*access_index as usize];
+                let access = self.accesses[*access_index as usize]
+                    .direct()
+                    .expect("only a direct access is scheduled for enumeration");
                 if access.mode == AccessMode::Write
                     && !partitioned.contains_key(&access.tensor)
                     && !self
@@ -490,10 +510,119 @@ impl IndexRegionBuilder {
         (predicates, partition_proofs)
     }
 
+    /// Revalidates one gather access against every rule `gather_read` enforces.
+    ///
+    /// This is the *later* owner, not a second copy of the caller's diagnostics:
+    /// the builder's structured errors win for caller input, and this exists so
+    /// that corruption and any future internal construction cannot install a
+    /// gather the authoring path would have refused. Reporting under
+    /// [`IndexRegionDiagnostic::GatherAccess`] rather than
+    /// `CoordinateOutOfBounds` is deliberate — invocation-required data is not
+    /// an observed bad coordinate, and collapsing the two would let a reader
+    /// conclude that some index value was seen out of range.
+    ///
+    /// The literal-shape rules are checked before `DomainShape`, mirroring the
+    /// builder boundary exactly: a sourced boundary must never be reported as a
+    /// shape disagreement derived from an environment this surface refuses to
+    /// consult.
+    fn verify_gather_access(
+        &self,
+        access_index: u32,
+        diagnostics: &mut Vec<IndexRegionDiagnostic>,
+    ) {
+        let gather = self.accesses[access_index as usize]
+            .gather_read()
+            .expect("the caller selected a gather access");
+        let access = TensorAccessId {
+            owner: self.owner,
+            index: access_index,
+        };
+        let mut refuse = |rule| {
+            diagnostics.push(IndexRegionDiagnostic::GatherAccess { access, rule });
+        };
+        let source = &self.tensors[gather.source as usize];
+        let index = &self.tensors[gather.index as usize];
+        if source.role != TensorRole::Input {
+            refuse(GatherAccessRule::SourceRole);
+            return;
+        }
+        if index.role != TensorRole::Input {
+            refuse(GatherAccessRule::IndexRole);
+            return;
+        }
+        if source.value_type != F32::resolved_type().clone() {
+            refuse(GatherAccessRule::SourceType);
+            return;
+        }
+        if index.value_type != gather_index_resolved_type() {
+            refuse(GatherAccessRule::IndexType);
+            return;
+        }
+        let Some(source_shape) = source.shape.as_static() else {
+            refuse(GatherAccessRule::SourceShapeLiteral);
+            return;
+        };
+        let Some(index_shape) = index.shape.as_static() else {
+            refuse(GatherAccessRule::IndexShapeLiteral);
+            return;
+        };
+        if source_shape.rank() == 0 {
+            refuse(GatherAccessRule::SourceRank);
+            return;
+        }
+        if gather.axis as usize >= source_shape.rank() {
+            refuse(GatherAccessRule::Axis);
+            return;
+        }
+        if gather.source_coordinates.len() != source_shape.rank().saturating_sub(1) {
+            refuse(GatherAccessRule::SourceCoordinateRank);
+            return;
+        }
+        if gather.index_coordinates.len() != index_shape.rank() {
+            refuse(GatherAccessRule::IndexCoordinateRank);
+            return;
+        }
+        let mut declared = Vec::with_capacity(gather.domain.len());
+        for dimension in &gather.domain {
+            let Some(extent) = self.dimensions[*dimension as usize].extent.as_static() else {
+                refuse(GatherAccessRule::DomainExtentLiteral);
+                return;
+            };
+            declared.push(extent);
+        }
+        let (Ok(declared_shape), Ok((_, derived))) = (
+            Shape::try_new(declared),
+            gather_result_shape(Axis::new(gather.axis), source_shape, index_shape),
+        ) else {
+            refuse(GatherAccessRule::DomainShape);
+            return;
+        };
+        if declared_shape != derived {
+            refuse(GatherAccessRule::DomainShape);
+            return;
+        }
+        let domain: BTreeSet<u32> = gather.domain.iter().copied().collect();
+        if gather.source_coordinates.iter().any(|coordinate| {
+            !self.expressions[*coordinate as usize]
+                .dimensions
+                .is_subset(&domain)
+        }) {
+            refuse(GatherAccessRule::SourceCoordinateScope);
+            return;
+        }
+        if gather.index_coordinates.iter().any(|coordinate| {
+            !self.expressions[*coordinate as usize]
+                .dimensions
+                .is_subset(&domain)
+        }) {
+            refuse(GatherAccessRule::IndexCoordinateScope);
+        }
+    }
+
     fn cheap_index_domain_predicates(
         &self,
         access_index: u32,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
         points: Option<u64>,
     ) -> Vec<PendingIndexDomainPredicate> {
@@ -583,7 +712,7 @@ impl IndexRegionBuilder {
     /// a symbolic special case.
     pub(super) fn interval_verdict(
         &self,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
     ) -> IntervalVerdict {
         let mut verdict = IntervalVerdict {
@@ -630,7 +759,7 @@ impl IndexRegionBuilder {
     /// ownership it has not shown.
     pub(super) fn coordinates_are_bounded_dimensions(
         &self,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
     ) -> bool {
         if access.coordinates.len() != shape.rank() {
@@ -659,7 +788,7 @@ impl IndexRegionBuilder {
     /// silently changes meaning.
     pub(super) fn bounds_proved_without_enumeration(
         &self,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
     ) -> bool {
         self.interval_verdict(access, shape).interval_proved
@@ -674,7 +803,7 @@ impl IndexRegionBuilder {
     /// one was needed.
     pub(super) fn access_needs_exhaustive_proof(
         &self,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
     ) -> bool {
         !self.bounds_proved_without_enumeration(access, shape)
@@ -807,7 +936,9 @@ impl IndexRegionBuilder {
         owns_alone: bool,
         diagnostics: &mut Vec<IndexRegionDiagnostic>,
     ) -> bool {
-        let access = &self.accesses[access_index as usize];
+        let access = self.accesses[access_index as usize]
+            .direct()
+            .expect("only a direct access is scheduled for enumeration");
         let shape = &self.tensors[access.tensor as usize].shape;
         let Some(elements) = self.boundary_element_count(shape) else {
             if owns_alone {
@@ -1035,7 +1166,11 @@ impl IndexRegionBuilder {
     /// `y[i] = f(i)` over a domain sized `n` covers a boundary sized `n`
     /// whatever value `n` takes, and the environment proves that from the
     /// symbol alone.
-    pub(super) fn write_is_permutation(&self, access: &AccessData, shape: &SourcedShape) -> bool {
+    pub(super) fn write_is_permutation(
+        &self,
+        access: &DirectAccessData,
+        shape: &SourcedShape,
+    ) -> bool {
         if access.coordinates.len() != access.domain.len() || shape.rank() != access.domain.len() {
             return false;
         }
@@ -1142,7 +1277,7 @@ impl IndexRegionBuilder {
     /// [`Self::decide_partition_by_interval`] states why.
     fn write_partition_box(
         &self,
-        access: &AccessData,
+        access: &DirectAccessData,
         shape: &SourcedShape,
     ) -> Option<Vec<(u64, u64)>> {
         if access.coordinates.len() != shape.rank() {
@@ -1218,8 +1353,12 @@ impl IndexRegionBuilder {
         };
         let mut boxes = Vec::with_capacity(roots.len());
         for root in roots {
-            let Some(placed) = self.write_partition_box(&self.accesses[*root as usize], shape)
-            else {
+            let Some(placed) = self.write_partition_box(
+                self.accesses[*root as usize]
+                    .direct()
+                    .expect("a partition root is a direct write"),
+                shape,
+            ) else {
                 return PartitionVerdict::Enumerate;
             };
             boxes.push(placed);
@@ -1275,7 +1414,9 @@ impl IndexRegionBuilder {
         self.boundary_extents(shape)?;
         let elements = self.boundary_element_count(shape)?;
         for root in roots {
-            let access = &self.accesses[*root as usize];
+            let access = self.accesses[*root as usize]
+                .direct()
+                .expect("a partition root is a direct write");
             self.domain_extents(&access.domain)?;
             self.domain_points(&access.domain)?;
             if !self.coordinates_are_evaluable(&access.coordinates) {
@@ -1318,7 +1459,9 @@ impl IndexRegionBuilder {
         let mut seen = vec![0_u64; elements.div_ceil(64)];
         let mut walked = 0_u64;
         for root in roots {
-            let access = &self.accesses[*root as usize];
+            let access = self.accesses[*root as usize]
+                .direct()
+                .expect("a partition root is a direct write");
             let mut reached = BTreeSet::new();
             for coordinate in &access.coordinates {
                 self.mark_expr(*coordinate, &mut reached);
