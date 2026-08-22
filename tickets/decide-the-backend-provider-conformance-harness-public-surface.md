@@ -275,3 +275,23 @@ The unsupported population is unchanged and stays typed as unsupported rather th
 ### Checks run at this base
 
 `cargo nextest run -p tiler-conformance --lib -E 'test(portability)' --no-capture` (census line quoted above, green); `cargo nextest run -p tiler-conformance --test independent_backend --no-capture` (12 of 12 green); plus `tkt lint`, `make citations`, `git diff --check`, and exact-base `tkt guard` recorded on the branch.
+
+## Independent review — 2026-08-22, verdict **RETURN**; re-derive before presenting
+
+Reviewed at the exact packet commit `5b08faae` in a detached worktree. **The reviewer revised its own verdict mid-review**, from *accept with repairs* to *return*, when a counterexample probe surfaced three further public types it had not found. That is the right shape for an independent derivation and the revision is why this is a return.
+
+**What was refuted: the packet's crux.** Its load-bearing step is that *"Tiler cannot run a third party's backend, so a published report can only record what the caller tells it… unavoidable for any published report type"*, and its own table calls that row *"the crux, and it cannot work."* **This repository has confronted that exact problem five times and answered it the opposite way, in public API.** Verified at source by the coordinator at `ba3e9da3`:
+
+- `ConvergenceEvidence::CallerAsserted` — `crates/tiler-ir/src/schedule/synchronization.rs:387`, `pub`, identity tag `0x02`, documented *"Always refused. It exists so that 'the caller said so' is a statement the model can make and the verifier can reject by name, instead of a possibility the type system silently forecloses and no test can drive."*
+- `ToolchainEvidence::ReportedVersions` — the closest analogue: an evidence class whose entire content is self-reported version strings from a toolchain Tiler cannot verify, published safely by bounding what may be concluded (`reuse_scope()` → `SameHost`).
+- `ValueDomainProvenance::CallerDeclaredUnvalidated`, `ConformanceEvidenceClass`, `TargetFactAuthority` — all `pub`, all the same shape.
+
+**The correct rule is narrower than the packet's:** a report is self-certifying only where Tiler can neither re-derive **nor label-and-refuse** what it asserts. A labelled, non-privileged, refusable class is not forgeable — naming your own claim is what disqualifies it.
+
+**Consequence for the option set, which is why this returns rather than being repaired in place.** Candidate B's elimination rested on impossibility; with the crux false it rests only on marginal value. So **B-restricted** — a `ConvergenceEvidence`-shaped conformance vocabulary where a caller's assertion is nameable and non-privileged — is a live, never-enumerated candidate, as is **H**, a documented authoring reference. With two unexamined frontier points, *"one option dominates"* is not established. AGENTS.md governs directly: *"If further reading changes the purpose or option set, repair the ticket and repeat the gate before presenting it."*
+
+**What survived the review intact**, and should not be re-derived: both decisive commands reproduce; both nextest checks reproduce exactly (12/12 green, census 22/81/3); Fact 6's falsification is confirmed in source; and eliminations A, C, D1, D2, and F all survive. **The recommendation is still expected to win** on its itemization leg, which held — but it must win on a ground that holds, and say so against this pattern rather than in ignorance of it.
+
+**Also folded into the same pass:** the "accepted seams" mislabel, the 3,758 → 3,348 line count, the reversal condition's capability/reuse mismatch, and the missing ADR body or carrier.
+
+**Scheduling.** Re-derivation needs `contracts/decisions`, held by the live oracle-identity lane. **Release trigger: that lane merges or stops at a gated boundary.** Do not present to Tom before the re-derivation lands.
