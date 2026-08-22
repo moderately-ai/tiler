@@ -49,3 +49,15 @@ Offering the alternative in physical planning, which is [`offer-the-tiled-contra
 ## Closes when
 
 A contraction with batch axes verifies, lowers, and emits under the cooperative topology with its cover proof strengthened rather than relaxed, the rank refusal still fires for genuinely unsupported shapes, and the identity consequences are derived and recorded.
+
+## Independent derivation — flattening the output is not an escape
+
+Added 2026-08-22 by `worker-attention` after the rank wall was found, because the obvious cheap answer needs closing off before anyone spends a day on it.
+
+**The tempting shortcut.** If the cooperative contraction only accepts a rank-two output, express the attention result `[g, r, t, s]` as `[g * r * t, s]` and hand it the flattened form. No new vocabulary, no widened proof.
+
+**Fact — it is inexpressible, and the reason is the access map rather than the shape.** `ContractionAxisSource` in `crates/tiler-ir/src/schedule/model.rs` has exactly two variants, `Output { position }` and `Contracted { position }`, each naming a **whole axis position** in the output or contracted shape. There is no variant naming a sub-range, a stride, or a quotient of an axis.
+
+**Inference — so the key operand cannot be addressed against a flattened output.** The score structure's key operand is `[g, s, d]`: it reads `g` and `s` and never `r` or `t`. Against `[g * r * t, s]` the coordinate `g` is `flat / (r * t)`, which is not an axis of that shape and therefore not nameable by `Output { position }`. The same holds for the value structure's `[g, s, d]`. Flattening would force the key operand to be materialized across `r` and `t` — which is precisely the broadcast the grouped-query structure exists to avoid, and which `the_score_kernels_key_address_is_independent_of_the_repetition_index` in `crates/tiler-metal/src/tests.rs` now refuses by name.
+
+**Consequence.** The batch axes must be carried as batch axes. This is a genuine vocabulary extension, and the option enumeration this ticket requires should record flattening as eliminated rather than omit it.
