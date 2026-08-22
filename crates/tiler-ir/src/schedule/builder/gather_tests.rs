@@ -600,3 +600,80 @@ fn the_gather_address_read_rule_census_is_exactly_the_accepted_eight() {
         assert_eq!(diagnostic.rule(), rule.rule());
     }
 }
+
+/// A gather's proof and an address read's proof may not share one witness id.
+///
+/// The reachable half of the witness-collision finding, and the one with a
+/// consequence: both records stay individually well formed against their own
+/// positional access — the gather's `GatherSource` proof refines its gather,
+/// the address read's `LinearRange { element_count: 2 }` refines its
+/// replication — so nothing in the refinement pass objects. What breaks is
+/// *resolution*. [`crate::kernel::verify::access_elements`] looks a proof up by
+/// id and takes the first record bearing it, so the address read resolves to
+/// the **gather's** proof and sizes its buffer parameter from
+/// `element_count(source_shape)` — `SOURCE_EXTENT * 3`, or 12884901888
+/// elements, for a read of two addresses. That count reaches the emitted kernel
+/// through `CanonicalPlan::read_elements`, so the collision is not a tidiness
+/// defect.
+///
+/// The sibling collision between two *gathers* cannot get this far: rules 5 and
+/// 8 already close it, which is the subject of the test below.
+#[test]
+fn a_gather_and_an_address_read_may_not_share_one_bounds_witness() {
+    let mut accesses = two_gather_region();
+    // The first gather's own witness, reused by the address read at access 2.
+    accesses[2].bounds = BoundsWitnessId::new(0);
+    let proofs = proofs_for(&accesses);
+    // The two records the collision would make indistinguishable prove
+    // genuinely different domains, so this is not a distinction without a
+    // difference.
+    assert!(matches!(
+        proofs[0].kind,
+        BoundsProofKind::GatherSource { .. }
+    ));
+    assert_eq!(
+        proofs[2].kind,
+        BoundsProofKind::LinearRange { element_count: 2 },
+    );
+    assert_eq!(
+        build_with_proofs(accesses, proofs, 2).expect_err("the colliding region must refuse"),
+        vec![ScheduledRegionDiagnostic::ProofReference],
+    );
+}
+
+/// Two gathers sharing one witness id are refused, and by the association gate.
+///
+/// Pinned because the precedence is not obvious and a later reader could
+/// otherwise assume the distinctness clause is what catches this. It is not:
+/// `verify_gather_address_reads` runs first, and rule 8 resolves the second
+/// gather's proof by id onto the *first* gather's record, whose `index_access`
+/// names a different address read. Rule 5 has already forced those two ordinals
+/// apart — two gathers may not name one address read — so the mismatch is
+/// guaranteed rather than incidental. The witness collision is unreachable here
+/// by pigeonhole, which is exactly why the reachable case above is the one that
+/// carries a consequence.
+#[test]
+fn two_gathers_sharing_one_bounds_witness_are_refused_by_the_association_gate() {
+    let mut accesses = two_gather_region();
+    accesses[1].bounds = BoundsWitnessId::new(0);
+    let proofs = proofs_for(&accesses);
+    assert_eq!(
+        build_with_proofs(accesses, proofs, 2).expect_err("the colliding region must refuse"),
+        vec![ScheduledRegionDiagnostic::GatherAddressRead {
+            source_access: Some(AccessOrdinal::new(1)),
+            index_access: AccessOrdinal::new(3),
+            rule: GatherAddressReadRule::ProofMismatch,
+        }],
+    );
+}
+
+/// Closing the collision leaves the two-gather fixture itself admitted.
+///
+/// The negative control for the two tests above: the distinctness clause must
+/// refuse a reused witness without refusing the distinct witnesses every real
+/// region carries.
+#[test]
+fn distinct_witnesses_across_two_gathers_and_their_address_reads_still_verify() {
+    let verified = build(two_gather_region(), 2).expect("distinct witnesses stay admitted");
+    assert_eq!(verified.requirements().buffer_bindings, 5);
+}

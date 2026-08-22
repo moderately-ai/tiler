@@ -86,6 +86,28 @@ pub(super) fn verify_proof_records(
     let Some((write_proof, read_proofs)) = region.index.bounds_proofs.split_last() else {
         return Err(ScheduledRegionDiagnostic::BoundsProofCount);
     };
+    // A witness id is a *key*, not a label: [`BoundsWitnessId`] is a region-local
+    // *reference* to a proof witness, and both resolvers that follow one back
+    // take the first record bearing it — the pointwise gate's
+    // `gather-address-read-proof-mismatch` rule, and the kernel layer's
+    // `access_elements`, which sizes a buffer parameter from whichever record it
+    // lands on. Two records sharing an id therefore make the later one
+    // unreachable through the only handle anything has on it, while it is still
+    // folded into canonical scheduled-region identity: an admitted region
+    // carrying a proof that nothing can resolve and no rule ever compared.
+    //
+    // Distinctness spans the whole list rather than the read-versus-write pair
+    // it replaces, because the write proof is resolved by id too. One rule for
+    // one invariant: a narrower clause beside this one would suggest that
+    // read-versus-read and read-versus-write are separate properties, and would
+    // leave the two free to drift apart.
+    let mut witness_ids: Vec<_> = region
+        .index
+        .bounds_proofs
+        .iter()
+        .map(|proof| proof.id)
+        .collect();
+    witness_ids.sort_unstable();
     if read_proofs.len() != reads.len()
         || read_proofs.iter().zip(reads).any(|(proof, read)| {
             proof.id != read.bounds
@@ -95,7 +117,7 @@ pub(super) fn verify_proof_records(
         || write_proof.id != write.bounds
         || write_proof.tensor != write.tensor
         || write_proof.component_role != write.component_role
-        || read_proofs.iter().any(|proof| proof.id == write_proof.id)
+        || witness_ids.windows(2).any(|pair| pair[0] == pair[1])
         || region.index.ownership_proof.id != region.schedule.output_owner
         || region.index.ownership_proof.tensor != write.tensor
         || owned_output_positions(region).is_none_or(|output_count| {
@@ -234,6 +256,14 @@ fn bounds_proof_refines_access(
         // paired with a `LinearRange`, or a gather proof paired with any other
         // relation, falls to the wildcard below and is refused as
         // `BoundsProof` rather than admitted on a domain nobody proved.
+        //
+        // That delegation is total only because the witness ids are distinct.
+        // The rule it delegates to resolves a read's record *by id* while this
+        // arm is reached *positionally*, so under a duplicate id the two would
+        // disagree about which record they are talking about and the one this
+        // arm waved through would be a record that rule never examined. The
+        // distinctness clause in `verify_proof_records` above is what closes
+        // that gap; this arm may not be read as discharging anything itself.
         (BoundsProofKind::LinearRange { .. }, LogicalAccess::PartitionedCopySource)
         | (BoundsProofKind::GatherSource { .. }, LogicalAccess::GatherSource { .. }) => true,
         _ => false,

@@ -106,7 +106,8 @@ pub enum ScheduledRegionDiagnostic {
     AccessContract,
     /// The region does not carry exactly one bounds proof per access.
     BoundsProofCount,
-    /// A bounds or ownership proof referenced the wrong access or witness.
+    /// A bounds or ownership proof referenced the wrong access or witness, or
+    /// two bounds proofs claimed one witness identity.
     ProofReference,
     /// A bounds proof did not refine the access it is attached to.
     BoundsProof,
