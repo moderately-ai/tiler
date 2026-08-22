@@ -19,6 +19,8 @@ ADR 0094 decision 7 keeps subgroup width as a literal in the schedule, an equali
 
 It answers the question only for the frozen population below, on the authorized Apple M3 Pro Apple9 host, under the first macOS Metal compile profile's offline flag set. It does not source the M4 Max qualified numerical, grid-axis, or dispatchability rows, and even perfect equality does not remove the prepared-pipeline confirmation.
 
+*(Note added 2026-08-22. This harness now carries a **second** frozen protocol and a second retained record: [`PROTOCOL-2026-08-22-standard-profile.md`](PROTOCOL-2026-08-22-standard-profile.md), which pre-names `tiler.metal.macos-apple9.msl4-0.f32-bf16.v1` as beneficiary and the `Apple M4 Max` / macOS 27.0 `26A5416b` execution row. Everything below this note is the 2026-08-13 protocol and is unchanged; its record stays scoped exactly as it was frozen, and under [ADR 0113](../../../docs/decisions/0113-key-profiles-by-claim-scope-and-carry-host-evidence-as-per-row-provenance.md) component 3 no later decision can rescope it. The two records share this harness, this population, and this metric, and differ only in execution environment — the harness source, the kernels, and `Cargo.lock` were not edited for the second run, which is why both still validate against this tree.)*
+
 ## Frozen before any submission
 
 The matrix, compilation-selection identities, descriptor shapes, source/ABI/oracle subjects, metric, repetitions, environment, custody, and stop conditions are written here and in the ticket, and encoded as `PIPELINES` in [`src/population.rs`](src/population.rs), before the first `newComputePipelineState`. The array is not edited after a width is read.
@@ -75,6 +77,8 @@ DEVELOPER_DIR=/Applications/Xcode.app cargo run --release -- validate results/<d
 No `make` target reaches here, per [`spikes/README.md`](../../README.md).
 
 The coordination host is an M4 Max on a different OS build (`26A5406e`). `cargo test` may run there because it does not read `threadExecutionWidth`. `cargo run -- measure` must not.
+
+*(Scope note added 2026-08-22, correcting nothing above it. That prohibition is this protocol's: a width read on the coordination host may never enter **this** record, because this protocol froze `ssh m3` as its execution host before the run. It was never a statement that the harness may not run elsewhere, and on 2026-08-22 it ran on the coordination host under its own separate frozen protocol, into its own separate record. Two facts in that sentence are also now stale as host description: the coordination host reports build `26A5416b`, not `26A5406e`, and `cargo test` is run as `cargo nextest run` under this repository's runner rule.)*
 
 ## Result
 
