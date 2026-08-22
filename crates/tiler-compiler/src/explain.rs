@@ -6298,36 +6298,62 @@ mod tests {
         );
     }
 
-    /// An undeclared budget and a declared budget of zero encode differently.
+    /// An absent budget and a declared budget of zero encode differently.
     ///
     /// The distinction the whole third verdict rests on: "nothing bounds this
     /// plan" and "this target permits no transient memory at all" are different
     /// claims, and a canonical encoding that conflated them would let a trace
     /// prove the wrong one.
+    ///
+    /// **The two records differ only in the budget field, and that is the whole
+    /// point of the test.** An earlier spelling compared an undeclared record
+    /// against an `Exceeds` one. Those encode to different *outcome* tags, so
+    /// the assertion held on the outcome byte and never reached the budget
+    /// encoding it claimed to guard — removing the presence byte outright left
+    /// that version green. Holding the outcome fixed is what makes the presence
+    /// byte the only thing separating the two encodings.
+    ///
+    /// The second record is one [`ExplainEvent::validate`] refuses, and it is
+    /// constructed deliberately: the guarantee under test belongs to the
+    /// encoder, and an encoder that distinguishes these two cannot be made to
+    /// conflate them by a later change that relaxes validation. The companion
+    /// assertion below records that validation is what makes the shape
+    /// unreachable through the writer today, so neither check stands in for the
+    /// other.
     #[test]
-    fn an_undeclared_budget_does_not_encode_as_a_zero_budget() {
-        let mut undeclared = Vec::new();
-        encode_event(
-            &mut undeclared,
-            &ExplainEvent::TransientResidency {
-                predicate: PredicateKey::new("target.transient-residency").unwrap(),
-                required: Quantity::Bytes(1),
-                available: None,
-                tensors: 1,
-                outcome: ResidencyOutcome::BudgetUndeclared,
-            },
-        );
+    fn an_absent_budget_does_not_encode_as_a_zero_budget() {
+        let residency = |available| ExplainEvent::TransientResidency {
+            predicate: PredicateKey::new("target.transient-residency").unwrap(),
+            required: Quantity::Bytes(1),
+            available,
+            tensors: 1,
+            outcome: ResidencyOutcome::BudgetUndeclared,
+        };
+        let mut absent = Vec::new();
+        encode_event(&mut absent, &residency(None));
         let mut zero = Vec::new();
-        encode_event(
-            &mut zero,
-            &ExplainEvent::TransientResidency {
-                predicate: PredicateKey::new("target.transient-residency").unwrap(),
-                required: Quantity::Bytes(1),
-                available: Some(Quantity::Bytes(0)),
-                tensors: 1,
-                outcome: ResidencyOutcome::Exceeds,
-            },
+        encode_event(&mut zero, &residency(Some(Quantity::Bytes(0))));
+        assert_ne!(
+            absent, zero,
+            "an absent budget and a zero budget encode identically"
         );
-        assert_ne!(undeclared, zero);
+
+        // The same two records, one step further out: the writer refuses the
+        // second, so the conflation is unreachable through the public path as
+        // well as distinguishable in the bytes.
+        let request = request(2.0);
+        let mut writer = ExplainWriter::new(&request).unwrap();
+        let subject = writer
+            .subject(SubjectKind::Candidate, "candidate:residency")
+            .unwrap();
+        assert_eq!(
+            writer.push_detail(
+                RuleRef::builtin("test.rule").unwrap(),
+                vec![subject],
+                residency(Some(Quantity::Bytes(0))),
+                Vec::new(),
+            ),
+            Err(ExplainError::InvalidQuantityRelation)
+        );
     }
 }
