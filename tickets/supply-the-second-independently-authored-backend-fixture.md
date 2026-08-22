@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: [publish-the-backend-provider-conformance-suite]
-scopes: [implementation/build, implementation/conformance]
+scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance, backend-providers, evidence]
@@ -46,6 +46,8 @@ Both Facts were reported by the coordinator's read-only graph sweep and marked u
 ## Scope added — 2026-08-22
 
 `implementation/conformance` was added with `tkt set --add-scope`, and the reason is a dependency fact rather than a preference. `crates/tiler-build`'s manifest lists `tiler-artifact`, `tiler-cache`, `tiler-compiler`, `tiler-ir`, `tiler-metal`, and `tiler-metal-aot` and **neither `tiler-runtime` nor `tiler-reference`**, so no test target under `implementation/build` can route a plan or compare against the oracle: the execution subject and the sole-oracle proof are unreachable from the originally declared scope. `crates/tiler-conformance`'s manifest already lists all ten crates the vertical crosses, including both, so an integration test there reaches every seam with **no manifest and no `Cargo.lock` change**. It is also the crate whose header names its subject as cross-layer executed evidence, and the crate the p1's own reproduce command roots at. No live lane holds `implementation/conformance`: the two other live claims declare `implementation/{ir,reference,compiler}` plus `contracts/*` and `research/target-profiles`.
+
+`implementation/build` was then **removed** rather than left declared. Nothing under `crates/tiler-build/**` was touched — `tkt guard` at the true base reports `affected scopes: implementation/conformance, project/tickets` — and an exclusive scope declared but unused blocks other lanes from a crate this work never enters.
 
 ## Required work
 
