@@ -105,4 +105,59 @@ DEVELOPER_DIR=/Applications/Xcode.app cargo run --release -- validate \
 
 ## Result
 
-Recorded after the run, below this line, and nowhere above it.
+**Measurement, 2026-08-22**, retained at [`results/2026-08-22-apple-m4-max-macos27.0-26A5416b/widths.json`](results/2026-08-22-apple-m4-max-macos27.0-26A5416b/widths.json), SHA-256 `12fe14ebecb64c013d26d680817803fe32c4e4e1c47252307550882e586ba4bf`. The protocol above was committed at `f5a274bafe938b3c3a8df6143db0183b4405d135`, before the harness was run; the record did not exist at that commit.
+
+**Every successful preparation reported `threadExecutionWidth = 32`.** 31 of the 34 frozen identities compiled and prepared; **93 retained widths, all 32**; `all_prepared_widths_equal` is true; `widths_observed` is the single-element set `[32]`. No preparation failed. No modal, first, or fallback value was substituted, and `validate` recomputes the verdict from the observations rather than trusting the recorded one.
+
+**Variance.** Zero, across every axis the population varies. Three independent pipeline constructions per identity produced the same width in all 93 cases, so the per-identity observed set is `{32}` for all 31 prepared identities — there is no spread to summarize. Width did not move with kernel, arithmetic type, control flow, threadgroup shape, threadgroup memory, live-register pressure, or compiler selection, including the case where the prepared maximum threadgroup size is 1.
+
+Environment as recorded by the harness, not transcribed from the pre-registration above:
+
+| Field | Value |
+| --- | --- |
+| OS | macOS 27.0, build `26A5416b` |
+| Architecture | `arm64` |
+| Device | `Apple M4 Max`, `registryID 0x1000004ba` |
+| Apple9 | true |
+| `maxBufferLength` | 22,613,000,192 |
+| Offline compiler / linker | `Apple metal version 32023.883 (metalfe-32023.883)` / `AIR-LLD 32023.883 (metalfe-32023.883) (compatible with legacy metallib linker)` |
+| Xcode / SDK | `Xcode 26.6 Build version 17F113` / `macosx` 26.5, build `25F70` |
+| rustc | `1.99.0-nightly (eff8269f7 2026-07-18)` |
+| Load averages at the run | `{ 4.28 7.17 7.69 }` — recorded, not gated; see the noise-controls section |
+
+The pre-named offline row was met exactly: all five offline fields match the authority ledger's offline compilation table field for field, and the harness observed them itself.
+
+The three optional compile failures are retained as rows and are identical to the first record's, which is expected — they are properties of the language, not of the host: `xor_shuffle_bf16/profile_strict/default` (`bfloat` is outside MSL Table 6.14 for `simd_shuffle_xor`), `add_f64/profile_strict/default` and `xor_shuffle_f64/profile_strict/default` (`'double' is not supported in Metal`).
+
+Corroborating prepared facts, not the metric: descriptor `max_1`/`max_32`/`max_256`/`max_1024`/`max_1024_multiple`/`multiple_of_width` reported `maxTotalThreadsPerThreadgroup` 1/32/256/1024/1024/1024; the source-attributed kernels reported 64 and 32; `threadgroup_mem_f32` reported `staticThreadgroupMemoryLength = 16384`. Width stayed 32 in every one of those cases.
+
+### Checks run, with their results
+
+```text
+cargo run --release -- validate results/2026-08-22-.../widths.json   validation passed
+cargo run --release -- validate results/2026-08-13-.../widths.json   validation passed
+cargo nextest run                                                    10 tests run: 10 passed, 0 skipped
+```
+
+The second line is a control worth stating: the 2026-08-13 M3 Pro record still validates against this tree, which is the evidence that the harness, the kernels, and `Cargo.lock` were not edited for this run. Its custody digest `a918c8e423ccb85f89334ed2f397efc926d89f0622d4ea676cdb44d48bb8ba38` is also the new record's, so both rest on byte-identical harness source.
+
+`cargo test` in the frozen command list was run as `cargo nextest run`, which this repository requires in its place; it executes the same ten tests. `cargo test --doc` reports `no library targets found in package` — this spike is a binary, so there are no doctests to run, and that is the absence of a population rather than a failing check.
+
+### Perturbations of this record, with the text each produced
+
+Perturbing the assertions would show only that they execute. These perturb the **subject** — the retained record — one property at a time, and each was run against a copy:
+
+- **Re-row the record onto the superseded build** (`platform_build` `26A5416b` → `26A5406e`) → `environment digest does not match the recorded environment subject`. This is the load-bearing one for this protocol: the record is bound to the build it was measured on and cannot be silently moved to another execution row.
+- **Substitute one width** (a single preparation `32` → `64`) → `verdict does not match the retained observations; no modal, first, or fallback width is admissible`.
+- **Drop one repetition** → `result population for xor_shuffle_f32/profile_strict/default has 2 preparations, expected 3`.
+- **Claim another device** (`Apple M4 Max` → `Apple M3 Pro`) → `environment digest does not match the recorded environment subject`.
+
+## What this record establishes, and what it does not
+
+**Host-specific — true of this row only.** `threadExecutionWidth` is 32 for all 31 prepared identities of the frozen population on `Apple M4 Max`, macOS 27.0 build `26A5416b`, `arm64`, `apple9`, compiled by metal `32023.883` under the profile-strict selection. This is a fact about that environment row. It is not a fact about `26A5406e`, about `26A5388g`, about any other M4 Max, or about the Apple9 family, and this record is not evidence for a universal it did not measure.
+
+**Portable — established independently of this measurement.** That BF16 and F64 XOR-shuffle do not compile is a language-specification property (MSL Table 6.14; Metal has no `double`), reproduced here rather than discovered here. That a declared width licenses nothing on its own is ADR 0094 decision 7, and it is untouched: every subgroup-using entry still carries an `ObservedEqualsRequired` prepared-width requirement.
+
+**Agreement with the M3 Pro record is a comparison, not a widening.** Both records report 32 over the same 34-identity population under the same harness and the same offline toolchain, differing in device and OS build. Under ADR 0113 that agreement is not a family guarantee and does not merge the populations: two rows scoped exactly are two rows. What it does establish is that no in-family contradiction of the kind ADR 0113 component 5 governs has appeared — component 5's withdrawal path is not triggered.
+
+**Nothing here is declared.** Landing a subgroup row on the beneficiary key is a `crates/tiler-build` change and a Tom-facing packet, per the boundary stated before the run.
