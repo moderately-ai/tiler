@@ -1,7 +1,7 @@
 ---
 id: repair-the-staged-combine-spikes-citations-the-join-made-stale
 title: Repair the staged-combine spike's citations the join made stale
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [join-the-scheduled-region-into-the-contraction-witness, narrow-the-contraction-witness-refusal-to-staging-it-cannot-read, decide-whether-the-citation-checker-should-reach-spike-records]
@@ -9,6 +9,9 @@ scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, spikes, doc-drift]
+claimed_from: todo
+assignee: worker-spikecite
+lease_expires_at: 1787446178
 ---
 ## User-visible outcome
 

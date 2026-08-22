@@ -1,7 +1,7 @@
 ---
 id: admit-a-batched-cooperative-contraction-for-the-attention-structures
 title: Admit a batched cooperative contraction for the attention structures
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [realize-the-attention-contractions-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, offer-the-tiled-contraction-alternative-once-a-width-authority-exists]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, contraction, attention, public-boundary, needs-tom]
+claimed_from: todo
+assignee: worker-batched
+lease_expires_at: 1787446178
 ---
 ## User-visible outcome
 
