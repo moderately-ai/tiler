@@ -21,17 +21,21 @@
 //!
 //! # What is admitted here, and what is deliberately left refused
 //!
-//! **A semantic identity, and nothing below it.** An occurrence of this key states
-//! what the program means. It does not state that any index region can express the
-//! access, and none can: `AccessData` carries one tensor ordinal, so an access has
-//! nowhere to name a second tensor as a coordinate source, and `IndexNode` has no
-//! variant that reads one. ADR 0108 was returned for a complete comparison of a
-//! verified nested read/value expression with an append-only tagged access; no
-//! proposed form has yet shown how it preserves every direct-access verifier
-//! guarantee ADR 0046 requires. The family is therefore registered,
-//! reference-evaluated, and **fails closed at the request boundary**: no lowering
-//! capability resolves it, no fusion role classifies it,
-//! and a program stating one compiles no further than the refusal.
+//! **A semantic identity, with a matching index-region access below it.** An
+//! occurrence of this key states what the program means. The index layer can now
+//! express the access: ADR 0108 is accepted and selected the append-only tagged
+//! form over a verified nested read/value expression, and
+//! [`IndexRegionBuilder::gather_read`](crate::index::IndexRegionBuilder::gather_read)
+//! authors it as one compound access naming both tensors. `IndexNode` still has
+//! no variant that reads tensor data, and deliberately so — the address is a
+//! property of the *access* rather than of an index expression, which is what
+//! leaves every direct-access verifier guarantee ADR 0046 requires unchanged.
+//!
+//! What the index layer admits is narrower than this key: only wholly literal
+//! source, index, and result-domain shapes. The family remains registered and
+//! reference-evaluated, and a program stating one still **fails closed above
+//! the index layer** — no lowering capability resolves it and no fusion role
+//! classifies it — so it compiles no further than that refusal.
 //!
 //! This is a *labelled draft* public boundary under ADR 0075 until Tom accepts its
 //! exact included and excluded surface. Included: the key, the gathered-axis

@@ -634,12 +634,18 @@ fn index_domain_subject_predicate_outcome_and_basis_each_enter_region_identity()
 /// The index-expression vocabulary ADR 0107 left unchanged, sized from its
 /// types.
 ///
-/// ADR 0107 admitted `tiler::gather-f32@1` as a semantic family "and as nothing
-/// below it", and the substance of that record is a *negative*: no `IndexNode`
-/// form reads tensor data and no `IndexExprClass` member is data-dependent, so a
-/// gather occurrence reaches no index region. ADR 0108 was returned for revision
-/// and chooses no future representation. These checks pin only that current
-/// no-admission boundary while the complete comparison is redone.
+/// ADR 0107 admitted `tiler::gather-f32@1` as a semantic family, and accepted
+/// ADR 0108 then chose *where* a data-dependent coordinate lives: on the
+/// **access**, as an append-only tagged form, rather than inside an index
+/// expression. The census below holds the second half of that choice. A gather
+/// now does reach an index region — through `IndexRegionBuilder::gather_read` —
+/// but no `IndexNode` form reads tensor data and no `IndexExprClass` member is
+/// data-dependent, and admitting either would move the address out of the
+/// access and into the expression vocabulary ADR 0108 deliberately left closed.
+///
+/// These pins therefore guard a boundary that is now *load-bearing* rather than
+/// provisional: the direct-access verifier guarantees ADR 0046 requires rest on
+/// every index expression remaining a function of the iteration coordinate.
 ///
 /// A negative decision with no check erodes silently, because the way to break
 /// it is to *add* something and nothing is watching the count. These pins are
@@ -668,8 +674,8 @@ fn the_index_expression_vocabulary_admits_no_data_dependent_form() {
     const NODE_FORMS: usize = 5;
     const _: () = assert!(
         variant_count::<IndexNode>() == NODE_FORMS,
-        "ADR 0107 fixes the current no-index-layer admission and ADR 0108 remains \
-proposed after revision; decide and amend the governing contract before widening `IndexNode`."
+        "accepted ADR 0108 sites the data-dependent coordinate on the access, not in an \
+index expression; amend that decision before widening `IndexNode`."
     );
     // Three current reasons, each carrying its own documented meaning. They do
     // not collectively promise eventual closure, and this census neither
