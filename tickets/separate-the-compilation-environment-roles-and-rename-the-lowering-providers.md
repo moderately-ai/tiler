@@ -1,7 +1,7 @@
 ---
 id: separate-the-compilation-environment-roles-and-rename-the-lowering-providers
 title: Separate the compilation-environment roles and rename the lowering providers
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [package-selected-physical-implementation-provenance-in-artifact-identity, decide-the-artifact-physical-selection-provenance-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [artifact, refactor, public-boundary, provenance]
+claimed_from: todo
+assignee: worker-roles
+lease_expires_at: 1787430750
 ---
 ## User-visible outcome
 
