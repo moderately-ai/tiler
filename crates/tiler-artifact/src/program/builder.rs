@@ -48,18 +48,20 @@ use super::model::{
     ArtifactExecutionPolicy, ArtifactProgramData, ArtifactSchema, BackendEntryRef,
     BackendPayloadDescriptor, BindingData, BindingKind, BindingTargetData, DeferredPredicateData,
     EntryData, ExtentOperandData, InterfaceComponentData, InterfaceEntryData, LaunchData,
-    RoutingPolicy, SchemaVersion, SelectedProvider, StoredBackendEntry, VariantData,
+    RoutingPolicy, SchemaVersion, SelectedLoweringProvider, StoredBackendEntry, VariantData,
     VerifiedArtifactProgram, encode_identity, packaged_entry_positions,
 };
 use super::realization::DeliveredRealizationRecord;
 use super::requirement::RouteRequirement;
 use super::{
     MAX_ABI_EXPRESSIONS, MAX_ARTIFACT_PAYLOADS, MAX_ARTIFACT_VARIANTS, MAX_DEFERRED_PREDICATES,
-    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_ENVIRONMENT_PROVIDERS,
-    MAX_LAUNCH_PRECONDITIONS, MAX_ROUTE_REQUIREMENTS, MAX_SELECTED_PROVIDERS, MAX_VARIANT_ENTRIES,
+    MAX_DELIVERY_POSITIONS, MAX_ENTRY_BINDINGS, MAX_ENTRY_EXTENTS, MAX_LAUNCH_PRECONDITIONS,
+    MAX_OFFERED_LOWERING_PROVIDERS, MAX_OFFERED_PHYSICAL_PROVIDERS, MAX_ROUTE_REQUIREMENTS,
+    MAX_SELECTED_LOWERING_PROVIDERS, MAX_VARIANT_ENTRIES,
 };
 
-/// The complete frozen set of capability providers offered to one compilation.
+/// The complete frozen sets of providers offered to one compilation, held in
+/// the two **roles** a provider can be offered in.
 ///
 /// This is a construction-time authority, not artifact content. It exists so
 /// that a selected provider can be proven to have actually been offered; the
@@ -67,47 +69,101 @@ use super::{
 /// retained by the verified artifact and can therefore never enter its
 /// identity (ADR 0072). Keeping the complete registry snapshot is a
 /// compilation-request concern that lives outside the runtime artifact.
+///
+/// # Why two sets and never one
+///
+/// A provider offered to *lower* a capability and a provider offered to
+/// *implement* a region are two different grants, and an artifact that cannot
+/// tell them apart cannot prove which one admitted the work it packages. The
+/// two roles are therefore stored, bounded, canonicalized, and consulted
+/// independently. There is no union, no default, no one-argument overload, and
+/// no inference from payload, backend, or target profile: a caller states each
+/// role or the build refuses. The same [`ProviderIdentity`] may legally be
+/// offered in both roles, and doing so is two grants rather than one.
+///
+/// Deduplication is within one role only, so offering a provider twice in the
+/// lowering role collapses to one lowering grant and says nothing at all about
+/// its physical role.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompilationEnvironment {
-    available: Vec<ProviderIdentity>,
+    offered_lowering_providers: Vec<ProviderIdentity>,
+    offered_physical_providers: Vec<ProviderIdentity>,
 }
 
 impl CompilationEnvironment {
-    /// Freezes the providers offered to one compilation.
+    /// Freezes both offered provider roles of one compilation.
+    ///
+    /// Each iterator is collected and checked against its **own** bound before
+    /// sorting and deduplication, so repeated input identities spend input
+    /// capacity rather than amplifying it; they still collapse in the canonical
+    /// slice the accessors return.
     ///
     /// # Errors
     ///
-    /// Returns [`ArtifactBuildError::StructuralLimit`] beyond the governed
-    /// environment bound.
+    /// Returns [`ArtifactBuildError::StructuralLimit`] naming
+    /// [`ArtifactLimitKind::OfferedLoweringProviders`] or
+    /// [`ArtifactLimitKind::OfferedPhysicalProviders`] beyond the governed
+    /// bound for that role, so a caller learns which role it overran.
     pub fn new(
-        providers: impl IntoIterator<Item = ProviderIdentity>,
+        offered_lowering_providers: impl IntoIterator<Item = ProviderIdentity>,
+        offered_physical_providers: impl IntoIterator<Item = ProviderIdentity>,
     ) -> Result<Self, ArtifactBuildError> {
-        let mut available: Vec<ProviderIdentity> = providers.into_iter().collect();
-        limit(
-            available.len(),
-            MAX_ENVIRONMENT_PROVIDERS,
-            ArtifactLimitKind::EnvironmentProviders,
-        )?;
-        available.sort_unstable_by(|left, right| {
-            (left.namespace(), left.name(), left.revision()).cmp(&(
-                right.namespace(),
-                right.name(),
-                right.revision(),
-            ))
-        });
-        available.dedup();
-        Ok(Self { available })
+        Ok(Self {
+            offered_lowering_providers: canonical_offered_role(
+                offered_lowering_providers,
+                MAX_OFFERED_LOWERING_PROVIDERS,
+                ArtifactLimitKind::OfferedLoweringProviders,
+            )?,
+            offered_physical_providers: canonical_offered_role(
+                offered_physical_providers,
+                MAX_OFFERED_PHYSICAL_PROVIDERS,
+                ArtifactLimitKind::OfferedPhysicalProviders,
+            )?,
+        })
     }
 
-    /// Returns the offered providers in canonical order.
+    /// Returns the offered **lowering** providers in canonical order.
     #[must_use]
-    pub fn available(&self) -> &[ProviderIdentity] {
-        &self.available
+    pub fn offered_lowering_providers(&self) -> &[ProviderIdentity] {
+        &self.offered_lowering_providers
     }
 
-    fn offers(&self, provider: &ProviderIdentity) -> bool {
-        self.available.contains(provider)
+    /// Returns the offered **physical** providers in canonical order.
+    #[must_use]
+    pub fn offered_physical_providers(&self) -> &[ProviderIdentity] {
+        &self.offered_physical_providers
     }
+
+    /// Whether this environment granted `provider` **lowering** authority.
+    ///
+    /// Reads one role. A provider present only in the physical set is not
+    /// offered here, which is the whole point of keeping the sets apart.
+    fn offers_lowering(&self, provider: &ProviderIdentity) -> bool {
+        self.offered_lowering_providers.contains(provider)
+    }
+}
+
+/// Bounds one offered role's collected input, then canonicalizes it.
+///
+/// Shared by both roles so the ordering rule and the pre-canonicalization
+/// bound cannot drift apart between them; the limit kind is a parameter
+/// because the refusal must still name the role that overran.
+fn canonical_offered_role(
+    providers: impl IntoIterator<Item = ProviderIdentity>,
+    bound: usize,
+    kind: ArtifactLimitKind,
+) -> Result<Vec<ProviderIdentity>, ArtifactBuildError> {
+    let mut offered: Vec<ProviderIdentity> = providers.into_iter().collect();
+    limit(offered.len(), bound, kind)?;
+    offered.sort_unstable_by(|left, right| {
+        (left.namespace(), left.name(), left.revision()).cmp(&(
+            right.namespace(),
+            right.name(),
+            right.revision(),
+        ))
+    });
+    offered.dedup();
+    Ok(offered)
 }
 
 /// The unforgeable ordered semantic interface every packaged variant realizes.
@@ -218,7 +274,7 @@ pub struct ArtifactProgramBuilder {
     retained: super::retained::RetainedShapeEnvironment,
     interface: SemanticInterface,
     environment: CompilationEnvironment,
-    providers: Vec<SelectedProvider>,
+    providers: Vec<SelectedLoweringProvider>,
     payloads: Vec<BackendPayloadDescriptor>,
     payload_content: Vec<Option<PayloadContent>>,
     expressions: Vec<ExprNode>,
@@ -286,32 +342,33 @@ impl ArtifactProgramBuilder {
         })
     }
 
-    /// Records one capability provider the packaged plan actually reached.
+    /// Records one **lowering** capability provider the packaged plan reached.
     ///
     /// # Errors
     ///
-    /// Returns [`ArtifactBuildError::ProviderNotAvailable`] when the
-    /// compilation environment never offered the provider,
-    /// [`ArtifactBuildError::DuplicateSelectedProvider`] for a repeated
+    /// Returns [`ArtifactBuildError::LoweringProviderNotOffered`] when the
+    /// compilation environment never offered the provider **in its lowering
+    /// role** — including when it offered it only as a physical implementer,
+    /// [`ArtifactBuildError::DuplicateSelectedLoweringProvider`] for a repeated
     /// selection, or a structural-limit error.
-    pub fn select_provider(
+    pub fn select_lowering_provider(
         &mut self,
-        selected: SelectedProvider,
+        selected: SelectedLoweringProvider,
     ) -> Result<(), ArtifactBuildError> {
-        if !self.environment.offers(&selected.provider) {
-            return Err(ArtifactBuildError::ProviderNotAvailable {
+        if !self.environment.offers_lowering(&selected.provider) {
+            return Err(ArtifactBuildError::LoweringProviderNotOffered {
                 provider: Box::new(selected.provider),
             });
         }
         if self.providers.contains(&selected) {
-            return Err(ArtifactBuildError::DuplicateSelectedProvider {
+            return Err(ArtifactBuildError::DuplicateSelectedLoweringProvider {
                 provider: Box::new(selected.provider),
             });
         }
         limit(
             self.providers.len().saturating_add(1),
-            MAX_SELECTED_PROVIDERS,
-            ArtifactLimitKind::SelectedProviders,
+            MAX_SELECTED_LOWERING_PROVIDERS,
+            ArtifactLimitKind::SelectedLoweringProviders,
         )?;
         self.providers.push(selected);
         Ok(())

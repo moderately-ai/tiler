@@ -554,7 +554,11 @@ fn dotted_operation_boundaries_reach_proof_subject_and_envelope_association() {
     assert_ne!(left.canonical_identity(), right.canonical_identity());
     assert_ne!(left.canonical_identity(), pair.canonical_identity());
     assert_ne!(right.canonical_identity(), pair.canonical_identity());
-    assert_eq!(pair.selected_providers().len(), 2, "both subjects package");
+    assert_eq!(
+        pair.selected_lowering_providers().len(),
+        2,
+        "both subjects package"
+    );
 
     let left_sidecar = sidecar(&left);
     let right_sidecar = sidecar(&right);

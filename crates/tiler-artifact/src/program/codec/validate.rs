@@ -70,7 +70,9 @@ pub(super) fn validate(envelope: &ArtifactEnvelope) -> Result<(), ArtifactCodecE
         return Err(obligation(ArtifactDiagnostic::EmptyPortfolio));
     }
     if envelope.providers().is_empty() {
-        return Err(obligation(ArtifactDiagnostic::MissingSelectedProvider));
+        return Err(obligation(
+            ArtifactDiagnostic::MissingSelectedLoweringProvider,
+        ));
     }
     if envelope.features() != envelope.derived_features() {
         return Err(ArtifactCodecError::DeclaredFeatureMismatch);

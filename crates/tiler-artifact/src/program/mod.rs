@@ -91,7 +91,7 @@
 //!     EntrySpec, FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef,
 //!     HonouringMeans, LaunchSpec, LoweringCapabilitySubject, NumericalDimension,
 //!     NumericalObligationKey, PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
-//!     ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
+//!     ScalarArithmeticSubject, SchemaVersion, SelectedLoweringProvider, SemanticOccurrence,
 //!     TargetEvidenceDeclaration,
 //!     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! };
@@ -338,9 +338,9 @@
 //! # let program = plan.build()?;
 //! // Package that verified program as a one-variant artifact portfolio.
 //! let provider = ProviderIdentity::new("tiler", "elementwise-multiply", 1)?;
-//! let environment = CompilationEnvironment::new([provider.clone()])?;
+//! let environment = CompilationEnvironment::new([provider.clone()], [])?;
 //! let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
-//! artifact.select_provider(SelectedProvider {
+//! artifact.select_lowering_provider(SelectedLoweringProvider {
 //!     provider,
 //!     capability: LoweringCapabilitySubject {
 //!         family: CapabilityFamilyKey::new("index-access")?,
@@ -481,7 +481,7 @@
 //!
 //! assert_eq!(artifact.variants().len(), 1);
 //! assert_eq!(artifact.delivery_positions(), 1);
-//! assert_eq!(artifact.selected_providers().len(), 1);
+//! assert_eq!(artifact.selected_lowering_providers().len(), 1);
 //! // The published interface is the semantic subject's, in its declared order.
 //! let keys: Vec<String> = artifact
 //!     .inputs()
@@ -646,7 +646,7 @@ pub use model::{
     ArtifactOutputRef, ArtifactSchema, BackendEntryRef, BackendPayloadDescriptor, BindingKind,
     BindingRef, BindingTarget, CanonicalArtifactProgramIdentity, DeferredPredicateRef, EntryRef,
     InterfaceComponentRef, LoweringCapabilitySubject, RecordedArtifactEnvelopeDigest,
-    RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion, SelectedProvider,
+    RecordedArtifactProgramIdentity, RoutingPolicy, SchemaVersion, SelectedLoweringProvider,
     StageDependencyReason, VariantRef, VerifiedArtifactProgram,
 };
 pub use realization::codec::{
@@ -753,10 +753,22 @@ pub const MAX_ARTIFACT_PAYLOADS: usize = 16;
 /// stated anyway rather than left implicit, because a decoder must refuse a
 /// hostile count before it allocates against it.
 pub const MAX_DELIVERY_POSITIONS: usize = MAX_ARTIFACT_PAYLOADS;
-/// Maximum selected capability providers admitted by one artifact program.
-pub const MAX_SELECTED_PROVIDERS: usize = 256;
-/// Maximum available providers admitted by one compilation environment.
-pub const MAX_ENVIRONMENT_PROVIDERS: usize = 4_096;
+/// Maximum selected lowering-capability providers admitted by one artifact
+/// program.
+pub const MAX_SELECTED_LOWERING_PROVIDERS: usize = 256;
+/// Maximum offered lowering providers admitted by one compilation environment.
+///
+/// Counted against the caller's collected input, before canonicalization, so
+/// repeated identities spend capacity rather than amplifying it. Independent of
+/// [`MAX_OFFERED_PHYSICAL_PROVIDERS`]: the two roles are separate authorities
+/// and no sum-of-both bound exists.
+pub const MAX_OFFERED_LOWERING_PROVIDERS: usize = 4_096;
+/// Maximum offered physical providers admitted by one compilation environment.
+///
+/// Equal in value to [`MAX_OFFERED_LOWERING_PROVIDERS`] and deliberately a
+/// separate name: a refusal must tell a caller *which* offered role it
+/// overran, and the two bounds may move apart without one editing the other.
+pub const MAX_OFFERED_PHYSICAL_PROVIDERS: usize = 4_096;
 /// Maximum deferred feasibility predicates admitted by one plan variant.
 pub const MAX_DEFERRED_PREDICATES: usize = 64;
 /// Maximum live-device route requirements admitted by one plan variant.

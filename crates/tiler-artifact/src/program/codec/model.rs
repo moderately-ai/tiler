@@ -39,7 +39,7 @@ use super::super::keys::{BackendEntryKey, FeasibilityRuleSetRef, TargetProfileRe
 use super::super::model::{
     ArtifactProgramData, ArtifactSchema, BackendPayloadDescriptor, BindingData,
     CanonicalArtifactProgramIdentity, DeferredPredicateData, ExtentOperandData, InterfaceEntryData,
-    LaunchData, RoutingPolicy, SchemaVersion, SelectedProvider, StageDependencyData,
+    LaunchData, RoutingPolicy, SchemaVersion, SelectedLoweringProvider, StageDependencyData,
     StageDependencyReason, VariantData, canonical_deferred_order, canonical_precondition_order,
     encode_identity, stage_key,
 };
@@ -540,7 +540,7 @@ pub(crate) struct ArtifactEnvelope {
     pub(super) semantic: SemanticSubjects,
     pub(super) inputs: Vec<InterfaceEntryData<InputKey>>,
     pub(super) outputs: Vec<InterfaceEntryData<OutputKey>>,
-    pub(super) providers: Vec<SelectedProvider>,
+    pub(super) providers: Vec<SelectedLoweringProvider>,
     pub(super) payloads: Vec<BackendPayloadDescriptor>,
     /// Section references of each payload, aligned with `payloads`.
     pub(super) payload_content: Vec<Option<PayloadSections>>,
@@ -574,7 +574,7 @@ impl ArtifactEnvelope {
         } = project_carried(data);
         let (expressions, expression_of) = project_expressions(data);
         let mut providers = data.providers.clone();
-        providers.sort_unstable_by_key(SelectedProvider::canonical_key);
+        providers.sort_unstable_by_key(SelectedLoweringProvider::canonical_key);
 
         let mut variants = Vec::with_capacity(data.variants.len());
         for (declared, variant) in data.variants.iter().enumerate() {
@@ -745,7 +745,7 @@ impl ArtifactEnvelope {
     }
 
     /// Returns the selected capability providers in canonical key order.
-    pub(crate) fn providers(&self) -> &[SelectedProvider] {
+    pub(crate) fn providers(&self) -> &[SelectedLoweringProvider] {
         &self.providers
     }
 

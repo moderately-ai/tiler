@@ -285,7 +285,7 @@ fn a_non_canonical_provider_order_is_rejected() {
     assert_eq!(
         decode(&bytes),
         Err(ArtifactCodecError::NonCanonicalOrder {
-            subject: OrderedSubject::Provider,
+            subject: OrderedSubject::SelectedLoweringProvider,
         }),
     );
 }

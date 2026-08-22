@@ -2,7 +2,7 @@
 
 use super::super::super::ScalarArithmeticSubject;
 use super::super::super::{
-    AbiRoot, ArtifactProgramBuilder, CompilationEnvironment, SelectedProvider,
+    AbiRoot, ArtifactProgramBuilder, CompilationEnvironment, SelectedLoweringProvider,
     VerifiedArtifactProgram,
 };
 use super::artifacts::{declare_realization_at, formulas, lowering_subject, payload, variant};
@@ -423,11 +423,11 @@ impl PointwiseWidth {
         let program = self.program(&semantic);
         let provider =
             ProviderIdentity::new("tiler-test", "pointwise-scale-bias", 1).expect("provider");
-        let environment = CompilationEnvironment::new([provider.clone()]).expect("environment");
+        let environment = CompilationEnvironment::new([provider.clone()], []).expect("environment");
         let mut draft =
             ArtifactProgramBuilder::new(&semantic, environment).expect("artifact builder");
         draft
-            .select_provider(SelectedProvider {
+            .select_lowering_provider(SelectedLoweringProvider {
                 provider,
                 capability: lowering_subject("tiler", "pointwise-scale-bias", 1),
                 capability_revision: 1,

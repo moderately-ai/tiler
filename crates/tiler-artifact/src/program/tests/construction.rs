@@ -120,7 +120,7 @@ fn builds_a_verified_single_variant_artifact() {
     let artifact = default_artifact();
     assert_eq!(artifact.variants().len(), 1);
     assert_eq!(artifact.payloads().len(), 1);
-    assert_eq!(artifact.selected_providers().len(), 1);
+    assert_eq!(artifact.selected_lowering_providers().len(), 1);
     assert_eq!(artifact.schema(), super::super::ArtifactSchema::GOVERNED);
     assert_eq!(
         artifact.routing_policy(),

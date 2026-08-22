@@ -8,7 +8,7 @@ use super::super::{
 use super::{
     Formulas, OTHER_SCALE_BITS, SCALE_BITS, declare_realization, entry, formulas, fused_program,
     lowering_provider, payload, prepared_requirement, profile, selection, semantic_program,
-    variant,
+    spare_provider, variant,
 };
 use tiler_ir::program::VerifiedKernelProgram;
 use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
@@ -17,16 +17,61 @@ use tiler_ir::program::abi::{ExprNode, TargetPropertyRequirementRelation};
 // Negative tests, one per insertion-time rule
 // -------------------------------------------------------------------------
 
+/// The membership half of the rule: a provider this environment never offered
+/// **at all** cannot be attributed work.
+///
+/// The refused identity differs from the offered one only in its revision, so a
+/// membership predicate that compared anything less than the whole identity
+/// would admit it.
 #[test]
-fn rejects_a_provider_the_environment_never_offered() {
+fn rejects_a_lowering_provider_the_environment_never_offered() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)]).unwrap();
+    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     assert_eq!(
-        draft.select_provider(selection(lowering_provider(9))),
-        Err(ArtifactBuildError::ProviderNotAvailable {
+        draft.select_lowering_provider(selection(lowering_provider(9))),
+        Err(ArtifactBuildError::LoweringProviderNotOffered {
             provider: Box::new(lowering_provider(9)),
         }),
+    );
+}
+
+/// The **role** half of the same rule, and the reason the two offered sets are
+/// never unioned: `spare_provider(7)` *is* offered here, as a physical
+/// implementer, and is still refused lowering authority it was never granted.
+///
+/// Distinct from the membership case above on purpose. Its identity shares
+/// nothing but a namespace with the offered lowering provider, so this stays
+/// green under a weakened membership predicate and reddens only when the
+/// physical set starts answering a lowering question.
+#[test]
+fn rejects_a_provider_offered_only_in_the_physical_role() {
+    let semantic = semantic_program();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], [spare_provider(7)]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    assert_eq!(
+        draft.select_lowering_provider(selection(spare_provider(7))),
+        Err(ArtifactBuildError::LoweringProviderNotOffered {
+            provider: Box::new(spare_provider(7)),
+        }),
+    );
+}
+
+/// The positive control the two refusals above need: offering one identity in
+/// both roles is two grants, and the lowering one is honoured.
+///
+/// Without this, a `select_lowering_provider` that refused *everything* would
+/// satisfy both negative cases.
+#[test]
+fn a_provider_offered_in_both_roles_keeps_its_lowering_authority() {
+    let semantic = semantic_program();
+    let environment =
+        CompilationEnvironment::new([lowering_provider(1)], [lowering_provider(1)]).unwrap();
+    let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
+    assert_eq!(
+        draft.select_lowering_provider(selection(lowering_provider(1))),
+        Ok(()),
     );
 }
 
@@ -73,9 +118,11 @@ fn accepts_a_complete_prepared_entry_requirement() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider.clone())).unwrap();
+    draft
+        .select_lowering_provider(selection(provider.clone()))
+        .unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let mut spec = variant(&formulas, descriptor, b"fused");
@@ -218,9 +265,9 @@ fn rejects_a_duplicate_plan_variant() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     draft
@@ -255,9 +302,11 @@ fn refuses_a_second_variant_declaring_a_different_target_profile() {
     let provider = lowering_provider(1);
 
     let assemble = |declared: TargetProfileRef| {
-        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-        draft.select_provider(selection(provider.clone())).unwrap();
+        draft
+            .select_lowering_provider(selection(provider.clone()))
+            .unwrap();
         let primary = draft.push_payload(payload(0xa1)).unwrap();
         let spare = draft.push_payload(payload(0xb1)).unwrap();
         let formulas = formulas(&mut draft);
@@ -294,7 +343,7 @@ fn refuses_a_second_variant_declaring_a_different_target_profile() {
 #[test]
 fn rejects_a_repeated_payload_descriptor() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)]).unwrap();
+    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     draft.push_payload(payload(0xa1)).unwrap();
     assert_eq!(
@@ -306,7 +355,7 @@ fn rejects_a_repeated_payload_descriptor() {
 #[test]
 fn rejects_a_mistyped_expression_operand() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)]).unwrap();
+    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let number = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();
     assert_eq!(
@@ -342,9 +391,9 @@ fn with_default_draft<T>(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     case(&mut draft, &formulas, descriptor, &program)

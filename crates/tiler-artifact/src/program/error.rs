@@ -45,8 +45,8 @@ pub enum ArtifactEntityKind {
     Entry,
     /// One ABI binding of an executable entry.
     Binding,
-    /// One selected capability provider.
-    Provider,
+    /// One selected lowering-capability provider.
+    LoweringProvider,
     /// One live-device route requirement of a plan variant.
     RouteRequirement,
 }
@@ -75,10 +75,12 @@ pub enum ArtifactLimitKind {
     Payloads,
     /// Delivery-position count of one artifact program.
     DeliveryPositions,
-    /// Selected capability-provider count of one artifact program.
-    SelectedProviders,
-    /// Available provider count of one compilation environment.
-    EnvironmentProviders,
+    /// Selected lowering-capability-provider count of one artifact program.
+    SelectedLoweringProviders,
+    /// Offered lowering-provider count of one compilation environment.
+    OfferedLoweringProviders,
+    /// Offered physical-provider count of one compilation environment.
+    OfferedPhysicalProviders,
     /// Deferred feasibility predicate count of one plan variant.
     DeferredPredicates,
     /// Live-device route-requirement count of one plan variant.
@@ -309,15 +311,23 @@ pub enum ArtifactBuildError {
         /// Refused byte value.
         value: u8,
     },
-    /// A provider was selected that the compilation environment never offered.
+    /// A lowering provider was selected that the compilation environment never
+    /// offered **in its lowering role**.
     ///
-    /// An artifact may only attribute work to authority it was actually given.
-    ProviderNotAvailable {
+    /// An artifact may only attribute work to authority it was actually given,
+    /// and a provider offered only as a physical implementer was never given
+    /// lowering authority. The two offered sets are never unioned, so this
+    /// refuses a cross-role selection exactly as it refuses an absent one.
+    LoweringProviderNotOffered {
         /// Rejected provider identity.
         provider: Box<ProviderIdentity>,
     },
-    /// An identical provider selection is already recorded.
-    DuplicateSelectedProvider {
+    /// An identical selected lowering-provider row is already recorded.
+    ///
+    /// The predicate is equality of the complete row, not of the provider
+    /// identity alone: one provider may legally appear in distinct selected
+    /// lowering-capability rows.
+    DuplicateSelectedLoweringProvider {
         /// Repeated provider identity.
         provider: Box<ProviderIdentity>,
     },
@@ -818,8 +828,8 @@ impl Error for ArtifactBuildError {
             | Self::EmptyKey { .. }
             | Self::KeyTooLong { .. }
             | Self::NoncanonicalKeyByte { .. }
-            | Self::ProviderNotAvailable { .. }
-            | Self::DuplicateSelectedProvider { .. }
+            | Self::LoweringProviderNotOffered { .. }
+            | Self::DuplicateSelectedLoweringProvider { .. }
             | Self::DuplicatePayload
             | Self::IncompletePayloadProvenance { .. }
             | Self::OperandType { .. }
@@ -962,7 +972,7 @@ pub enum ArtifactDiagnostic {
     /// The artifact packages no plan variant.
     EmptyPortfolio,
     /// The artifact attributes its plan to no selected provider.
-    MissingSelectedProvider,
+    MissingSelectedLoweringProvider,
     /// An expression node is not reachable from any declared use site.
     UnusedExpression,
     /// A backend payload descriptor realizes no executable entry.
@@ -1070,7 +1080,7 @@ impl ArtifactDiagnostic {
     pub const fn rule(&self) -> &'static str {
         match self {
             Self::EmptyPortfolio => "empty-portfolio",
-            Self::MissingSelectedProvider => "missing-selected-provider",
+            Self::MissingSelectedLoweringProvider => "missing-selected-lowering-provider",
             Self::UnusedExpression => "unused-expression",
             Self::UnusedPayload => "unused-payload",
             Self::DuplicateBackendEntry => "duplicate-backend-entry",
@@ -1103,7 +1113,7 @@ impl Error for ArtifactDiagnostic {
         match self {
             Self::DeliveredRealization { cause } => Some(cause),
             Self::EmptyPortfolio
-            | Self::MissingSelectedProvider
+            | Self::MissingSelectedLoweringProvider
             | Self::UnusedExpression
             | Self::UnusedPayload
             | Self::DuplicateBackendEntry

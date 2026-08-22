@@ -24,7 +24,7 @@ fn identity_ignores_payload_and_provider_declaration_order() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let providers = [lowering_provider(1), lowering_provider(2)];
-    let environment = CompilationEnvironment::new(providers.iter().cloned()).unwrap();
+    let environment = CompilationEnvironment::new(providers.iter().cloned(), []).unwrap();
 
     let alternate = fused_program(&semantic, OTHER_SCALE_BITS);
 
@@ -32,10 +32,10 @@ fn identity_ignores_payload_and_provider_declaration_order() {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
         let (first, second) = if forward { (0, 1) } else { (1, 0) };
         draft
-            .select_provider(selection(providers[first].clone()))
+            .select_lowering_provider(selection(providers[first].clone()))
             .unwrap();
         draft
-            .select_provider(selection(providers[second].clone()))
+            .select_lowering_provider(selection(providers[second].clone()))
             .unwrap();
         let (primary, spare) = if forward {
             let primary = draft.push_payload(payload(0x01)).unwrap();
@@ -66,11 +66,13 @@ fn identity_ignores_expression_assembly_order() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
 
     let assemble = |reversed: bool| {
         let mut draft = ArtifactProgramBuilder::new(&semantic, environment.clone()).unwrap();
-        draft.select_provider(selection(provider.clone())).unwrap();
+        draft
+            .select_lowering_provider(selection(provider.clone()))
+            .unwrap();
         let descriptor = draft.push_payload(payload(0xa1)).unwrap();
         // Assemble the identical formulas through two different node orders.
         let formulas = if reversed {
@@ -100,7 +102,7 @@ fn identity_ignores_expression_assembly_order() {
 #[test]
 fn the_expression_arena_is_canonically_deduplicated() {
     let semantic = semantic_program();
-    let environment = CompilationEnvironment::new([lowering_provider(1)]).unwrap();
+    let environment = CompilationEnvironment::new([lowering_provider(1)], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
     let first = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();
     let second = draft.push_root(AbiRoot::UnsignedLiteral(4)).unwrap();

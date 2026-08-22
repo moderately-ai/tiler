@@ -126,9 +126,9 @@ fn two_route_requirements_naming_one_subject_are_refused() {
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let id = draft
@@ -179,15 +179,17 @@ fn a_route_requirement_needs_a_variant_this_builder_minted() {
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
     let mut first = {
-        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
         ArtifactProgramBuilder::new(&semantic, environment).unwrap()
     };
     let mut second = {
-        let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+        let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
         ArtifactProgramBuilder::new(&semantic, environment).unwrap()
     };
     for draft in [&mut first, &mut second] {
-        draft.select_provider(selection(provider.clone())).unwrap();
+        draft
+            .select_lowering_provider(selection(provider.clone()))
+            .unwrap();
     }
     let descriptor = first.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut first);

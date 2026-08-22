@@ -119,7 +119,7 @@
 //! #     FactSourceProvenance, FeasibilityRuleSetKey, FeasibilityRuleSetRef, HonouringMeans,
 //! #     LaunchSpec, LoweringCapabilitySubject, NumericalDimension, NumericalObligationKey,
 //! #     PayloadDigest, PolicyLocus, ProvenanceIdentity, RepresentationKey,
-//! #     ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
+//! #     ScalarArithmeticSubject, SchemaVersion, SelectedLoweringProvider, SemanticOccurrence,
 //! #     TargetEvidenceDeclaration,
 //! #     TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef, VariantSpec,
 //! # };
@@ -363,9 +363,9 @@
 //! # let program = plan.build()?;
 //! # // Package that verified program as a one-variant artifact portfolio.
 //! # let provider = ProviderIdentity::new("tiler", "elementwise-multiply", 1)?;
-//! # let environment = CompilationEnvironment::new([provider.clone()])?;
+//! # let environment = CompilationEnvironment::new([provider.clone()], [])?;
 //! # let mut artifact = ArtifactProgramBuilder::new(&semantic, environment)?;
-//! # artifact.select_provider(SelectedProvider {
+//! # artifact.select_lowering_provider(SelectedLoweringProvider {
 //! #     provider,
 //! #     capability: LoweringCapabilitySubject {
 //! #         family: CapabilityFamilyKey::new("index-access")?,

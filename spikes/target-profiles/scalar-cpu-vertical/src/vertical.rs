@@ -51,7 +51,7 @@ use tiler_artifact::program::{
     NumericalObligationKey, NumericalPermission, PayloadContent, PayloadEntryMapping,
     PayloadMetadata, PayloadPlatform, PayloadProvenance, PolicyLocus, ProvenanceIdentity,
     RecordedArtifactIdentityError, RecordedArtifactProgramIdentity, RepresentationKey,
-    ScalarArithmeticSubject, SchemaVersion, SelectedProvider, SemanticOccurrence,
+    ScalarArithmeticSubject, SchemaVersion, SelectedLoweringProvider, SemanticOccurrence,
     TargetEvidenceDeclaration, TargetProfileDescriptorDigest, TargetProfileKey, TargetProfileRef,
     ToolComponent, VariantSpec, VerifiedArtifactProgram, overlapping_behaviour,
 };
@@ -301,7 +301,7 @@ fn assemble(
     for selected in plan.selected_capabilities() {
         let subject = selected.subject();
         builder
-            .select_provider(SelectedProvider {
+            .select_lowering_provider(SelectedLoweringProvider {
                 provider: selected.provider().clone(),
                 capability: LoweringCapabilitySubject {
                     family: CapabilityFamilyKey::new(subject.family().key_token())

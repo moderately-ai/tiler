@@ -193,9 +193,9 @@ pub(crate) fn with_claim_draft(
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let compilation = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let compilation = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let content = claim_payload_content(b"fused", CLAIM_OBJECT);
     let payload = if carried {
         draft
@@ -273,9 +273,9 @@ pub(crate) fn two_entry_claim(
     let semantic = semantic_program();
     let program = partial_window_program(&semantic);
     let provider = lowering_provider(1);
-    let compilation = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let compilation = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, compilation).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
 
     let mut entries = Vec::new();
     let mut receipts = Vec::new();

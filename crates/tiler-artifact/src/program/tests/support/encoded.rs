@@ -3,8 +3,8 @@
 use super::super::super::{
     AbiRoot, ArtifactExecutionPolicy, ArtifactProgramBuilder, BackendEntryKey, BackendEntryRef,
     BackendKey, BackendPayloadDescriptor, BindingKind, BindingSpec, CompilationEnvironment,
-    EntrySpec, LaunchSpec, PayloadDigest, RepresentationKey, SchemaVersion, SelectedProvider,
-    VariantSpec, VerifiedArtifactProgram,
+    EntrySpec, LaunchSpec, PayloadDigest, RepresentationKey, SchemaVersion,
+    SelectedLoweringProvider, VariantSpec, VerifiedArtifactProgram,
 };
 use super::artifacts::{declare_realization, lowering_subject, profile, rules};
 use super::graphs::{strict, strict_contract};
@@ -441,10 +441,10 @@ pub(crate) fn strict_affine_u4_dequantize_artifact() -> VerifiedArtifactProgram 
     let program = strict_affine_u4_dequantize_program(&semantic);
     let provider =
         ProviderIdentity::new("tiler-test", "strict-affine-u4-dequantize", 1).expect("provider");
-    let environment = CompilationEnvironment::new([provider.clone()]).expect("environment");
+    let environment = CompilationEnvironment::new([provider.clone()], []).expect("environment");
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).expect("artifact builder");
     draft
-        .select_provider(SelectedProvider {
+        .select_lowering_provider(SelectedLoweringProvider {
             provider,
             capability: lowering_subject("tiler", "strict-affine-u4-dequantize", 1),
             capability_revision: 1,

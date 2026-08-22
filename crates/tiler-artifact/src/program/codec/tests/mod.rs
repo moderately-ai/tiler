@@ -32,7 +32,7 @@ mod provenance;
 mod round_trip;
 mod route_requirements;
 mod section_descriptors;
-mod selected_providers;
+mod selected_lowering_providers;
 mod subgroup;
 mod support;
 mod vocabularies;

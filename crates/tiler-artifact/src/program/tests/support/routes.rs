@@ -45,9 +45,9 @@ pub(crate) fn requiring_artifact(requirements: &[RouteRequirement]) -> VerifiedA
     let semantic = semantic_program();
     let program = fused_program(&semantic, SCALE_BITS);
     let provider = lowering_provider(1);
-    let environment = CompilationEnvironment::new([provider.clone()]).unwrap();
+    let environment = CompilationEnvironment::new([provider.clone()], []).unwrap();
     let mut draft = ArtifactProgramBuilder::new(&semantic, environment).unwrap();
-    draft.select_provider(selection(provider)).unwrap();
+    draft.select_lowering_provider(selection(provider)).unwrap();
     let descriptor = draft.push_payload(payload(0xa1)).unwrap();
     let formulas = formulas(&mut draft);
     let variant = draft
