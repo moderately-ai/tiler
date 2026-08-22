@@ -561,16 +561,40 @@ fn a_forged_row_count_is_refused_before_allocation() {
 /// subsets of those bytes, so such a limit would name a refusal no admitted
 /// stream can reach. The check is a census of the limit vocabulary's own
 /// rendering rather than prose, so a kind added later fails here.
+///
+/// The census is `CodecLimitKind::ALL`, whose length comes from
+/// `variant_count`, so a widened vocabulary is a build error at that array
+/// before it is a silent pass here. Coverage needs distinctness as well as
+/// length — an array repeating one kind and omitting another has the same
+/// length — so that is asserted first and the negative claim rests on it.
+///
+/// The predicate is the *class* rather than the two spellings the packet
+/// eliminated by name, `PhysicalSelectionIdentityBytes` and
+/// `SelectedPhysicalProvenanceBytes`: matching only those two would let a third
+/// spelling of the same budget pass. It is not a second budget authority, which
+/// the packet forbids — nothing here declares or bounds anything.
+///
+/// What it would take for this to say *no*: add a byte budget whose name
+/// carries both `Physical` and `Bytes` and list it in `ALL`. Of the kinds
+/// declared today, `SelectedPhysicalImplementations` is the only one naming
+/// `Physical` and it is a count, and no `*Bytes` kind names a physical
+/// subject, so the predicate is currently satisfied by every kind rather than
+/// vacuous.
 #[test]
 fn no_physical_specific_decoder_byte_budget_is_declared() {
-    for kind in [
-        CodecLimitKind::SelectedPhysicalImplementations,
-        CodecLimitKind::ManifestBytes,
-    ] {
+    let mut distinct = CodecLimitKind::ALL.to_vec();
+    distinct.sort_unstable();
+    distinct.dedup();
+    assert_eq!(
+        distinct.len(),
+        CodecLimitKind::ALL.len(),
+        "the census must name each declared budget once, not repeat one and drop another",
+    );
+
+    for kind in CodecLimitKind::ALL {
         let rendered = kind.to_string();
         assert!(
-            !rendered.contains("PhysicalSelectionIdentityBytes")
-                && !rendered.contains("SelectedPhysicalProvenanceBytes"),
+            !(rendered.contains("Physical") && rendered.contains("Bytes")),
             "{rendered} names a physical byte budget the header admission makes unreachable",
         );
     }

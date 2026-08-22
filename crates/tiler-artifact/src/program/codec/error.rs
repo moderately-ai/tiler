@@ -311,6 +311,56 @@ pub(crate) enum CodecLimitKind {
     TargetObligations,
 }
 
+impl CodecLimitKind {
+    /// Every codec budget this vocabulary declares.
+    ///
+    /// Sized from the type, so a widened enum is a build error at this array
+    /// rather than a census that silently stops covering its domain. The length
+    /// alone does not prove coverage — an array that repeats one kind and omits
+    /// another is the same length — so the test that reads this also proves the
+    /// entries distinct, and length-from-the-type plus distinctness is what
+    /// makes it exactly the declared vocabulary.
+    ///
+    /// Test visibility only: the inhabitants are an enumeration no caller of
+    /// the error type owes a reader, and `crate::lib` keeps `variant_count`
+    /// behind `cfg(test)` rather than widening this crate's nightly surface.
+    #[cfg(test)]
+    pub(super) const ALL: [Self; std::mem::variant_count::<Self>()] = [
+        Self::EnvelopeBytes,
+        Self::ManifestBytes,
+        Self::SectionBytes,
+        Self::Sections,
+        Self::Features,
+        Self::InterfaceEntries,
+        Self::SubjectBytes,
+        Self::Variants,
+        Self::Entries,
+        Self::StageDependencies,
+        Self::EntryBindings,
+        Self::EntryExtents,
+        Self::BindingTargetKeys,
+        Self::Expressions,
+        Self::Payloads,
+        Self::DeliveryPositions,
+        Self::PlanDeterminismScopeCells,
+        Self::TargetEnvironmentDescriptorBytes,
+        Self::SelectedLoweringProviders,
+        Self::SelectedPhysicalImplementations,
+        Self::DeferredPredicates,
+        Self::RouteRequirements,
+        Self::RouteFeaturePayloadBytes,
+        Self::LaunchPreconditions,
+        Self::ShapeRank,
+        Self::TextBytes,
+        Self::PayloadSourceBytes,
+        Self::PayloadEntryMappings,
+        Self::EntryTransports,
+        Self::ProvenanceComponents,
+        Self::ProvenanceFlags,
+        Self::TargetObligations,
+    ];
+}
+
 impl fmt::Display for CodecLimitKind {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(formatter, "{self:?}")

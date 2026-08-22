@@ -433,9 +433,13 @@ pub(super) const PHYSICAL_SELECTION_RUN_TAG: u8 = 0x01;
 /// Named so the exact-capacity expressions below read as the encoding they
 /// mirror. This is **not** a second definition of the framing rule — `push_len`
 /// remains its sole writer. What holds this constant to that writer is the
-/// `debug_assert_eq!` each presized encoder ends with, which fails the moment a
-/// capacity expression and the bytes actually written disagree, rather than the
-/// two agreeing only by inspection.
+/// equality each presized encoder ends with, which fails the moment a sizing
+/// expression and the bytes actually written disagree, rather than the two
+/// agreeing only by inspection. Where such a sizing feeds only a capacity
+/// reservation a mismatch costs a reallocation, and the equality is a
+/// `debug_assert_eq!`; where it is also *written to the wire* as a length
+/// prefix a mismatch misframes the stream, and the equality holds in every
+/// build.
 pub(super) const LENGTH_BYTES: usize = 8;
 
 /// Byte length one [`push_slice`] call appends for a run of `len` bytes.
@@ -896,6 +900,17 @@ impl SelectedPhysicalImplementation {
     /// a multi-MiB identity from being copied twice on the publication path:
     /// the run encoder needs the key's length before its bytes, and
     /// [`Self::canonical_key_bytes`] supplies that arithmetically.
+    ///
+    /// That arithmetic length is then written to the wire as this row's length
+    /// prefix, so a disagreement between it and the bytes written below
+    /// misframes the encoded run rather than merely mis-sizing an allocation.
+    /// The closing equality therefore holds in **every** build. Its cost is one
+    /// further [`Self::canonical_key_bytes`] call per row — a fixed count of
+    /// length reads over already-allocated runs, copying none of them — which
+    /// is unrelated to the multi-MiB copy the borrowed-buffer shape above
+    /// exists to avoid. Left to a `debug_assert!`, a release encoder would
+    /// instead emit a misframed stream that its own decoder rejects under
+    /// whichever unrelated budget the shifted cursor happens to violate.
     pub(super) fn push_canonical_key(&self, bytes: &mut Vec<u8>) {
         let Self {
             region_occurrence,
@@ -911,7 +926,7 @@ impl SelectedPhysicalImplementation {
         push_slice(bytes, provider.name().as_bytes());
         bytes.extend_from_slice(&provider.revision().to_be_bytes());
         bytes.push(proposal_kind.tag());
-        debug_assert_eq!(
+        assert_eq!(
             bytes.len() - before,
             self.canonical_key_bytes(),
             "the physical row encoder and its sizing helper are one definition",
@@ -924,8 +939,9 @@ impl SelectedPhysicalImplementation {
     /// because its callers are a capacity reservation and a ceiling proof that
     /// both run *before* the bytes exist — deriving it the other way would copy
     /// a possibly multi-MiB identity to learn how long it is. The
-    /// `debug_assert_eq!` in [`Self::push_canonical_key`] is what holds the two
-    /// to one definition rather than inspection.
+    /// `assert_eq!` in [`Self::push_canonical_key`] is what holds the two to one
+    /// definition rather than inspection, in release as well as debug, because
+    /// this value is also the row's on-wire length prefix.
     ///
     /// Saturating: every addend is the length of an already-allocated run, so
     /// the sum cannot overflow on a host holding the row, and a saturated total
@@ -979,7 +995,7 @@ pub(super) fn push_selected_physical_implementation_run(
         push_len(bytes, row.canonical_key_bytes());
         row.push_canonical_key(bytes);
     }
-    debug_assert_eq!(
+    assert_eq!(
         bytes.len() - before,
         selected_physical_implementation_run_bytes(rows),
         "the physical-selection run encoder and its sizing helper are one definition",
@@ -992,7 +1008,10 @@ pub(super) fn push_selected_physical_implementation_run(
 /// the sum cannot overflow `usize` on a host that is already holding the rows,
 /// and a saturated total is still a truthful *minimum* for the only caller that
 /// compares it against a ceiling. `push_selected_physical_implementation_run`'s
-/// `debug_assert_eq!` is what keeps this equal to what is actually written.
+/// `assert_eq!` is what keeps this equal to what is actually written. That
+/// equality holds in every build too: the caller reading it is an identity
+/// ceiling proof, so an under-reporting sum would admit an artifact past
+/// `MAX_ARTIFACT_IDENTITY_BYTES` rather than merely mis-size a buffer.
 pub(super) fn selected_physical_implementation_run_bytes(
     rows: &[SelectedPhysicalImplementation],
 ) -> usize {
