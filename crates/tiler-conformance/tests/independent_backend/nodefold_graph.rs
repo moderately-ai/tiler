@@ -172,6 +172,13 @@ pub(crate) enum GraphRefusal {
     /// earlier ordinal. Without it the table is not evaluable in one pass, and
     /// a graph carrying a cycle would be discovered — if at all — as a read of
     /// a value nothing has computed.
+    ///
+    /// **`node` is the reading site, and for the store plan that site is one
+    /// past the last ordinal.** The store plan is evaluated after every node
+    /// and has no ordinal of its own, so reporting it as `nodes.len()` says
+    /// "after the table" in the same coordinate the rest of the message uses. A
+    /// reader who looks up that ordinal will not find a node, which is the
+    /// correct answer rather than a rotted one.
     ForwardReference {
         /// The node whose operand reaches forward.
         node: u32,
@@ -179,6 +186,9 @@ pub(crate) enum GraphRefusal {
         operand: u32,
     },
     /// An operand's node produces a kind the consuming node cannot take.
+    ///
+    /// `node` follows the convention [`Self::ForwardReference`] states: the
+    /// store plan is reported at the ordinal one past the table.
     OperandTypeDisagreement {
         /// The node whose operand disagrees.
         node: u32,

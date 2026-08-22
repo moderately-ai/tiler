@@ -50,10 +50,10 @@ use tiler_runtime::load::{
     TargetEnvironmentObservation, TargetEnvironmentSupport, TargetPropertyRequest,
 };
 
-use crate::backend::{
+use crate::nodefold::{
     BACKEND_KEY, F32_BYTES, REPRESENTATION_KEY, SOLE_DELIVERY, WORKGROUP_THREADS,
 };
-use crate::graph::{Graph, GraphEntry, GraphRefusal, Node, NodeKind, decode};
+use crate::nodefold_graph::{Graph, GraphEntry, GraphRefusal, Node, NodeKind, decode};
 
 /// What a caller does when this backend's execution host is unavailable.
 ///

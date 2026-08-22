@@ -70,8 +70,20 @@
 //! interpreter under `STRICT_F32` can say — a second author reaching the same
 //! declaration is evidence about the profile vocabulary, not about copying.
 //! Both also declare a non-identity transport mapping; see
-//! [`backend::transport_of`] for why that hazard is real and why finding it
+//! [`nodefold::transport_of`] for why that hazard is real and why finding it
 //! twice is the stronger reading.
+//!
+//! ## Why every file here is named something no other file in the tree is
+//!
+//! `make citations` resolves a pinned citation by unique path suffix, so a new
+//! file whose basename an existing file already carries silently turns every
+//! citation written against that basename ambiguous — and the checker then
+//! stops checking them. This suite's first `oracle.rs` did exactly that to
+//! `crates/tiler-reference/src/oracle.rs`, and ten live citations across four
+//! research documents failed the gate on it. The four files a directory-based
+//! integration test may name freely are therefore named for this backend and
+//! checked against `git ls-files` for uniqueness; `main.rs` is Cargo's and is
+//! already a suffix twenty-seven tracked files carry.
 //!
 //! ## What this suite does not claim
 //!
@@ -84,10 +96,10 @@
 //! coverage is twelve `f32` patterns of one pointwise program, which is a
 //! bounded refutation attempt and not certification of anything.
 
-mod adapter;
-mod backend;
-mod graph;
-mod oracle;
+mod nodefold;
+mod nodefold_adapter;
+mod nodefold_graph;
+mod workload;
 
 use std::collections::BTreeMap;
 
@@ -102,12 +114,12 @@ use tiler_compiler::target::{DTypeDispatchability, TargetRequest};
 use tiler_ir::semantic::SemanticProgram;
 use tiler_runtime::load::DTypeDispatch;
 
-use adapter::{
+use nodefold_adapter::{
     Behaviour, Binding, Evaluation, ExecutionOutcome, HostPolicy, HostRequest, Lifetime, RouteEnd,
     agrees_with_reference, apply_policy, route,
 };
-use backend::{EntryPerturbation, NodefoldRefusal, Produced};
-use graph::{GRAPH_DOMAIN, GRAPH_SCHEMA, GraphRefusal};
+use nodefold::{EntryPerturbation, NodefoldRefusal, Produced};
+use nodefold_graph::{GRAPH_DOMAIN, GRAPH_SCHEMA, GraphRefusal};
 
 /// The two subjects this suite exists to exercise.
 ///
@@ -145,7 +157,7 @@ const SUBJECT_COVERAGE: [(Subject, &str, &str); 2] = [
 
 /// Compiles this fixture's program against this backend's own declared profile.
 fn compiled(program: &SemanticProgram) -> Compilation {
-    let profile = backend::nodefold_profile().expect("the nodefold profile declares");
+    let profile = nodefold::nodefold_profile().expect("the nodefold profile declares");
     compile(CompileRequest::new(
         program,
         NumericalContract::STRICT_F32,
@@ -174,7 +186,7 @@ fn profile_ref(compilation: &Compilation) -> TargetProfileRef {
 
 /// Returns what this backend's target family states about dtype dispatch.
 fn dtype_dispatch() -> BTreeMap<ArithmeticType, DTypeDispatch> {
-    backend::DTYPE_ROWS
+    nodefold::DTYPE_ROWS
         .into_iter()
         .map(|(dtype, verdict)| {
             let arithmetic = match dtype {
@@ -197,9 +209,9 @@ fn plan(compilation: &Compilation) -> PlanAlternative<'_> {
 }
 
 fn produce(perturbation: EntryPerturbation) -> Result<Produced, NodefoldRefusal> {
-    let program = oracle::program();
+    let program = workload::program();
     let compilation = compiled(&program);
-    backend::assemble(&program, plan(&compilation), perturbation)
+    nodefold::assemble(&program, plan(&compilation), perturbation)
 }
 
 fn sound() -> Produced {
@@ -212,14 +224,14 @@ fn expected_identity(produced: &Produced) -> RecordedArtifactProgramIdentity {
 }
 
 fn run(behaviour: Behaviour, produced: &Produced) -> RouteEnd {
-    let program = oracle::program();
+    let program = workload::program();
     let compilation = compiled(&program);
     route(
         &produced.bytes,
         &expected_identity(produced),
         profile_ref(&compilation),
         dtype_dispatch(),
-        &oracle::OPERANDS,
+        &workload::OPERANDS,
         behaviour,
     )
 }
@@ -231,7 +243,7 @@ fn run(behaviour: Behaviour, produced: &Produced) -> RouteEnd {
 /// Every fact below was derived from the plan, and none was offered by this backend.
 #[test]
 fn the_assembled_artifact_carries_facts_this_backend_never_supplied() {
-    let program = oracle::program();
+    let program = workload::program();
     let compilation = compiled(&program);
     let produced = sound();
     let decoded = decode_artifact(&produced.bytes)
@@ -245,7 +257,7 @@ fn the_assembled_artifact_carries_facts_this_backend_never_supplied() {
     let variant = decoded.variants().next().expect("one packaged variant");
     assert_eq!(
         variant.target_profile().key.as_str(),
-        backend::PROFILE_KEY,
+        nodefold::PROFILE_KEY,
         "the artifact names the profile this backend declared and the plan compiled against",
     );
     assert_eq!(
@@ -367,10 +379,10 @@ fn an_unmapped_symbol_is_caught_by_this_backend_and_by_nothing_above_it() {
 /// leaving a census that has quietly stopped covering its own domain.
 #[test]
 fn every_named_graph_refusal_is_reachable_from_bytes() {
-    let program = oracle::program();
+    let program = workload::program();
     let compilation = compiled(&program);
-    let emitted = backend::emitted_object(plan(&compilation)).expect("the plan translates");
-    graph::decode(&emitted).expect("the emitted graph decodes");
+    let emitted = nodefold::emitted_object(plan(&compilation)).expect("the plan translates");
+    nodefold_graph::decode(&emitted).expect("the emitted graph decodes");
 
     // The four framing refusals, reached by perturbing the emitted bytes.
     let mut foreign = emitted.clone();
@@ -383,7 +395,7 @@ fn every_named_graph_refusal_is_reachable_from_bytes() {
     // The first node tag of a hand-built graph, which is the one byte that
     // cannot be reached by perturbing a structure — every other tag value is
     // either valid or unreachable behind an earlier check.
-    let mut unknown_tag = graph::encode(&minimal(|_| {}));
+    let mut unknown_tag = nodefold_graph::encode(&minimal(|_| {}));
     unknown_tag[first_node_tag(&minimal(|_| {}))] = 0xff;
 
     let observed = [
@@ -392,22 +404,22 @@ fn every_named_graph_refusal_is_reachable_from_bytes() {
         refusal(&emitted[..emitted.len() - 1]),
         refusal(&trailing),
         refusal(&unknown_tag),
-        refusal(&graph::encode(&minimal(|entry| entry.symbol.clear()))),
-        refusal(&graph::encode(&minimal(|entry| {
-            entry.nodes[1] = graph::Node::IndexAdd(0, 9);
+        refusal(&nodefold_graph::encode(&minimal(|entry| entry.symbol.clear()))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.nodes[1] = nodefold_graph::Node::IndexAdd(0, 9);
         }))),
-        refusal(&graph::encode(&minimal(|entry| {
-            entry.nodes[3] = graph::Node::F32Multiply(0, 0);
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.nodes[3] = nodefold_graph::Node::F32Multiply(0, 0);
         }))),
-        refusal(&graph::encode(&minimal(|entry| entry.store.buffer = 9))),
-        refusal(&graph::encode(&minimal(|entry| {
-            entry.nodes[3] = graph::Node::Load {
+        refusal(&nodefold_graph::encode(&minimal(|entry| entry.store.buffer = 9))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.nodes[3] = nodefold_graph::Node::Load {
                 buffer: 9,
                 offset: 0,
             };
         }))),
-        refusal(&graph::encode(&minimal(|entry| entry.buffers.clear()))),
-        refusal(&graph::encode(&minimal(|entry| entry.store.buffer = 0))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| entry.buffers.clear()))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| entry.store.buffer = 0))),
     ];
 
     let mut distinct: Vec<std::mem::Discriminant<GraphRefusal>> = Vec::new();
@@ -430,7 +442,7 @@ fn every_named_graph_refusal_is_reachable_from_bytes() {
 
 /// Decodes one byte run that must not decode, and returns what refused it.
 fn refusal(bytes: &[u8]) -> GraphRefusal {
-    match graph::decode(bytes) {
+    match nodefold_graph::decode(bytes) {
         Err(refusal) => refusal,
         Ok(_) => panic!("a byte run built to be refused decoded instead"),
     }
@@ -441,30 +453,30 @@ fn refusal(bytes: &[u8]) -> GraphRefusal {
 /// Built here rather than emitted so a case can move exactly one field. The
 /// unedited value decodes, which the first assertion below relies on: an edit
 /// that stopped mattering would otherwise look like a reached refusal.
-fn minimal(edit: impl FnOnce(&mut graph::GraphEntry)) -> graph::Graph {
-    let mut entry = graph::GraphEntry {
+fn minimal(edit: impl FnOnce(&mut nodefold_graph::GraphEntry)) -> nodefold_graph::Graph {
+    let mut entry = nodefold_graph::GraphEntry {
         symbol: "nodefold.minimal".to_owned(),
         canonical_nan: 0x7fc0_0000,
         buffers: vec![
-            graph::GraphBuffer {
+            nodefold_graph::GraphBuffer {
                 write: false,
                 element_count: 4,
             },
-            graph::GraphBuffer {
+            nodefold_graph::GraphBuffer {
                 write: true,
                 element_count: 4,
             },
         ],
         nodes: vec![
-            graph::Node::InvocationIndex,
-            graph::Node::IndexConstant(4),
-            graph::Node::IndexLessThan(0, 1),
-            graph::Node::Load {
+            nodefold_graph::Node::InvocationIndex,
+            nodefold_graph::Node::IndexConstant(4),
+            nodefold_graph::Node::IndexLessThan(0, 1),
+            nodefold_graph::Node::Load {
                 buffer: 0,
                 offset: 0,
             },
         ],
-        store: graph::StorePlan {
+        store: nodefold_graph::StorePlan {
             guard: Some(2),
             buffer: 1,
             offset: 0,
@@ -472,7 +484,7 @@ fn minimal(edit: impl FnOnce(&mut graph::GraphEntry)) -> graph::Graph {
         },
     };
     edit(&mut entry);
-    graph::Graph {
+    nodefold_graph::Graph {
         entries: vec![entry],
     }
 }
@@ -482,7 +494,7 @@ fn minimal(edit: impl FnOnce(&mut graph::GraphEntry)) -> graph::Graph {
 /// Derived from the framing this backend writes rather than searched for, so a
 /// framing change moves it here and does not leave the case flipping an
 /// unrelated byte that happens to decode.
-fn first_node_tag(graph: &graph::Graph) -> usize {
+fn first_node_tag(graph: &nodefold_graph::Graph) -> usize {
     let entry = &graph.entries[0];
     GRAPH_DOMAIN.len()
         + 4                        // schema major and minor
@@ -503,7 +515,7 @@ fn first_node_tag(graph: &graph::Graph) -> usize {
 #[test]
 fn the_routed_result_agrees_with_the_reference_oracle() {
     let produced = sound();
-    let reference = oracle::reference_bits(&oracle::program());
+    let reference = workload::reference_bits(&workload::program());
     let outcome = apply_policy(
         HostPolicy::Require,
         run(Behaviour::sound(HostPolicy::Require), &produced),
@@ -514,7 +526,7 @@ fn the_routed_result_agrees_with_the_reference_oracle() {
         .expect("a completed route publishes its bits");
     assert_ne!(
         reference.as_slice(),
-        oracle::OPERANDS.as_slice(),
+        workload::OPERANDS.as_slice(),
         "the oracle must transform its input; a program whose reference output equalled its \
          operands would let a backend that copied its input through compare equal",
     );
@@ -522,7 +534,7 @@ fn the_routed_result_agrees_with_the_reference_oracle() {
         .unwrap_or_else(|disagreement| panic!("the routed result disagrees: {disagreement}"));
     assert_eq!(
         compared,
-        oracle::OPERANDS.len(),
+        workload::OPERANDS.len(),
         "every operand's output was compared, not a prefix of them",
     );
     eprintln!("nodefold route: {compared} element(s) equal to tiler-reference");
@@ -537,7 +549,7 @@ fn the_routed_result_agrees_with_the_reference_oracle() {
 #[test]
 fn a_self_certifying_adapter_reaches_terminal_success_and_still_fails() {
     let produced = sound();
-    let reference = oracle::reference_bits(&oracle::program());
+    let reference = workload::reference_bits(&workload::program());
     let behaviour = Behaviour {
         evaluation: Evaluation::Certify,
         ..Behaviour::sound(HostPolicy::Require)
@@ -668,7 +680,7 @@ fn a_transport_map_that_disagrees_with_the_payload_is_caught_only_by_the_oracle(
         .expect("a disagreeing transport map is not an assembly-time defect");
     decode_artifact(&produced.bytes)
         .expect("nor a decode-time one: every packaged identity is still the plan's");
-    let reference = oracle::reference_bits(&oracle::program());
+    let reference = workload::reference_bits(&workload::program());
     let outcome = apply_policy(
         HostPolicy::Require,
         run(Behaviour::sound(HostPolicy::Require), &produced),

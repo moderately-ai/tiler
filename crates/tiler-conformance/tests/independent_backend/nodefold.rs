@@ -10,7 +10,7 @@
 //! It claims four rows of the ADR 0090 responsibility matrix and no others: a
 //! target profile it declares itself, an executable representation, the
 //! validation of that representation's bytes, and a runtime adapter (in
-//! [`super::adapter`]). It installs no semantic authority, no lowering
+//! [`super::nodefold_adapter`]). It installs no semantic authority, no lowering
 //! capability, and no physical implementation provider, and it needs none — the
 //! governed vertical supplies those, and a backend that had to install one to
 //! reach this seam would be evidence that the seam is in the wrong place.
@@ -42,7 +42,7 @@ use tiler_ir::schedule::{
 };
 use tiler_ir::semantic::{F32, SemanticProgram};
 
-use crate::graph::{Graph, GraphBuffer, GraphEntry, Node, StorePlan, encode};
+use crate::nodefold_graph::{Graph, GraphBuffer, GraphEntry, Node, StorePlan, encode};
 
 /// Governed profile key of the target this backend declares.
 pub(crate) const PROFILE_KEY: &str = "tiler.test.nodefold-host-v1";
