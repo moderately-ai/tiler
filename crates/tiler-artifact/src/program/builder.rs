@@ -2045,6 +2045,18 @@ fn derive_extent_operands(
 /// and lifting that refusal is the packaging decision" — true until that
 /// carrier merged, and the reason the association was written here in advance,
 /// so the landing inherited it rather than re-deriving it.)*
+///
+/// **Both sides of the wire run this exact function.**
+/// `codec::validate::check_extent_operand_association` calls it over the
+/// decoded envelope's own published interface and retained environment, and
+/// reports its [`ArtifactBuildError`] as the model's typed cause. A decode-side
+/// restatement is what let the two sides disagree once already: the static arm
+/// was copied across and the three symbolic ones were not, so a decoded row
+/// rooted anywhere at all was admitted from the moment the interface grammar
+/// narrowed per-axis. Anything added here is therefore proven on decoded bytes
+/// without a second edit — but two arms are shadowed on that side by narrower
+/// checks that own the same fact, which
+/// `codec::validate::check_extent_operand_association` names.
 pub(super) fn check_extent_operand_association(
     entry: usize,
     key: &InputKey,

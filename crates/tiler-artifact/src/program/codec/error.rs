@@ -628,7 +628,14 @@ pub(crate) enum ArtifactCodecError {
     /// The grammar now spells each axis literal-or-symbol, so the rule asks the
     /// question it was always about: a row over a *literal* axis is refused and
     /// names that axis's one extent, while a row over a symbolic axis is the
-    /// case the row exists for and passes to the association checks.
+    /// case the row exists for and is passed on to the decode-side association,
+    /// which proves what the symbol is rooted at.
+    ///
+    /// *(Corrected 2026-08-22. This claimed the symbolic case "passes to the
+    /// association checks" while no association ran after this rule, so every
+    /// such row was admitted on its source kind alone. The association is now
+    /// `codec::validate::check_extent_operand_association`, which reports the
+    /// model's own `ArtifactBuildError` rather than a variant here.)*
     ExtentOperandStaticAxis {
         /// Stable input key the row named.
         key: String,

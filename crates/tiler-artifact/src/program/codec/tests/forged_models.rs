@@ -472,6 +472,20 @@ fn an_output_interface_symbol_the_environment_does_not_declare_is_rejected() {
 /// bound `T`, as the carried bytes of a forged envelope.
 pub(super) fn forged_retained_environment()
 -> super::super::super::retained::RetainedShapeEnvironment {
+    forged_environment_rooting("input", 0)
+}
+
+/// The same environment with `S`'s root moved to one exact `(input, axis)`.
+///
+/// The association a live-extent row must satisfy is about *which* dimension
+/// the symbol is rooted at, so proving it needs the root and the row's own
+/// `(key, axis)` varied independently. `T` stays bound to a static extent in
+/// every instance: it is the non-input root the association refuses, and the
+/// row that names it is the one the decode side used to admit.
+pub(super) fn forged_environment_rooting(
+    input: &str,
+    axis: u32,
+) -> super::super::super::retained::RetainedShapeEnvironment {
     use tiler_ir::shape::{
         BindingSource, Extent, FactProvenance, RootBinding, ShapeEnvBuilder, ShapeSymbol,
         SymbolScope,
@@ -486,8 +500,8 @@ pub(super) fn forged_retained_environment()
             &rooted,
             RootBinding::new(
                 BindingSource::InputDimension {
-                    input: tiler_ir::semantic::InputKey::new("input").unwrap(),
-                    axis: tiler_ir::shape::Axis::new(0),
+                    input: tiler_ir::semantic::InputKey::new(input).unwrap(),
+                    axis: tiler_ir::shape::Axis::new(axis),
                 },
                 AvailabilityPhase::LiveDevicePreflight,
                 FactProvenance::RuntimeValidated,
