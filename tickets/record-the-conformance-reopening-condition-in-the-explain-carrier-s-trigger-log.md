@@ -1,7 +1,7 @@
 ---
 id: record-the-conformance-reopening-condition-in-the-explain-carrier-s-trigger-log
 title: Record the conformance reopening condition in the explain carrier's trigger log
-status: in-progress
+status: todo
 priority: p2
 dependencies: []
 related: [make-explain-dispositions-assertable-by-a-conformance-suite, decide-the-backend-provider-conformance-harness-public-surface]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [graph-hygiene, backend-providers, deferred-triggers]
-claimed_from: todo
-assignee: worker-explaintrigger
-lease_expires_at: 1787433470
 ---
 ## User-visible outcome
 
