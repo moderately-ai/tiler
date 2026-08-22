@@ -114,11 +114,11 @@ use tiler_compiler::target::{DTypeDispatchability, TargetRequest};
 use tiler_ir::semantic::SemanticProgram;
 use tiler_runtime::load::DTypeDispatch;
 
+use nodefold::{EntryPerturbation, NodefoldRefusal, Produced};
 use nodefold_adapter::{
     Behaviour, Binding, Evaluation, ExecutionOutcome, HostPolicy, HostRequest, Lifetime, RouteEnd,
     agrees_with_reference, apply_policy, route,
 };
-use nodefold::{EntryPerturbation, NodefoldRefusal, Produced};
 use nodefold_graph::{GRAPH_DOMAIN, GRAPH_SCHEMA, GraphRefusal};
 
 /// The two subjects this suite exists to exercise.
@@ -246,8 +246,7 @@ fn the_assembled_artifact_carries_facts_this_backend_never_supplied() {
     let program = workload::program();
     let compilation = compiled(&program);
     let produced = sound();
-    let decoded = decode_artifact(&produced.bytes)
-        .expect("the assembled envelope decodes");
+    let decoded = decode_artifact(&produced.bytes).expect("the assembled envelope decodes");
 
     assert_eq!(
         decoded.variants().len(),
@@ -404,22 +403,30 @@ fn every_named_graph_refusal_is_reachable_from_bytes() {
         refusal(&emitted[..emitted.len() - 1]),
         refusal(&trailing),
         refusal(&unknown_tag),
-        refusal(&nodefold_graph::encode(&minimal(|entry| entry.symbol.clear()))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.symbol.clear();
+        }))),
         refusal(&nodefold_graph::encode(&minimal(|entry| {
             entry.nodes[1] = nodefold_graph::Node::IndexAdd(0, 9);
         }))),
         refusal(&nodefold_graph::encode(&minimal(|entry| {
             entry.nodes[3] = nodefold_graph::Node::F32Multiply(0, 0);
         }))),
-        refusal(&nodefold_graph::encode(&minimal(|entry| entry.store.buffer = 9))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.store.buffer = 9;
+        }))),
         refusal(&nodefold_graph::encode(&minimal(|entry| {
             entry.nodes[3] = nodefold_graph::Node::Load {
                 buffer: 9,
                 offset: 0,
             };
         }))),
-        refusal(&nodefold_graph::encode(&minimal(|entry| entry.buffers.clear()))),
-        refusal(&nodefold_graph::encode(&minimal(|entry| entry.store.buffer = 0))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.buffers.clear();
+        }))),
+        refusal(&nodefold_graph::encode(&minimal(|entry| {
+            entry.store.buffer = 0;
+        }))),
     ];
 
     let mut distinct: Vec<std::mem::Discriminant<GraphRefusal>> = Vec::new();
@@ -429,7 +436,10 @@ fn every_named_graph_refusal_is_reachable_from_bytes() {
             distinct.push(kind);
         }
     }
-    eprintln!("graph refusal census: {} reached, {observed:?}", distinct.len());
+    eprintln!(
+        "graph refusal census: {} reached, {observed:?}",
+        distinct.len()
+    );
     assert_eq!(
         distinct.len(),
         std::mem::variant_count::<GraphRefusal>(),

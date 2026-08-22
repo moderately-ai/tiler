@@ -436,7 +436,14 @@ fn run_entry(
     );
     for invocation in 0..invocations {
         let mut values: Vec<Option<Value>> = vec![None; entry.nodes.len()];
-        evaluate(entry, invocation, storage, placements, &guarded, &mut values)?;
+        evaluate(
+            entry,
+            invocation,
+            storage,
+            placements,
+            &guarded,
+            &mut values,
+        )?;
         let permitted = match entry.store.guard {
             None => true,
             Some(guard) => match read(&values, guard)? {
@@ -548,9 +555,7 @@ fn evaluate(
                     .checked_mul(index(values, rhs)?)
                     .ok_or_else(|| "an index product overflowed".to_owned())?,
             ),
-            Node::IndexLessThan(lhs, rhs) => {
-                Value::Bool(index(values, lhs)? < index(values, rhs)?)
-            }
+            Node::IndexLessThan(lhs, rhs) => Value::Bool(index(values, lhs)? < index(values, rhs)?),
             Node::F32Multiply(lhs, rhs) => Value::F32(canonicalize(
                 f32::from_bits(float(values, lhs)?) * f32::from_bits(float(values, rhs)?),
                 entry.canonical_nan,
@@ -647,9 +652,12 @@ fn access(
             bytes = placement.bytes,
         ));
     }
-    let allocation = storage
-        .get_mut(placement.allocation)
-        .ok_or_else(|| format!("allocation {index} is unbound", index = placement.allocation))?;
+    let allocation = storage.get_mut(placement.allocation).ok_or_else(|| {
+        format!(
+            "allocation {index} is unbound",
+            index = placement.allocation
+        )
+    })?;
     let start = usize::try_from(
         placement
             .offset
@@ -857,9 +865,8 @@ impl RuntimeAdapter for NodefoldAdapter {
                 }
             }
         }
-        self.worker = Some(Worker::acquire(self.behaviour.host).map_err(|unavailable| {
-            AdapterRefusal::HostUnavailable(unavailable)
-        })?);
+        self.worker =
+            Some(Worker::acquire(self.behaviour.host).map_err(AdapterRefusal::HostUnavailable)?);
         Ok(())
     }
 
@@ -901,8 +908,9 @@ impl RuntimeAdapter for NodefoldAdapter {
                     }
                     BindingTarget::Internal => self.storage.push(vec![
                         0_u8;
-                        usize::try_from(span)
-                            .expect("a routed range fits this host")
+                        usize::try_from(span).expect(
+                            "a routed range fits this host"
+                        )
                     ]),
                 }
                 // Placed by the *transport* the loader derived from this
@@ -1051,9 +1059,7 @@ pub(crate) fn route(
             | AdapterRouteFailure::Preparation(refusal)
             | AdapterRouteFailure::Plan(refusal),
         ) => match refusal {
-            AdapterRefusal::HostUnavailable(unavailable) => {
-                RouteEnd::HostUnavailable(unavailable)
-            }
+            AdapterRefusal::HostUnavailable(unavailable) => RouteEnd::HostUnavailable(unavailable),
             other => RouteEnd::AdapterRefused(other),
         },
         Err(AdapterRouteFailure::Allocation(failure) | AdapterRouteFailure::Dispatch(failure)) => {

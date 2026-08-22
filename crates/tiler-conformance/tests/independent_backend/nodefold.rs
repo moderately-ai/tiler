@@ -20,9 +20,9 @@ use std::error::Error;
 use std::fmt;
 
 use tiler_artifact::program::{
-    ArtifactExecutionPolicy, BackendEntryKey, BackendKey, BindingKind,
-    PayloadContent, PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance,
-    RepresentationKey, SchemaVersion, ToolComponent, VerifiedArtifactProgram,
+    ArtifactExecutionPolicy, BackendEntryKey, BackendKey, BindingKind, PayloadContent,
+    PayloadEntryMapping, PayloadMetadata, PayloadPlatform, PayloadProvenance, RepresentationKey,
+    SchemaVersion, ToolComponent, VerifiedArtifactProgram,
 };
 use tiler_build::{BackendEntryDeclaration, PlanDeterminismDeclaration, assemble_plan_artifact};
 use tiler_compiler::session::PlanAlternative;
@@ -466,7 +466,11 @@ impl Translator<'_> {
                 tiler_ir::kernel::Builtin::LocalInvocationIndex => {
                     return Err(NodefoldRefusal::Untranslatable("a workgroup-local index"));
                 }
-                _ => return Err(NodefoldRefusal::Untranslatable("an unadmitted launch builtin")),
+                _ => {
+                    return Err(NodefoldRefusal::Untranslatable(
+                        "an unadmitted launch builtin",
+                    ));
+                }
             },
             OperationView::Constant { value } => match value {
                 KernelConstant::F32Bits(bits) => Node::F32Constant(*bits),
@@ -520,7 +524,9 @@ impl Translator<'_> {
                 return Err(NodefoldRefusal::Untranslatable("a barrier"));
             }
             OperationView::Unary { .. } => {
-                return Err(NodefoldRefusal::Untranslatable("a unary elementary function"));
+                return Err(NodefoldRefusal::Untranslatable(
+                    "a unary elementary function",
+                ));
             }
             OperationView::PackedExtract { .. } => {
                 return Err(NodefoldRefusal::Untranslatable("packed-nibble extraction"));
@@ -539,7 +545,9 @@ fn translate_buffer(parameter: &BufferParameter) -> Result<GraphBuffer, Nodefold
         return Err(NodefoldRefusal::Untranslatable("a non-f32 buffer"));
     }
     if parameter.address_space != AddressSpace::Device {
-        return Err(NodefoldRefusal::Untranslatable("a non-device address space"));
+        return Err(NodefoldRefusal::Untranslatable(
+            "a non-device address space",
+        ));
     }
     Ok(GraphBuffer {
         write: parameter.access == BufferAccess::Write,

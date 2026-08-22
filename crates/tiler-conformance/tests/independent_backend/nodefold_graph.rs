@@ -543,11 +543,11 @@ struct Reader<'bytes> {
 
 impl<'bytes> Reader<'bytes> {
     fn take(&mut self, length: usize) -> Result<&'bytes [u8], GraphRefusal> {
-        let end = self
-            .at
-            .checked_add(length)
+        let end = self.at.checked_add(length).ok_or(GraphRefusal::Truncated)?;
+        let run = self
+            .bytes
+            .get(self.at..end)
             .ok_or(GraphRefusal::Truncated)?;
-        let run = self.bytes.get(self.at..end).ok_or(GraphRefusal::Truncated)?;
         self.at = end;
         Ok(run)
     }
