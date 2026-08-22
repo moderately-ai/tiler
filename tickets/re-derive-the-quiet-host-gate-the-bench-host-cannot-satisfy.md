@@ -1,7 +1,7 @@
 ---
 id: re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy
 title: Re-derive the quiet-host gate the bench host cannot satisfy
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol, refresh-the-deferred-triggers-whose-stated-reason-is-now-false, measure-thread-execution-width-on-the-standard-metal-profiles-own-host]
@@ -9,6 +9,9 @@ scopes: [research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, protocol, unfireable-checks, scheduling]
+claimed_from: todo
+assignee: worker-quietgate
+lease_expires_at: 1787437174
 ---
 ## User-visible outcome
 
