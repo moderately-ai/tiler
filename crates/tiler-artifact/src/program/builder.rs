@@ -316,7 +316,7 @@ pub struct ArtifactProgramBuilder {
     /// leaves it exactly where it found it. Its one reader proves, before a
     /// candidate is retained, that the complete artifact identity this builder
     /// could still derive must already exceed
-    /// [`MAX_ARTIFACT_IDENTITY_BYTES`](super::MAX_ARTIFACT_IDENTITY_BYTES).
+    /// [`MAX_ARTIFACT_IDENTITY_BYTES`].
     /// This is not a second byte budget: the run is a strict subset of that one
     /// governed identity, and the proof is about the whole.
     physical_identity_bytes: usize,
