@@ -1,7 +1,7 @@
 ---
 id: re-prove-the-live-extent-operand-association-at-decode
 title: Re-prove the live-extent operand association at decode
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [accept-the-live-extent-artifact-envelope-row, bind-frozen-live-extent-bytes-at-declared-backend-transports, associate-live-extent-operands-with-symbolic-semantic-interface-axes, package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
@@ -9,9 +9,6 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, artifact, codec, fail-closed]
-claimed_from: todo
-assignee: worker-assoc
-lease_expires_at: 1787427335
 ---
 ## User-visible outcome
 
