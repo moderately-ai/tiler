@@ -2036,12 +2036,15 @@ fn derive_extent_operands(
 ///   name the exact source-bearing axis, exactly as the accepted schedule
 ///   marker does.
 ///
-/// The symbolic arms are production-reachable only once a symbolic semantic
-/// interface can open a builder at all; today [`read_semantic_interface`]
-/// refuses one first, and lifting that refusal is the packaging decision
-/// (`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`). The
-/// static arm is the live fail-closed defence, and the association is checked
-/// here so the packaging landing inherits it rather than re-deriving it.
+/// The symbolic arms became production-reachable when the packaging decision
+/// landed on 2026-08-19: `SymbolicInterfaceExtent` no longer exists, so a
+/// symbolic semantic interface opens a builder and these arms are reached
+/// rather than guarded behind an earlier refusal. The static arm remains the
+/// fail-closed defence for a live row named over a fixed axis. *(Corrected
+/// 2026-08-19. This read "today [`read_semantic_interface`] refuses one first,
+/// and lifting that refusal is the packaging decision" — true until that
+/// carrier merged, and the reason the association was written here in advance,
+/// so the landing inherited it rather than re-deriving it.)*
 pub(super) fn check_extent_operand_association(
     entry: usize,
     key: &InputKey,

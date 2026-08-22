@@ -1,7 +1,7 @@
 ---
 id: admit-coincident-rms-operands-with-one-coalesced-pass-access
 title: Admit coincident RMS operands with one coalesced pass access
-status: blocked
+status: todo
 priority: p1
 dependencies: [decide-the-canonical-staged-pass-access-spelling-for-coincident-rms-operands]
 related: [admit-a-scheduled-region-for-a-staged-elementary-family, accept-the-root-mean-square-scale-realization-law]
@@ -10,6 +10,14 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, normalization, schedule, identity, aliasing]
 ---
+## Status repair — 2026-08-19, blocked with no surviving ground
+
+Found by a board sweep for `blocked` tickets whose every declared dependency is `done`; seven turned up and this is one. **The body stated no blocking reason at all.**
+
+**Verified by the coordinator at `4a813d21`:** every declared dependency — `decide-the-canonical-staged-pass-access-spelling-for-coincident-rms-operands` — is `status: done`, and each carries an explicit Tom-acceptance marker (`## Accepted decision` / `Tom accepted` / `RESOLVED — accepted`). So the ground this was parked on is gone, and the status was simply never flipped. Moved to `todo`; no other field changed.
+
+**NOT verified, and it is the next worker's first task:** that this ticket's Facts are current. It predates several landed migrations — `tiler.kernel-program` v12→v13, `tiler.artifact-program` v20→v21, manifest (20,0)→(21,0), the retired contraction key, four module splits, and the decoded-input accessor becoming `static_shape() -> Option<Shape>`. Per the stale-Facts rule, re-audit every Fact at your own base and report a per-Fact verdict before editing; **repair the ticket and report the repair rather than working around a false Fact.**
+
 ## Outcome
 
 If Tom accepts the prerequisite decision, `rms_norm(x, x)` compiles through the same governed RMS law and provider as distinct-operand RMS while retaining two ordered semantic operand uses and one canonical coalesced dense pass access. The reference, refinement receipt, schedule, kernel, program, artifact, and runtime association remain exact and fail closed outside the accepted alias slice.

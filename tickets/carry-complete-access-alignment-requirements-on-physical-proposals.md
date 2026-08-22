@@ -1,7 +1,7 @@
 ---
 id: carry-complete-access-alignment-requirements-on-physical-proposals
 title: Carry complete access-alignment requirements on physical proposals
-status: blocked
+status: todo
 priority: p1
 dependencies: [separate-vector-operand-alignment-from-target-realization, admit-typed-byte-alignment-and-effective-program-view-guarantees, accept-the-installed-physical-provider-public-surface]
 related: [publish-occurrence-bound-selected-physical-implementation-evidence, establish-vector-execution-form-numerical-authority]
@@ -10,6 +10,14 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [alignment, backend-providers, applicability, identity, public-boundary]
 ---
+## Status repair — 2026-08-19, blocked with no surviving ground
+
+Found by a board sweep for `blocked` tickets whose every declared dependency is `done`; seven turned up and this is one. **The body stated no blocking reason at all.**
+
+**Verified by the coordinator at `4a813d21`:** every declared dependency — `separate-vector-operand-alignment-from-target-realization`, `admit-typed-byte-alignment-and-effective-program-view-guarantees`, and `accept-the-installed-physical-provider-public-surface` — is `status: done`, and each carries an explicit Tom-acceptance marker (`## Accepted decision` / `Tom accepted` / `RESOLVED — accepted`). So the ground this was parked on is gone, and the status was simply never flipped. Moved to `todo`; no other field changed.
+
+**NOT verified, and it is the next worker's first task:** that this ticket's Facts are current. It predates several landed migrations — `tiler.kernel-program` v12→v13, `tiler.artifact-program` v20→v21, manifest (20,0)→(21,0), the retired contraction key, four module splits, and the decoded-input accessor becoming `static_shape() -> Option<Shape>`. Per the stale-Facts rule, re-audit every Fact at your own base and report a per-Fact verdict before editing; **repair the ticket and report the repair rather than working around a false Fact.**
+
 ## User-visible outcome
 
 Two physical implementations of the same logical operation may state different real memory-alignment requirements without multiplying target facts, and the compiler selects either only when every exact access can satisfy it.

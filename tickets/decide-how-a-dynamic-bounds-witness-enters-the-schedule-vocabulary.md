@@ -1,7 +1,7 @@
 ---
 id: decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary
 title: Decide how a dynamic bounds witness enters the schedule vocabulary
-status: blocked
+status: todo
 priority: p2
 dependencies: [package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
 related: [replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges, carry-live-extent-operands-through-the-artifact-envelope]
@@ -29,6 +29,19 @@ A live-extent access carries a bounds proof that states its reach, instead of th
 ## Why this is blocked rather than ready
 
 The readiness gate's first step: a local API shape is not decision-ready while its consumer or prerequisite is unresolved. No live-extent artifact is constructible or decodable at this base, so the packet cannot state what the witness must serve, and a frontier derived now would be about a population that does not yet exist. [`package-the-admitted-live-schedule-into-a-symbolic-kernel-program`](package-the-admitted-live-schedule-into-a-symbolic-kernel-program.md) — accepted by Tom on 2026-08-19 as the complete-subject fold, and the ticket that makes a symbolic program packageable — is the release trigger.
+
+## Release — 2026-08-19, trigger fired; precondition partly verified, and the remainder is the packet author's first task
+
+`package-the-admitted-live-schedule-into-a-symbolic-kernel-program` is `status: done` (merged and gated), so the stated release trigger has fired. The coordinator verified the *mechanism* the block rested on, and deliberately did **not** verify the whole precondition — read this before authoring:
+
+**Verified at `4a813d21`, by reading:**
+- The refusal that made a symbolic interface unpackageable is **gone**: `grep -c SymbolicInterfaceExtent` returns **0** in both `crates/tiler-ir/src/program/error.rs` and `crates/tiler-artifact/src/program/builder.rs`.
+- The live-row association has a passing **accepting arm**: `crates/tiler-artifact/src/program/tests/extent_operands.rs`, anchor `fn a_live_operand_on_the_source_bearing_symbolic_axis_associates`, which `.expect()`s success on the source-bearing symbolic axis. Seven sibling arms refuse.
+- `check_extent_operand_association` refuses only when the extent `as_static()` — so a live row over a **symbolic** axis is no longer refused on that ground.
+
+**NOT verified, and it is the load-bearing half:** that a complete live-extent artifact **constructs and decodes end to end**. The block's stated ground was "no live-extent artifact is constructible or decodable at this base, so the packet cannot state what the witness must serve". An association unit test is not that proof.
+
+**So the packet author's first deliverable is to establish end-to-end constructibility and decodability, with the command and its output**, before enumerating any spelling. If it turns out a live-extent artifact still cannot be built or loaded, **stop and report** — the readiness gate forbids a frontier over a population that does not exist, and this ticket returns to `blocked` with the new ground recorded rather than being worked around.
 
 ## Required work when released
 
