@@ -1,17 +1,14 @@
 ---
 id: derive-staged-combine-structure-from-program-scope
 title: Derive staged combine structure from program scope
-status: in-progress
+status: done
 priority: p1
 dependencies: []
-related: [accept-the-exact-composed-reference-session-and-event-surface, encode-identity-bearing-staged-combine-structure]
+related: [accept-the-exact-composed-reference-session-and-event-surface, join-the-scheduled-region-into-the-contraction-witness]
 scopes: [research/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [research, spike, reference, conformance, numerics]
-claimed_from: todo
-assignee: worker-stagedspike
-lease_expires_at: 1787428751
 ---
 ## User-visible outcome
 
