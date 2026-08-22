@@ -1,7 +1,7 @@
 ---
 id: decide-whether-refinement-evidence-may-reach-a-physical-provider
 title: Decide whether refinement evidence may reach a physical provider
-status: in-progress
+status: todo
 priority: p1
 dependencies: []
 related: [carry-the-gather-relation-through-the-compiler-vertical, decide-the-data-dependent-index-representation-public-surface, emit-the-indirect-gather-on-metal]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, gather, identity]
-claimed_from: todo
-assignee: worker-seam
-lease_expires_at: 1787442342
 ---
 ## User-visible outcome
 
