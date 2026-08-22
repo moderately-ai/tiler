@@ -1,7 +1,7 @@
 ---
 id: realize-the-attention-contractions-on-metal
 title: Realize the attention score and value contractions on Metal
-status: in-progress
+status: todo
 priority: p1
 dependencies: [admit-the-attention-contraction-structures, realize-the-tiled-contraction-schedule-and-its-metal-emission, reclassify-language-model-work-as-a-conformance-track]
 related: [design-attention-program-vertical, plan-the-materialized-attention-decomposition, admit-reassociated-contraction-schedule-alternatives, scope-causal-structure-aware-attention-schedules, implement-parallel-reduction-strategies]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/ir, implementation/metal, contr
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, physical-planning, metal, contraction, attention, language-model, class-generic-capability]
-claimed_from: todo
-assignee: worker-attention
-lease_expires_at: 1787435006
 ---
 ## User-visible outcome
 

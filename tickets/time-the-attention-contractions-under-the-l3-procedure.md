@@ -3,7 +3,7 @@ id: time-the-attention-contractions-under-the-l3-procedure
 title: Time the attention contractions under the L3 procedure
 status: blocked
 priority: p1
-dependencies: []
+dependencies: [re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy]
 related: [realize-the-attention-contractions-on-metal, plan-the-recomputing-attention-decomposition, calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol]
 scopes: [research/scheduling]
 shared_scopes: [project/tickets]
@@ -43,3 +43,7 @@ Bench-host load below the gate, and a dispatch route for the attention structure
 ## Trigger check log
 
 - 2026-08-22 — **not fired.** Bench host `m3` at load `2.44 2.39 2.33`, above the 0.5 gate. Reproduce: `ssh m3 uptime`.
+
+**Coordinator correction — 2026-08-22, the same day this was filed: that 0.5 gate is unsatisfiable, so this entry's "not fired" is not a temporary state.** The delivering lane recorded the bench host at `2.44 2.39 2.33` and read it as contention. It is not. I diagnosed `m3` read-only at `835fdd3f`: nothing is CPU-bound, there are **no** processes in uninterruptible or disk-wait state, the runnable count is **2**, and after the measuring `ssh` itself the top consumers are the Tailscale network system extension (2.8%) and the `AppleBCMWLAN` DriverKit extension (2.5%), both running since boot on a machine up 21 days. **Roughly 2.3 is a floor the OS configuration imposes, not a queue that drains**, so waiting will never satisfy the gate.
+
+**Release trigger corrected:** [`re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy`](re-derive-the-quiet-host-gate-the-bench-host-cannot-satisfy.md) landing, now recorded as a dependency edge rather than left implicit. Do not re-probe the load expecting it to fall. Recorded alongside: the host is on the pinned build `26A5388g` and is the right machine to measure on — only the precondition is wrong. The second half of this ticket's release condition, a dispatch route for the attention structures, is unaffected and still stands on its own.
