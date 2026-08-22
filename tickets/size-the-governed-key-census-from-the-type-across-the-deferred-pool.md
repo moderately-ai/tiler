@@ -1,7 +1,7 @@
 ---
 id: size-the-governed-key-census-from-the-type-across-the-deferred-pool
 title: Size the governed key census from the type across the deferred pool
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [repair-the-deferred-trigger-checks-that-cannot-report-a-firing, refresh-the-deferred-triggers-whose-stated-reason-is-now-false]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [graph-hygiene, deferred-triggers, census]
-claimed_from: todo
-assignee: worker-keycensus
-lease_expires_at: 1787438923
 ---
 ## User-visible outcome
 
