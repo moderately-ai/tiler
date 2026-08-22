@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol
 title: Calibrate the contraction tile width under a beneficiary-named protocol
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-the-contraction-tile-width-authority, carry-the-contraction-tile-width-policy-as-a-target-profile-row]
@@ -9,6 +9,9 @@ scopes: [research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [measurement, scheduling, contraction, target-profiles]
+claimed_from: todo
+assignee: worker-tileprotocol
+lease_expires_at: 1787430110
 ---
 ## User-visible outcome
 
