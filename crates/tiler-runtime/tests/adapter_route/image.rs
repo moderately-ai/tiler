@@ -37,12 +37,23 @@
 //!
 //! # This module is path-shared
 //!
-//! It is compiled into `tests/identity_join/main.rs` and into
-//! `spikes/target-profiles/metal-subgroup-width-route-gate/src/main.rs` through
-//! `#[path]`, neither of which carries an `adapter` module. So nothing here may
-//! root a path — or an intra-doc link, which resolves the same way — at
-//! `crate::` outside this shared set. The arrangement's owner, its cost, and
-//! the target that now checks it are stated once, in `fixture.rs`.
+//! Four roots compile it. `tests/adapter_route/main.rs` owns the directory with
+//! a plain `mod image;`; the other three take it through `#[path]` —
+//! `tests/identity_join/main.rs`, `tests/adapter_route_portability.rs`, and
+//! `spikes/target-profiles/metal-subgroup-width-route-gate/src/main.rs`. None of
+//! the three carries an `adapter` module. So nothing here may root a path — or
+//! an intra-doc link, which resolves the same way — at `crate::` outside this
+//! shared set. The arrangement's owner, its cost, and the target that now checks
+//! it are stated once, in `fixture.rs`.
+//!
+//! *Enumeration repaired 2026-08-19: this named two roots and omitted both the
+//! owning suite and `adapter_route_portability.rs`, the target that exists to
+//! check exactly this set. Enumerate the `#[path]` roots with*
+//! `grep -rn 'path = ".*adapter_route/image.rs"' crates spikes` *— not with a
+//! bare* `grep 'mod image;'`*, which also matches the unrelated `image` modules
+//! under* `crates/tiler-build/tests/custom_backend/` *and*
+//! `spikes/target-profiles/scalar-cpu-vertical/` *and reports six roots for a
+//! file that has four.*
 
 use std::fmt;
 
