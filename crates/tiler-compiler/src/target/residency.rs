@@ -47,11 +47,15 @@
 //! *rung* of this plan needs too much" are different findings and a reader who
 //! cannot tell them apart cannot tell whether fusing further would help.
 //!
-//! **It would not, at L4's longest row.** The census in
-//! [`crate::target::residency::tests`] records that at B1-d prefill every rung —
-//! including the `n = 1` best case — exceeds four gibibytes, so the shortfall
-//! there is not a fusion gap. That is a conclusion about the arithmetic and not
-//! about any declared budget, which does not exist; see [`ResidencyVerdict`].
+//! **It would not, at L4's longest row.** This module's own
+//! `the_four_gibibyte_figure_is_one_tensor_and_no_rung_reaches_it_at_b1d`
+//! records that at B1-d prefill every rung — including the `n = 1` best case —
+//! exceeds four gibibytes, so the shortfall there is not a fusion gap. That is a
+//! conclusion about the arithmetic and not about any declared budget, which does
+//! not exist; see [`ResidencyVerdict`]. Named in prose rather than linked
+//! because the test module is `#[cfg(test)]`, which rustdoc does not compile:
+//! an intra-doc link to it resolves nowhere and fails the workspace gate's
+//! `--document-private-items` pass.
 
 /// A transient requirement that cannot be represented.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
