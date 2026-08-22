@@ -184,9 +184,16 @@ pub(crate) fn stage_work_span(region: &ScheduledRegion) -> Option<StageWorkSpan>
 /// can produce one.
 ///
 /// [`ReductionTopology`] and [`ReductionPass`] are `#[non_exhaustive]` outside
-/// `tiler-ir`, so the wildcard arms are required rather than chosen. They
-/// decline, which is why a topology arriving from that crate cannot quietly be
-/// costed as though it folded nothing.
+/// `tiler-ir`, so the wildcard arms are required rather than chosen — deleting
+/// either fails the build with E0004. They decline, which is why a topology
+/// arriving from that crate cannot quietly be costed as though it folded
+/// nothing.
+///
+/// Declining is still silent, though, and silence is what
+/// `every_reduction_topology_states_a_verdict` and
+/// `every_reduction_pass_states_a_verdict` convert into a build error: both size
+/// their census from the enum, so a widened vocabulary stops compiling here
+/// until its new member's verdict is stated.
 fn work_span(schedule: &KernelSchedule, accesses: &[Access]) -> Option<StageWorkSpan> {
     let work_items = schedule.work_items;
     match &schedule.reduction {
@@ -265,6 +272,64 @@ fn work_span(schedule: &KernelSchedule, accesses: &[Access]) -> Option<StageWork
                 depth: per_round_depth.checked_mul(tile.rounds)?,
             })
         }
+        // One invocation per output position, and the tile stages *operands*
+        // rather than partials. That is the whole difference from the arm above:
+        // no participant ever folds another's staged slots, so there is no
+        // `+ 1`, and the span is one invocation's own contracted run rather than
+        // a two-phase sum across a barrier. The topology's own contract states
+        // the relation — `commit` names every participant, the iteration domain
+        // *is* the output, and `owned_output_positions` equals the work-item
+        // count.
+        //
+        // Derived from the topology's own tile and rounds, which are the
+        // quantities the schedule states about *this* realization: one round
+        // folds `contracted_tile`'s points per invocation, and the round loop
+        // repeats that `tile.rounds` times. The admission functions require
+        // every tile extent to divide its contracted extent with the quotient
+        // product equal to `rounds`, so the tiled derivation and the contracted
+        // space must agree. Disagreeing means one of the three facts is
+        // malformed, and declining is what keeps a malformed triple from
+        // producing a plausible number — the reason `exact_ratio` refuses to
+        // truncate.
+        //
+        // **`work_items` is the logical output population, not the launch.** A
+        // predicated tail's grid is a strict superset stated separately as
+        // `launch.grid_threads`, and its masked invocations retire no fold step;
+        // `admit_predicated_cooperative_contraction` returns the two as
+        // separate fields for exactly that reason.
+        ReductionTopology::CooperativeContraction {
+            tile,
+            contracted_shape,
+            contracted_tile,
+            ..
+        } => {
+            let per_round = element_count(contracted_tile).ok()?;
+            let depth = per_round.checked_mul(tile.rounds)?;
+            if depth != element_count(contracted_shape).ok()? {
+                return None;
+            }
+            Some(StageWorkSpan {
+                work: work_items.checked_mul(depth)?,
+                depth,
+            })
+        }
+        // Required by `rustc`, not chosen: `ReductionTopology` is
+        // `#[non_exhaustive]` outside `tiler-ir`, so deleting this arm fails
+        // with E0004. `every_reduction_topology_states_a_verdict` is what stops
+        // it absorbing a widened vocabulary silently.
+        //
+        // **What a decline costs, which is more than this plan's own score.**
+        // `assess_fold_steps` propagates it with `?`, so one declined stage
+        // declines that plan; `pipeline::planning::measured_scores` then
+        // collects `Option<Vec<_>>` over *every* retained alternative, so one
+        // declining alternative collapses the measured comparison for all of
+        // them and `select_non_dominated` falls back to the structural Pareto
+        // view for the whole target. The declining plan is neither withheld nor
+        // outranked — it stays offered and selectable — but the term that exists
+        // to correct structural dominance stops applying to its neighbours too.
+        // The retained sweep measured the structurally dominant serial fold up
+        // to 50.7x slower than the best parallel plan, which is the regime that
+        // fallback silently re-enters.
         _ => None,
     }
 }
@@ -336,11 +401,13 @@ const fn exact_ratio(input: u64, output: u64) -> Option<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::mem::variant_count;
+
     use tiler_ir::schedule::{
         AccessMode, AccessOrdinal, ArithmeticType, BoundsWitnessId, ContributorArrival,
         ContributorCoverage, ContributorOrder, ContributorPartition, CooperativeTile,
         ExecutionBinding, LaunchPlan, OwnershipWitnessId, TailPolicy, TensorRole,
-        workgroup_tree_tile,
+        blocked_operand_tile, workgroup_tree_tile,
     };
     use tiler_ir::shape::{Axis, Shape};
 
@@ -557,6 +624,311 @@ mod tests {
                 depth: 16
             }
         );
+    }
+
+    /// The tiled contraction is scored from its own tile and round count.
+    ///
+    /// `K = 32` over a 16-wide contracted tile is two rounds, the smallest shape
+    /// that separates a per-round quantity from a whole-space one: a derivation
+    /// that forgot the round multiplier would report a depth of sixteen here and
+    /// the two would be indistinguishable at one round.
+    ///
+    /// **The tiled fold and the direct fold cost the same, and that is the
+    /// finding rather than a defect in the arm.** This model counts fold steps,
+    /// the tiling changes which memory a contributor is read from and nothing
+    /// about how many combining steps run, and
+    /// `ReductionTopology::CooperativeContraction` says so — one invocation owns
+    /// one output position and folds that output's contributors in ascending
+    /// contracted order across the whole round loop. A selector that preferred
+    /// the tiled plan on fold steps alone would be pricing a memory schedule
+    /// through a quantity that cannot see it.
+    #[test]
+    fn the_tiled_contraction_is_scored_from_its_tile_and_rounds() {
+        let tiled = |work_items: u64, contracted: u64, tile: u64, rounds: u64| {
+            work_span(
+                &schedule(
+                    work_items,
+                    ReductionTopology::CooperativeContraction {
+                        tile: blocked_operand_tile(16, rounds).expect("a representable tile"),
+                        contracted_shape: Shape::from_dims([contracted]),
+                        contracted_tile: Shape::from_dims([tile]),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                        accumulation: ArithmeticType::F32,
+                        permits_reassociation: false,
+                        permits_permutation: false,
+                    },
+                ),
+                &[],
+            )
+        };
+
+        assert_eq!(
+            tiled(6, 32, 16, 2),
+            Some(StageWorkSpan {
+                work: 192,
+                depth: 32
+            }),
+            "the tiled arm must fold every contracted point once per output position"
+        );
+        // The same contracted space at one round: the tile is the whole space,
+        // and the two derivations must agree because the topology's admission
+        // makes them the same quantity.
+        assert_eq!(
+            tiled(6, 32, 32, 1),
+            Some(StageWorkSpan {
+                work: 192,
+                depth: 32
+            })
+        );
+        // The negative control the arm exists beside: the direct fold over the
+        // same contracted space is still scored, and scores identically.
+        assert_eq!(
+            work_span(
+                &schedule(
+                    6,
+                    ReductionTopology::Contraction {
+                        contracted_shape: Shape::from_dims([32]),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                        permits_reassociation: false,
+                        permits_permutation: false,
+                    }
+                ),
+                &[]
+            ),
+            Some(StageWorkSpan {
+                work: 192,
+                depth: 32
+            }),
+            "the direct fold must still be scored"
+        );
+    }
+
+    /// A tiled contraction whose tile and rounds miss its contracted space
+    /// declines rather than reporting the number its tiling implies.
+    ///
+    /// The three facts are related by the topology's own admission — every tile
+    /// extent divides its contracted extent and the quotient product is the
+    /// round count — so a triple that breaks the relation is malformed, and
+    /// costing it from two of the three would state a plausible total for a
+    /// schedule that covers a different contracted space. The fail-safe
+    /// direction is the one `exact_ratio` already takes.
+    #[test]
+    fn a_tiled_contraction_whose_rounds_miss_its_contracted_space_declines() {
+        let mismatched = |contracted: u64, tile: u64, rounds: u64| {
+            work_span(
+                &schedule(
+                    6,
+                    ReductionTopology::CooperativeContraction {
+                        tile: blocked_operand_tile(16, rounds).expect("a representable tile"),
+                        contracted_shape: Shape::from_dims([contracted]),
+                        contracted_tile: Shape::from_dims([tile]),
+                        order: ContributorOrder::OriginalAxisLexicographic,
+                        accumulation: ArithmeticType::F32,
+                        permits_reassociation: false,
+                        permits_permutation: false,
+                    },
+                ),
+                &[],
+            )
+        };
+        // Two rounds of sixteen cover 32, not 48.
+        assert_eq!(
+            mismatched(48, 16, 2),
+            None,
+            "a short round loop must decline"
+        );
+        // Three rounds of sixteen cover 48, not 32.
+        assert_eq!(
+            mismatched(32, 16, 3),
+            None,
+            "a long round loop must decline"
+        );
+        // A tile that does not divide the contracted extent at all.
+        assert_eq!(
+            mismatched(30, 16, 2),
+            None,
+            "an indivisible tile must decline"
+        );
+    }
+
+    /// Every reduction topology in the vocabulary states a verdict here.
+    ///
+    /// **The final arm of `work_span` is required by rustc, not chosen.**
+    /// [`ReductionTopology`] is non-exhaustive outside `tiler-ir`, so deleting
+    /// the arm fails the build with E0004, "non-exhaustive patterns", whose own
+    /// note reads that the type is marked as non-exhaustive so a wildcard is
+    /// necessary to match exhaustively. Removing it is not available.
+    ///
+    /// The hazard it carries is real all the same: a topology added to the
+    /// vocabulary falls to that arm and scores `None` with nothing reporting
+    /// that it did, and a declined stage declines the whole plan. This census is
+    /// what converts the silence into a build error. The array is sized by
+    /// `variant_count::<ReductionTopology>()`, exactly as
+    /// [`crate::request::BudgetResource::ALL`] is sized from its own enum, so a
+    /// widened vocabulary stops compiling here until someone adds the topology
+    /// and states its verdict. A hand-written length would be satisfied by a
+    /// list that had stopped covering its own enum.
+    ///
+    /// Declining is a verdict, not an omission: `LiveContraction` is listed with
+    /// `None` because its contracted extent is a runtime fact, which is what
+    /// [`a_live_contraction_work_span_declines_rather_than_baking_s`] proves.
+    #[test]
+    fn every_reduction_topology_states_a_verdict() {
+        struct Verdict {
+            topology: &'static str,
+            work_items: u64,
+            reduction: ReductionTopology,
+            accesses: Vec<Access>,
+            expected: Option<StageWorkSpan>,
+        }
+
+        let partition = ContributorPartition {
+            partitions: 2,
+            contributors_per_partition: 2,
+        };
+        let census: [Verdict; variant_count::<ReductionTopology>()] = [
+            Verdict {
+                topology: "None",
+                work_items: 16,
+                reduction: ReductionTopology::None,
+                accesses: Vec::new(),
+                expected: Some(StageWorkSpan { work: 16, depth: 1 }),
+            },
+            Verdict {
+                topology: "Serial",
+                work_items: 1,
+                reduction: ReductionTopology::Serial {
+                    axes: Vec::new(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: true,
+                    permits_permutation: false,
+                },
+                accesses: vec![contributor_access([1, 4], [1])],
+                expected: Some(StageWorkSpan { work: 4, depth: 4 }),
+            },
+            Verdict {
+                topology: "MultiPass",
+                work_items: 4,
+                reduction: ReductionTopology::MultiPass {
+                    pass: ReductionPass::Partial,
+                    coverage: ContributorCoverage::Exact(ContributorPartition {
+                        partitions: 4,
+                        contributors_per_partition: 4,
+                    }),
+                    axes: Vec::new(),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: true,
+                    permits_permutation: false,
+                },
+                accesses: Vec::new(),
+                expected: Some(StageWorkSpan { work: 16, depth: 4 }),
+            },
+            Verdict {
+                topology: "Contraction",
+                work_items: 6,
+                reduction: ReductionTopology::Contraction {
+                    contracted_shape: Shape::from_dims([4]),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                accesses: Vec::new(),
+                expected: Some(StageWorkSpan { work: 24, depth: 4 }),
+            },
+            Verdict {
+                topology: "LiveContraction",
+                work_items: 6,
+                reduction: ReductionTopology::LiveContraction {
+                    live_access: AccessOrdinal::FIRST,
+                    live_axis: Axis::new(1),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                accesses: Vec::new(),
+                expected: None,
+            },
+            Verdict {
+                topology: "CooperativeWorkgroup",
+                work_items: 2,
+                reduction: cooperative(
+                    partition,
+                    workgroup_tree_tile(partition.partitions).expect("a representable tile"),
+                ),
+                accesses: Vec::new(),
+                expected: Some(StageWorkSpan { work: 6, depth: 4 }),
+            },
+            Verdict {
+                topology: "CooperativeContraction",
+                work_items: 6,
+                reduction: ReductionTopology::CooperativeContraction {
+                    tile: blocked_operand_tile(16, 2).expect("a representable tile"),
+                    contracted_shape: Shape::from_dims([32]),
+                    contracted_tile: Shape::from_dims([16]),
+                    order: ContributorOrder::OriginalAxisLexicographic,
+                    accumulation: ArithmeticType::F32,
+                    permits_reassociation: false,
+                    permits_permutation: false,
+                },
+                accesses: Vec::new(),
+                expected: Some(StageWorkSpan {
+                    work: 192,
+                    depth: 32,
+                }),
+            },
+        ];
+
+        for verdict in census {
+            assert_eq!(
+                work_span(
+                    &schedule(verdict.work_items, verdict.reduction),
+                    &verdict.accesses
+                ),
+                verdict.expected,
+                "{} scored differently from the verdict this census states for it",
+                verdict.topology,
+            );
+        }
+    }
+
+    /// Every multi-pass role states a verdict, sized from its own enum.
+    ///
+    /// The second wildcard in `work_span` is over [`ReductionPass`], which is
+    /// non-exhaustive for the same reason and therefore required for the same
+    /// reason. Censused separately from the topology above because the two
+    /// vocabularies widen independently: a run that reddened both could not say
+    /// which arm had stopped covering its domain.
+    #[test]
+    fn every_reduction_pass_states_a_verdict() {
+        let partition = ContributorPartition {
+            partitions: 4,
+            contributors_per_partition: 4,
+        };
+        let pass = |pass| ReductionTopology::MultiPass {
+            pass,
+            coverage: ContributorCoverage::Exact(partition),
+            axes: Vec::new(),
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: true,
+            permits_permutation: false,
+        };
+        let census: [(ReductionPass, u64, StageWorkSpan); variant_count::<ReductionPass>()] = [
+            (
+                ReductionPass::Partial,
+                4,
+                StageWorkSpan { work: 16, depth: 4 },
+            ),
+            (ReductionPass::Final, 1, StageWorkSpan { work: 4, depth: 4 }),
+        ];
+        for (role, work_items, expected) in census {
+            assert_eq!(
+                work_span(&schedule(work_items, pass(role)), &[]),
+                Some(expected),
+                "{role:?} scored differently from the verdict this census states for it",
+            );
+        }
     }
 
     /// Both sides of the `max` are summed per stage, never once over the sums.
