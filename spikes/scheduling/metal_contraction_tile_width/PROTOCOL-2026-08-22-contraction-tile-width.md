@@ -187,6 +187,37 @@ The retained record states its own reach as no contracted extent outside `{16, 1
 - **Oracle.** Every tiled variant must return a result bit-identical to the `direct` kernel at the same cell, because the tiling changes the memory schedule and nothing about the reduction — each thread still folds its own output's contributors in ascending `d`. A variant whose `result_sha256` differs from `direct`'s at any cell is **refused, not timed**, and reported as a correctness failure. This is the oracle that makes a timing meaningful: a faster kernel computing a different reduction is not a faster kernel.
 - **Noise controls, and this one is gated rather than recorded.** This is a wall-clock measurement, so AGENTS.md's idle-host discipline applies in full and the neighbouring protocol's record-don't-gate choice would be wrong here. The run aborts unless the bench host's one-minute load average is **below 0.5** at start and at end, and the harness records both. Observed on 2026-08-22 while writing this protocol: `load averages: 2.13 2.17 2.16` with no process above 3.2% CPU — the host is not currently inside its own gate, and the cause must be identified rather than waited out.
 
+### Pre-run amendment, 2026-08-22 — the load gate is replaced by a quiet-host gate this host can satisfy
+
+Written and committed **before any dispatch was timed and before any wall clock was read**, which is the only window in which this correction is admissible: a host precondition amended before the first timing run leaves pre-registration intact, and one amended after a run destroys it. The frozen bullet above is left standing rather than rewritten, per this repository's correction convention; this note is what governs.
+
+**The defect — the gate's satisfying case was unreachable.** The frozen bullet requires the bench host's one-minute load average to be **below 0.5** at start and at end, and `--mode timing` refused outright above it. That threshold is one this machine never reaches. Its idle one-minute load average was observed at **1.86–2.47** across more than twenty observations on 2026-08-22, and the floor is not a transient of that day: this repository already retains it on the same host nine days earlier, at `spikes/program-planning/physical-frontier-budget-calibration/results/2026-08-13-request-wide-macos-27.0-m3-pro.stdout.txt` reporting `loadavg={ 2.22 2.39 2.26 }` and its 2026-08-14 sibling reporting `loadavg={ 2.18 2.23 2.24 }`. So the gate did not delay the run, it **foreclosed** it, and it would have gone on reading as *not yet* indefinitely — the same defect class the deferred-trigger audit found in seven checks whose satisfying case could not occur.
+
+**Why the load average was the wrong instrument, not merely the wrong number.** The figure is a floor the OS configuration imposes rather than a queue that drains. Sustained sampling on 2026-08-22 recorded the host at **98.8–99.4% CPU idle and 0–1% GPU device utilization while its one-minute load average sat at 2.2**, with no process in uninterruptible or disk-wait state. A quantity that reads 2.2 on a machine doing nothing cannot discriminate competing work from baseline at any threshold, because raising the threshold to admit the baseline also admits roughly a core of real work.
+
+**What replaces it.** Four components, each of which must pass, read at start and again at end, recorded either way. The harness implements them in `tile_width_sweep.py "def quiet_host_gate"` and they can be read alone, dispatching nothing, with `--mode gate`.
+
+| Component | Threshold | What it admits | What it refuses |
+| --- | --- | --- | --- |
+| Mean CPU idle over ten one-second samples | `>= 95%` | The quiet host, measured at 97.2–99.7% idle | Anything consuming about a core or more, immediately and without lag |
+| GPU device utilization, peak over `IOAccelerator` nodes | `<= 5%` | The quiet device, measured at 0–1% | Another workload holding the device this measurement times |
+| One-minute load average | `<= 3.5` | This host's recorded baseline of 1.86–2.47 | Sustained work, including work blocked rather than running, that the CPU window may sit between |
+| Exclusive advisory lock on `/tmp/tiler-contraction-tile-width-sweep.lock` | held | A single measurement session | A second sweep sharing the device |
+
+The CPU idle mean is the **primary discriminator** and the load average is demoted to a lagging cross-check, because the load average is a lagging indicator by construction. That is not a theoretical objection: measured here, twenty-five seconds into four cores of deliberate competing work, CPU idle had already fallen to **61.17%** while the one-minute load average was still **2.89** — inside any ceiling that also admits the 2.2 baseline. A gate resting on load alone would have admitted that run.
+
+**The threshold is placed in a measured empty band, not chosen round.** Sixty consecutive one-second idle samples on 2026-08-22 are bimodal: a quiet mode at 97.2–99.7% and an episodic desktop-session burst at 84.2–89.8%, about 1.1 of the 11 cores. Nothing was observed between 90% and 95%. The floor sits inside that gap, so it separates the two modes rather than cutting through either.
+
+**A sampling detail that is load-bearing, because getting it wrong reads a different quantity.** `top`'s **first** sample is a since-boot average, not an instantaneous reading. The harness therefore requests one extra sample and discards it. Before that was understood, `top -l 1` on this host read 80.40% and 69.18% idle within minutes of sustained sampling reading 98.8–99.4% — so a gate written naively against `top -l 1` would refuse a host that was in fact quiet, and its author would have concluded the host was busy.
+
+**Every component fails closed, and that is the point of the amendment rather than a detail of it.** A component whose input cannot be read **refuses**; it does not pass. An unreadable probe and a quiet host produce the same silence, and "quiet" is the direction that admits a contaminated measurement. This is written in response to the deferred-trigger audit's finding of a check that polled a `system_profiler` data type macOS had renamed, returned empty, and therefore read as *not fired* forever.
+
+**What it would take for this gate to say no, and confirmation that each case is reachable.** Stated because a gate whose refusal is unreachable is the defect being removed, reintroduced in the other direction. All four were observed on the bench host on 2026-08-22 and their failure text is quoted in `README.md`: competing CPU work drives the idle mean below the floor; a renamed `Device Utilization %` key makes the GPU probe unreadable and refuses instead of passing; sustained competing work drives the one-minute load average above the ceiling; and a second process holding the lock refuses. The admitting case was observed on the same host in the same minutes.
+
+**An operational consequence, stated rather than left for the operator to discover.** The bench host carries an interactive console session, and that session produces episodic bursts of roughly one core. The gate correctly refuses during them, so a read taken at an arbitrary moment currently refuses a meaningful fraction of the time. **The remedy is to quiesce the interactive session — quit foreground applications — before the run, not to re-read the gate until it happens to pass.** Re-reading until green selects for the quiet phase of a host that is not quiet, which is the contamination this gate exists to exclude. Quiescing a user session is an operator action; it is not a change to the evidence environment, and nothing here authorizes disabling the system extensions that carry the load-average floor, which are the machine's networking and are reserved to Tom.
+
+**The frozen stop-conditions bullet below is superseded in wording only.** Where it reads *the load gate is not met at start or at end*, read: **the quiet-host gate refuses at start or at end**. The run aborts in the first case having timed nothing; in the second the tables are written so the run stays inspectable, and no timing claim may rest on them. Nothing else in this protocol changes — not a cell, not a variant, not a prediction, not the beneficiary key, and not the measurement boundary.
+
 ## Stop conditions, frozen before the run
 
 The run aborts with no timing claim and no retained record if:
@@ -236,16 +267,20 @@ From this directory. Every compiler invocation carries the `DEVELOPER_DIR` pin.
 tar -cf - kernels.metal host.m tile_width_sweep.py \
   | ssh m3 'mkdir -p ~/tiler-tile-width-spike && tar -xf - -C ~/tiler-tile-width-spike'
 
-# 2. Cardinality and compile-only validation. No wall clock is read.
+# 2. Read the quiet-host gate alone. Dispatches nothing, reads no wall clock.
+#    Exit 0 admits, exit 1 refuses and prints which component refused and why.
+ssh m3 'cd ~/tiler-tile-width-spike && python3 tile_width_sweep.py --mode gate'
+
+# 3. Cardinality and compile-only validation. No wall clock is read.
 ssh m3 'cd ~/tiler-tile-width-spike && DEVELOPER_DIR=/Applications/Xcode.app \
   python3 tile_width_sweep.py --mode validate --work-dir work'
 
-# 3. The sweep. Serial, one process, A/B interleaved by manifest order.
+# 4. The sweep. Serial, one process, A/B interleaved by manifest order.
 ssh m3 'cd ~/tiler-tile-width-spike && DEVELOPER_DIR=/Applications/Xcode.app \
   python3 tile_width_sweep.py --mode timing --rounds 5 --reps 7 \
   --out results-timing --work-dir work'
 
-# 4. Retrieve.
+# 5. Retrieve.
 ssh m3 'cd ~/tiler-tile-width-spike/results-timing && tar -cf - .' \
   | tar -xf - -C results/2026-08-22-timing-apple9-f32-msl4-macos27-m3pro-26A5388g-metal32023.883
 ```
