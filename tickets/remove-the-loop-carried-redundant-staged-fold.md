@@ -29,11 +29,6 @@ Either of these fires it; neither has:
 
 Until then the redundancy is a stated cost of an implemented capability, recorded in `emit_loop_carried_cooperative`'s own documentation, and not a defect.
 
-## Trigger check log
-
-- 2026-08-04 — **not fired.** Trigger 2 is unmet: `OperationKind::Predicated { predicate, body }` still carries no results (anchor `/// Executes a nested block when a predicate holds.` on `OperationView::Predicated` in `crates/tiler-ir/src/kernel/model.rs`; historical line cites `:755`, `:1289` were stale by audit base `c99ac54950f2`), so no value-producing predicated region has been accepted. Trigger 1 is unmet: the only multi-round cooperative consumer is the tiled contraction, whose realization is still `deferred`, so no multi-round kernel has been measured on device. Recheck: `grep -n 'Predicated {' crates/tiler-ir/src/kernel/model.rs`.
-- 2026-08-09 — **not fired.** `OperationKind::Predicated { predicate, body }` and `OperationView::Predicated { predicate, body }` still carry no result or else value, and the live tiled contraction realization owner remains `realize-the-tiled-contraction-schedule-and-its-metal-emission` (`status: deferred`; the related `realize-the-strict-contraction-on-metal` edge is historical only — closed/superseded). No measured multi-round device kernel exists, so neither trigger has fired.
-
 ## Fact audit — 2026-08-10
 
 Phase B repair against audit report at base `c99ac54950f2` (ticket content hash `d8fca12500efcde587760c57722cb42ad10f0cab4e721f3b69ab2fe1fdfbd8dd` at Phase A).
@@ -42,3 +37,8 @@ Phase B repair against audit report at base `c99ac54950f2` (ticket content hash 
 - **Public surface:** struck the false claim that `OperationKind` is public; recorded `OperationView` re-export + `OperationKind` `pub(super)` + Predicated identity tag `0x18`.
 - **Inference count:** staged-fold redundancy tightened from `(participants - 1) * participants * rounds` to `(participants - 1)² * rounds` combiner applications (each fold is `1..participants` from seed slot 0).
 - **Trigger log:** replaced stale `:755`/`:1289` with anchors; named the deferred tiled successor rather than the closed strict-contraction ticket as live realization owner.
+
+## Trigger check log
+
+- 2026-08-04 — **not fired.** Trigger 2 is unmet: `OperationKind::Predicated { predicate, body }` still carries no results (anchor `/// Executes a nested block when a predicate holds.` on `OperationView::Predicated` in `crates/tiler-ir/src/kernel/model.rs`; historical line cites `:755`, `:1289` were stale by audit base `c99ac54950f2`), so no value-producing predicated region has been accepted. Trigger 1 is unmet: the only multi-round cooperative consumer is the tiled contraction, whose realization is still `deferred`, so no multi-round kernel has been measured on device. Recheck: `grep -n 'Predicated {' crates/tiler-ir/src/kernel/model.rs`.
+- 2026-08-09 — **not fired.** `OperationKind::Predicated { predicate, body }` and `OperationView::Predicated { predicate, body }` still carry no result or else value, and the live tiled contraction realization owner remains `realize-the-tiled-contraction-schedule-and-its-metal-emission` (`status: deferred`; the related `realize-the-strict-contraction-on-metal` edge is historical only — closed/superseded). No measured multi-round device kernel exists, so neither trigger has fired.

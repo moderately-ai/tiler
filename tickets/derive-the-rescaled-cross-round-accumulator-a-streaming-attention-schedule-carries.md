@@ -42,11 +42,11 @@ Implementing anything; admitting any schedule construct; proposing an ADR; deriv
 1. **[ADR 0095](../docs/decisions/0095-decline-a-distributivity-permission.md)'s second reopening condition resolves in the admitting direction**, jointly with [ADR 0101](../docs/decisions/0101-treat-elementary-function-identities-as-a-fourth-numerical-dimension.md) item 5, so that a rewrite producing this accumulator becomes reachable. That resolution is Tom's and nothing here presumes it.
 2. **A second consumer appears that wants a loop-carried accumulator whose per-round combine differs from the inner combine**, independent of any attention rewrite — a double-buffered blocked contraction with a scaling epilogue is the shape to watch. One consumer is a special case; two is a vocabulary gap.
 
+## Closes when
+
+The corpus states whether a cooperative schedule may carry an accumulator whose per-round update is not the inner combine, the identity obligation is derived per site with a test that could fail, and the one-or-two-capabilities question against the round-dependent span is answered rather than assumed.
+
 ## Trigger check log
 
 - 2026-08-06 — **not fired.** Trigger 1: ADR 0095 was reaffirmed on 2026-08-06 with its decline standing, and its second reopening condition names three prerequisites of which one has no owner until [`derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold`](derive-the-rewrite-rule-declaration-and-admission-shape-for-the-online-softmax-fold.md) runs. Trigger 2: no second consumer identified; the tiled contraction's accumulator is the inner combine and ADR 0100's composition needs no round-varying combine either. Reproduce the first half in one line: `grep -n 'decision_status' docs/decisions/0095-decline-a-distributivity-permission.md` returns `accepted`, and `grep -c 'Reaffirmation — 2026-08-06' docs/decisions/0095-decline-a-distributivity-permission.md` returns `1`.
 - 2026-08-09 — **not fired; one prerequisite description has advanced.** The online-softmax rule-shape derivation is now `done`, but ADR 0095 still declines distributivity and ADR 0101 still admits no elementary-identity permission, so trigger 1 did not resolve in the admitting direction. No second non-attention consumer with a round-varying combine has appeared, so trigger 2 also remains absent. Recheck the completed rule-shape ticket, both accepted decisions, and the schedule vocabulary before reopening this derivation.
-
-## Closes when
-
-The corpus states whether a cooperative schedule may carry an accumulator whose per-round update is not the inner combine, the identity obligation is derived per site with a test that could fail, and the one-or-two-capabilities question against the round-dependent span is answered rather than assumed.

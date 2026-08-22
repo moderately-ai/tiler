@@ -23,10 +23,10 @@ A width-agnostic CPU vector approach may map independent outputs only when its K
 - Require an exact native scalable execution approach and host-earned ISA qualification in `tiler-cpu` / `tiler-cpu-runtime`. No architecture name, target triple, mock probe, simulator, or reference evaluator supplies the evidence.
 - Record identity, artifact, and cache consequences without enumerating one fixed schedule per observed runtime length.
 
-## Trigger check log
-
-- 2026-08-12 — **not fired.** No production native scalable CPU representation or width-agnostic KIR exists. Recheck when `tiler-cpu` has a selected SVE- or RVV-class approach that can execute one retained payload without a fixed lane literal.
-
 ## Closes when
 
 The trigger fires, Tom accepts the exact scalable carrier, and one real scalable CPU artifact executes under host-earned qualification with fixed-width and contributor-partition substitutions independently refused.
+
+## Trigger check log
+
+- 2026-08-12 — **not fired.** No production native scalable CPU representation or width-agnostic KIR exists. Recheck when `tiler-cpu` has a selected SVE- or RVV-class approach that can execute one retained payload without a fixed lane literal.

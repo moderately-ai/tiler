@@ -20,10 +20,6 @@ Only measured repeated rust-analyzer retention output can authorize a bounded pe
 
 **Inference — cumulative defect-case output may still dominate frontend work.** A cached compilation carrying a warning is read on every rust-analyzer expansion request. The repository has no retained measurement of request frequency, repeated byte volume, formatting time, lock contention, or developer impact. Adding a process-global set now would spend complexity on an unmeasured problem and create a new way to suppress evidence.
 
-## Trigger check log
-
-- 2026-08-11 — **not fired.** No retained rust-analyzer measurement shows repeated retention notes materially affecting Tiler expansion time or usability. Reconsider when a reproducible session records expansion count, repeated artifact/retention identity, total bytes written, and frontend wall time with and without reporting.
-
 ## Required decision if fired
 
 - Compare ungated output with bounded per-artifact/retention deduplication and an explicit user policy.
@@ -34,3 +30,7 @@ Only measured repeated rust-analyzer retention output can authorize a bounded pe
 ## Non-goals before the trigger
 
 No once-per-process flag, user setting, hashing/global lock on the expansion path, or suppression behavior.
+
+## Trigger check log
+
+- 2026-08-11 — **not fired.** No retained rust-analyzer measurement shows repeated retention notes materially affecting Tiler expansion time or usability. Reconsider when a reproducible session records expansion count, repeated artifact/retention identity, total bytes written, and frontend wall time with and without reporting.
