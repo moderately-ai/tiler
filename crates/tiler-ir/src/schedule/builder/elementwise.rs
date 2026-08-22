@@ -9,11 +9,14 @@
 //! signature rather than an expression's leaf count.
 
 use crate::schedule::SubnormalMode;
-use crate::schedule::error::{LiveRowMajorSourceRule, ScheduledRegionDiagnostic};
+use crate::schedule::error::{
+    GatherAddressReadRule, LiveRowMajorSourceRule, ScheduledRegionDiagnostic,
+};
 use crate::schedule::handles::AccessOrdinal;
 use crate::schedule::model::{
-    Access, AccessMode, LogicalAccess, ReductionTopology, ScalarProgram, ScheduledRegion,
-    TensorRole, broadcast_decodes_are_replicating, reindex_decodes_are_bijective,
+    Access, AccessMode, BoundsProofKind, LogicalAccess, ReductionTopology, ScalarProgram,
+    ScheduledRegion, TensorRole, broadcast_decodes_are_replicating, gather_index_read_map,
+    reindex_decodes_are_bijective,
 };
 use crate::schedule::numerics::ExceptionalValueAssumption;
 use crate::schedule::parametric::parametric_broadcast_read_is_admissible;
@@ -117,7 +120,29 @@ fn verify_pointwise_region(
     reads: &[Access],
     write: &Access,
 ) -> Result<(), ScheduledRegionDiagnostic> {
-    if reads.is_empty() || reads.len() != input_count {
+    // A region's reads are the expression's scalar leaves followed by one
+    // address-only read per gather. Without a gather there is no second run, so
+    // the leaf count is the whole rule and this stays the exact equality every
+    // pointwise region has always satisfied.
+    //
+    // With a gather present the equality is deliberately **not** restated as
+    // `input_count + gathers`. That would be a second authority over the same
+    // fact, and it would make
+    // [`GatherAddressReadRule::IndexUnowned`] unreachable: an extra address read
+    // would be refused as a wrong count before the bijection could name which
+    // read is orphaned. The association gate below owns the accounting for every
+    // read past the leaf run — each must be named by exactly one gather — and
+    // that bijection *implies* the count rather than assuming it.
+    let gathers = reads
+        .iter()
+        .filter(|read| matches!(read.map, LogicalAccess::GatherSource { .. }))
+        .count();
+    let miscounted = if gathers == 0 {
+        reads.len() != input_count
+    } else {
+        reads.len() < input_count
+    };
+    if reads.is_empty() || miscounted {
         return Err(ScheduledRegionDiagnostic::AccessCount);
     }
     // The source-relation gate runs before the broad access-contract and
@@ -126,6 +151,11 @@ fn verify_pointwise_region(
     // `AccessContract` or `NumericalOrAccessRefinement` — the accepted
     // precedence the fieldless-marker surface states.
     verify_live_row_major_source(reads, write)?;
+    // The gather association gate runs here for the same reason: an ordering,
+    // ownership, occurrence, or proof defect between a source and its address
+    // read is a cross-access property that would otherwise collapse into one of
+    // the broad buckets.
+    verify_gather_address_reads(region, input_count, reads)?;
     if reads
         .iter()
         .any(|read| read.mode != AccessMode::Read || read.ownership.is_some())
@@ -144,11 +174,219 @@ fn verify_pointwise_region(
         || !matches!(region.schedule.reduction, ReductionTopology::None)
         || !matches!(write.tensor, TensorRole::Intermediate | TensorRole::Output)
         || !reads_bind_boundary_tensors_in_order(reads)
+        // Scalar leaves only. The address-only reads that follow them carry the
+        // relation `gather_index_read_map` derived and the gather gate above
+        // already checked; putting them through the leaf admission as well would
+        // refuse a rank-zero index, whose derived `ScalarBroadcast` is
+        // deliberately not an admissible *leaf* map.
         || !reads
-            .iter()
-            .all(|read| pointwise_read_map_is_admissible(&read.map, &region.index.iteration_shape))
+            .get(..input_count)
+            .is_some_and(|leaves| {
+                leaves.iter().all(|read| {
+                    pointwise_read_map_is_admissible(&read.map, &region.index.iteration_shape)
+                })
+            })
     {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    }
+    Ok(())
+}
+
+/// Verifies every gather source read's association with its address-only read.
+///
+/// **Accepted public surface** (2026-08-18, under
+/// `decide-the-data-dependent-index-representation-public-surface`): the eight
+/// [`GatherAddressReadRule`]s at the accepted first-failure precedence — owner
+/// range and order, then mode, then relation, then scalar-leaf use, then
+/// sharing, then orphaning, then occurrence binding, then proof mismatch. A
+/// region carrying no gather has no obligation here and passes untouched.
+///
+/// The canonical access order this polices is scalar value-producing reads in
+/// pointwise-leaf order, then one address-only U32 read per owning gather in
+/// owner-access order, then the write. `input_count` is therefore the boundary
+/// between the two runs, and it arrives as an already-derived fact rather than
+/// being recovered by classifying maps — a gather *source* is itself a scalar
+/// leaf, so the two runs cannot be told apart by relation alone.
+///
+/// **Only statically proved gathers reach schedule formation.** A gather whose
+/// index-value obligation is outstanding carries a validation requirement, which
+/// has no spelling in this vocabulary at all, so there is no arm here that could
+/// admit one.
+///
+/// One deliberate refinement of the stated precedence, recorded because it is a
+/// deviation a later reader would otherwise have to re-derive: when the relation
+/// is itself malformed — a rank-zero source, an out-of-range axis, or overflowing
+/// result arithmetic — [`gather_index_read_map`] has no answer to compare the
+/// address read against, so [`GatherAddressReadRule::IndexRelation`] is
+/// *undecidable* rather than violated. That case is skipped here and reported at
+/// its own position as [`GatherAddressReadRule::OccurrenceBinding`], which names
+/// the actual defect instead of attributing it to the address read.
+fn verify_gather_address_reads(
+    region: &ScheduledRegion,
+    input_count: usize,
+    reads: &[Access],
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let ordinal = |position: usize| {
+        AccessOrdinal::new(u32::try_from(position).expect("verified access count is bounded"))
+    };
+    let fail = |source: Option<usize>, index: usize, rule: GatherAddressReadRule| {
+        ScheduledRegionDiagnostic::GatherAddressRead {
+            source_access: source.map(ordinal),
+            index_access: ordinal(index),
+            rule,
+        }
+    };
+    let mut owned: Vec<Option<usize>> = vec![None; reads.len()];
+    for (position, read) in reads.iter().enumerate() {
+        // `result_shape` is deliberately not read in this loop: rules 1 to 5
+        // are about the *address read*, and the relation's own occurrence
+        // agreement is rule 7, which runs after the ownership bijection closes.
+        let LogicalAccess::GatherSource {
+            source_shape,
+            result_shape: _,
+            axis,
+            index_access,
+            index_shape,
+        } = &read.map
+        else {
+            continue;
+        };
+        let named = usize::try_from(index_access.get()).unwrap_or(usize::MAX);
+        // Rule 1: owner range and order. An ordinal past the access list or at
+        // or before its own source cannot be this gather's address read.
+        if named <= position || named >= reads.len() {
+            return Err(fail(
+                Some(position),
+                named.min(reads.len()),
+                GatherAddressReadRule::IndexNotLater,
+            ));
+        }
+        let address = &reads[named];
+        // Rule 2: mode. An address read on an intermediate, an output, or a
+        // write would address the gather from storage no program input backs.
+        if address.tensor != TensorRole::Input
+            || address.mode != AccessMode::Read
+            || address.ownership.is_some()
+        {
+            return Err(fail(
+                Some(position),
+                named,
+                GatherAddressReadRule::IndexMode,
+            ));
+        }
+        // Rule 3: relation, when one is derivable. The address map is
+        // verifier-derived and never caller-selected, so any other map is a
+        // second, contradictory account of the same addressing.
+        let derived = gather_index_read_map(source_shape, *axis, index_shape);
+        if let Some(derived) = derived.as_ref()
+            && address.map != *derived
+        {
+            return Err(fail(
+                Some(position),
+                named,
+                GatherAddressReadRule::IndexRelation,
+            ));
+        }
+        // Rule 4: scalar-leaf use. An address read supplies coordinates, not
+        // values; a position inside the leaf run would expose the loaded U32 as
+        // scalar SSA.
+        if named < input_count {
+            return Err(fail(
+                Some(position),
+                named,
+                GatherAddressReadRule::IndexUsedAsScalarLeaf,
+            ));
+        }
+        // Rule 5: sharing. Two gathers naming one address read would have a
+        // single coordinate authority between them.
+        if let Some(first) = owned[named] {
+            return Err(fail(Some(first), named, GatherAddressReadRule::IndexShared));
+        }
+        owned[named] = Some(position);
+    }
+    // Rule 6: orphaning. Every read past the leaf run is an address read and must
+    // have exactly one owner. This is the half of the bijection the per-gather
+    // loop cannot see, and it is the one rule whose `source_access` is `None`.
+    for (position, owner) in owned.iter().enumerate().skip(input_count) {
+        if owner.is_none() {
+            return Err(fail(None, position, GatherAddressReadRule::IndexUnowned));
+        }
+    }
+    // Rule 7: occurrence binding. The relation must describe its own occurrence
+    // — the stated result shape is the one the source shape, axis, and index
+    // shape derive, and it is the region's iteration domain.
+    for (position, read) in reads.iter().enumerate() {
+        let LogicalAccess::GatherSource {
+            source_shape,
+            result_shape,
+            axis,
+            index_access,
+            index_shape,
+        } = &read.map
+        else {
+            continue;
+        };
+        let named = usize::try_from(index_access.get()).unwrap_or(usize::MAX);
+        let derived_result =
+            crate::semantic::gather_result_shape(*axis, source_shape, index_shape).ok();
+        if derived_result.is_none_or(|(_, shape)| shape != *result_shape)
+            || *result_shape != region.index.iteration_shape
+        {
+            return Err(fail(
+                Some(position),
+                named,
+                GatherAddressReadRule::OccurrenceBinding,
+            ));
+        }
+    }
+    // Rule 8: proof mismatch. The paired bounds proof must restate this exact
+    // relation, and the retained static proof's own subject must agree with it.
+    // The proof is read through its public accessors rather than re-derived, so
+    // this compares two independently produced accounts.
+    for (position, read) in reads.iter().enumerate() {
+        let LogicalAccess::GatherSource {
+            source_shape,
+            result_shape,
+            axis,
+            index_access,
+            index_shape,
+        } = &read.map
+        else {
+            continue;
+        };
+        let named = usize::try_from(index_access.get()).unwrap_or(usize::MAX);
+        let mismatch = || fail(Some(position), named, GatherAddressReadRule::ProofMismatch);
+        let Some(record) = region
+            .index
+            .bounds_proofs
+            .iter()
+            .find(|record| record.id == read.bounds)
+        else {
+            return Err(mismatch());
+        };
+        let BoundsProofKind::GatherSource {
+            source_shape: proof_source,
+            result_shape: proof_result,
+            axis: proof_axis,
+            index_access: proof_index_access,
+            index_shape: proof_index,
+            proof,
+        } = &record.kind
+        else {
+            return Err(mismatch());
+        };
+        if proof_source != source_shape
+            || proof_result != result_shape
+            || proof_axis != axis
+            || proof_index_access != index_access
+            || proof_index != index_shape
+            || proof.source_shape() != source_shape
+            || proof.result_shape() != result_shape
+            || proof.index_shape() != index_shape
+            || proof.axis() != *axis
+        {
+            return Err(mismatch());
+        }
     }
     Ok(())
 }
@@ -332,6 +570,16 @@ fn pointwise_read_map_is_admissible(
         // for the accepted reason: it is a derivation of a copy program a
         // pointwise region does not carry, so admitting it here would let the
         // map leak into arithmetic regions.
+        // The gather source is a value-producing leaf like any other read: it
+        // addresses one source element per iteration coordinate, with the
+        // gathered axis supplied by the loaded U32. What makes that a *total*
+        // function of the iteration coordinate with a discharged bounds
+        // obligation is the association gate above, which has already proved
+        // the paired address read and the retained static proof. Only the
+        // domain agreement is restated here, for the reason the two structural
+        // relations restate theirs: a relation derived against some other
+        // domain would otherwise satisfy its own internal consistency.
+        LogicalAccess::GatherSource { result_shape, .. } => result_shape == iteration_shape,
         LogicalAccess::ScalarBroadcast
         | LogicalAccess::PackedU4LsbZeroTail { .. }
         | LogicalAccess::ReductionContributor { .. }

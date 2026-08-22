@@ -7,12 +7,12 @@
 use std::sync::Arc;
 
 use tiler_ir::index::{
-    DimensionId, DomainRole, FrozenScalarRegistry, IndexExprId, IndexInteger, IndexRegionBuilder,
-    IndexRegionDiagnostic, ScalarArity, ScalarAttributeField, ScalarAttributeSchema,
-    ScalarAttributes, ScalarEffect, ScalarInferenceError, ScalarInferenceOutputs,
-    ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract, ScalarOperationDefinition,
-    ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId, SourcedIndexInteger,
-    TensorRole, VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
+    DimensionId, DomainRole, FrozenScalarRegistry, GatherIndexBoundsProofKind, IndexExprId,
+    IndexInteger, IndexRegionBuilder, IndexRegionDiagnostic, ScalarArity, ScalarAttributeField,
+    ScalarAttributeSchema, ScalarAttributes, ScalarEffect, ScalarInferenceError,
+    ScalarInferenceOutputs, ScalarInferenceRequest, ScalarOpKey, ScalarOperationContract,
+    ScalarOperationDefinition, ScalarOperationInferencer, ScalarRegistryBuilder, ScalarValueId,
+    SourcedIndexInteger, TensorRole, VerifiedIndexRegion, VerifiedTensorAccessId, VerifiedTensorId,
 };
 use tiler_ir::program::abi::AvailabilityPhase;
 use tiler_ir::semantic::{
@@ -2294,5 +2294,109 @@ mod governed {
             ),
             "the governed profile already owns tiler.scalar::add-f32@1"
         );
+    }
+}
+
+/// The oracle re-derives a retained gather proof's classification for itself.
+///
+/// **What this is, and what it deliberately is not.** The accepted packet asks
+/// that a static resolution "independently checks its proof identity". That is
+/// not reachable from this crate as the boundary now stands:
+/// `GatherIndexBoundsProofIdentity` has no public constructor and no byte
+/// conversion, so `as_bytes` is the whole surface a downstream crate holds, and
+/// re-deriving the bytes to compare against would mean reimplementing the
+/// encoding the index module exists to solely own — a fork of the identity
+/// domain, which is the exact defect the missing constructor prevents. Closing
+/// that needs a public-boundary decision and is recorded as outstanding.
+///
+/// What *is* available, and is taken here, is the narrower slice: the retained
+/// proof's `kind()` and `index_shape()` are checked against a derivation this
+/// test performs from the operand shapes alone. The derivation is written out
+/// rather than called, so it shares no code with the deriver under test and a
+/// wrong classification cannot agree with it for the same wrong reason.
+///
+/// The precedence is load-bearing and is asserted as such: an empty result
+/// domain wins even where the gathered extent *also* spans the whole U32 space,
+/// because a domain that visits no point places no obligation on any value.
+#[test]
+fn a_retained_gather_proof_agrees_with_an_independent_classification() {
+    let scalars = scalar_registry(1);
+    // Written out here rather than imported: this is the independent half.
+    let classify = |source: &[u64], index: &[u64], axis: usize| -> Option<&'static str> {
+        let result: Vec<u64> = source[..axis]
+            .iter()
+            .chain(index)
+            .chain(&source[axis + 1..])
+            .copied()
+            .collect();
+        if result.contains(&0) {
+            return Some("vacuous");
+        }
+        if source[axis] >= 1_u64 << 32 {
+            return Some("u32-universe");
+        }
+        None
+    };
+    let cases: [(&[u64], &[u64], u32); 4] = [
+        // An empty *result* extent, with an inhabited index: the emptiness is a
+        // property of the composed domain, not of the index shape.
+        (&[0, 5], &[3], 1),
+        // The gathered extent spans every U32 value.
+        (&[1 << 32, 4], &[], 0),
+        // Both arguments hold at once. The empty domain must win.
+        (&[1 << 32, 0], &[3], 0),
+        // Neither holds: the obligation is outstanding, and no proof exists.
+        (&[4, 5], &[3], 1),
+    ];
+    for (source_dims, index_dims, axis) in cases {
+        let region = gather_read_region(&scalars, source_dims, index_dims, axis)
+            .unwrap_or_else(|error| panic!("{source_dims:?}/{index_dims:?}@{axis}: {error}"));
+        let access = region
+            .accesses()
+            .find(|access| access.view().gather_read().is_some())
+            .expect("the fixture authors exactly one gather");
+        let gather = access
+            .view()
+            .gather_read()
+            .expect("the access was just classified as a gather");
+        let expected = classify(source_dims, index_dims, axis as usize);
+        match (gather.bounds_resolution().statically_proved(), expected) {
+            (Some(proof), Some(argument)) => {
+                let observed = match proof.kind() {
+                    GatherIndexBoundsProofKind::VacuousEmptyResultDomain => "vacuous",
+                    GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent => "u32-universe",
+                    other => {
+                        panic!("an unclassified closed argument reached the oracle: {other:?}")
+                    }
+                };
+                assert_eq!(
+                    observed, argument,
+                    "{source_dims:?}/{index_dims:?}@{axis}: the retained argument disagrees with \
+                     an independent classification of the same operands",
+                );
+                assert_eq!(
+                    *proof.index_shape(),
+                    Shape::try_from_dims(index_dims.iter().copied()).unwrap(),
+                    "{source_dims:?}/{index_dims:?}@{axis}: the retained index shape is not the \
+                     operand's",
+                );
+            }
+            (None, None) => {
+                // Total, not optional: no proof means a named outstanding
+                // requirement, never an absent answer.
+                assert!(
+                    gather
+                        .bounds_resolution()
+                        .invocation_validation_required()
+                        .is_some(),
+                    "{source_dims:?}/{index_dims:?}@{axis}: the resolution must be total",
+                );
+            }
+            (proof, expected) => panic!(
+                "{source_dims:?}/{index_dims:?}@{axis}: the oracle expected {expected:?} and the \
+                 region retained {:?}",
+                proof.map(tiler_ir::index::GatherIndexBoundsProof::kind),
+            ),
+        }
     }
 }

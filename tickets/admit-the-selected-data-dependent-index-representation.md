@@ -178,4 +178,73 @@ The accepted packet's layers above the realization law are untouched. These are 
 - The governed lowering capability row (21 to 22) and the ADR 0108 schedule-clause amendment with its catalog and contract sweep.
 - **The oracle's independent check of a static resolution's proof identity.** The packet requires that in the oracle "a static resolution independently checks its proof identity and still bounds-checks defensively". Recorded here on 2026-08-22 by `close-the-gather-review-findings-on-the-index-layer` (F6) rather than implemented, because it cannot be done inside the reference crate as the boundary now stands. `GatherIndexBoundsProofIdentity` is declared with `pub(super) Vec<u8>` and its doc states "No public constructor and no byte conversion", so `as_bytes` is the whole surface a downstream crate has; `crates/tiler-ir/src/index/builder/gather.rs` mints the only value, at the line calling `encode_gather_bounds_identity`. `tiler-reference` can therefore *read* a retained identity but cannot derive the bytes to compare it against without reimplementing that encoding, which would fork the identity domain the module exists to solely own — the exact defect the missing constructor prevents. Closing it needs a public-boundary decision (expose a verifier-side re-derivation, or an identity-comparison entry point) and so belongs above the index layer. **The defensive bounds check itself is present and now tested**: the oracle's `gather` bounds-checks regardless of the retained resolution, and `an_address_past_every_payload_refuses_before_the_source_is_read` in `crates/tiler-reference/tests/index_region_oracle.rs` pins that the decision precedes the source read. A narrower slice is available if wanted — checking the retained `kind()` and `index_shape()` against an independent derivation from the operand shapes, without touching identity.
 
+## Third pass — 2026-08-22, the schedule and kernel-wall layer, base `fe4fe143`
+
+### Exact-base re-audit of the remainder section
+
+Every Fact the remainder states was re-read in its named source file at base `fe4fe1437c025c5efb92d95b5ba615085d4b945e`.
+
+| Remainder claim | Verdict at `fe4fe143` |
+|---|---|
+| `LogicalAccess::GatherSource` takes reserved tag `0x0C` | **verified** — the reservation is written out in the doc comment above `const TAG_PARTITIONED_COPY_SOURCE`, which names this packet by ticket id and calls `0x0C` `reserved-and-unwritten at this base`. `0x0C` was the only free value below `0x0D`. |
+| `BoundsProofKind::GatherSource` takes `0x13`, not the packet's `0x03` | **verified, and the packet is still wrong** — `TAG_LINEAR_RANGE = 0x11`, `TAG_REDUCTION_DOMAIN = 0x12`, `TAG_SCALAR_BROADCAST = 0x03`, all re-read in `crates/tiler-ir/src/schedule/model.rs`. The second pass's correction to *why* also holds: the two encoders write disjoint frames, so `0x03` would not have collided; the ground is the `0x1X` family run. |
+| `kernel::lower::addressing` needs the exhaustive `BodyRefinement` arm | **verified, with a citation-shape correction.** `addressing` is a **free function** in `crates/tiler-ir/src/kernel/lower.rs`, not a module — `kernel::lower::addressing` reads like a module path and resolves to nothing. It is exhaustive over `LogicalAccess`, so the arm was a build error rather than a silent omission. |
+| `LogicalAccess` is 11 variants, `BoundsProofKind` 2 | **verified** — both `#[non_exhaustive]`, both totally matched inside `tiler-ir`. Now 12 and 3. |
+| The oracle's independent proof-**identity** check cannot be done in `tiler-reference` | **verified at source** — `pub struct GatherIndexBoundsProofIdentity(pub(super) Vec<u8>)` with `as_bytes` its whole surface, and the doc line `No public constructor and no byte conversion`. Still blocked; see below. |
+| The narrower oracle slice — retained `kind()` and `index_shape()` against an independent derivation — is available | **verified and taken.** Both accessors are `pub`, as are `source_shape`, `result_shape`, `axis`, and `source_extent`. |
+| Compiler access-relation tag `0x06` is next free | **verified** — `encode_access_relation` writes `0x01`/`0x02`/`0x03`/`0x05`, `0x04` is `UNREAD_DECLARED_INPUT_TAG`, and the file's own contract says a later relation takes a tag above `0x05`. Not consumed by this pass. |
+| Governed lowering capability rows are 21 | **verified** — `GOVERNED_INDEX_ACCESS_CAPABILITIES = 21` in `crates/tiler-compiler/src/governed.rs`, `#[cfg(test)]`, 14 fixed rows plus one per admitted concatenate arity. Not moved by this pass. |
+| ADR 0108's `## Implementation boundary` describes the tree | **false at this base, and repaired.** Its own command `grep -rn 'InvocationValidationRequired\|StaticallyProved\|GatherIndexBounds' crates/` is quoted there as returning nothing; it matched 59 lines across six files before this pass and 72 across ten after. `implementation_status` was `not-started`. Both corrected in tense. |
+
+**One remainder claim was materially incomplete, and it changed the work.** The remainder names the pieces but not their accepted spelling. `decide-the-data-dependent-index-representation-public-surface` fixes all of it under `### Schedule association, ordering, and proof`: the field is `index_access`, not the packet's `index_input`; `GatherAddressReadRule` has exactly eight named variants; `ScheduledRegionDiagnostic::GatherAddressRead` carries `source_access: Option<AccessOrdinal>` and `index_access` beside the rule; `BoundsProofKind::GatherSource` carries the five relation fields **and the `GatherIndexBoundsProof` itself**; and — decisively — **only statically proved gathers reach schedule formation**. A first draft that derived a two-way resolution at schedule level was wrong and was discarded. Anyone reading only the remainder section will re-make that error.
+
+### Landed on this branch
+
+`LogicalAccess::GatherSource { source_shape, result_shape, axis, index_access, index_shape }` at reserved tag `0x0C`; `BoundsProofKind::GatherSource` carrying those five members plus a boxed `GatherIndexBoundsProof`, at `0x13`; `GatherAddressReadRule`'s eight accepted rules; `ScheduledRegionDiagnostic::GatherAddressRead`; `gather_index_read_map`; the association verifier `verify_gather_address_reads`; and the `kernel::lower` `BodyRefinement` wall.
+
+`gather_index_read_map` is the single authority for the address read's relation, derived and never caller-selected, in the three forms the accepted surface states: `LinearIdentity` when result and index shapes are equal, `ScalarBroadcast` for a rank-zero index, otherwise a canonical `BroadcastReplication` projecting the index run. The existing bounds rules then serve the address read unchanged — a replication's proof is its operand's element count, an identity's is the owned output count — so no new proof pairing was needed for it.
+
+**Two design decisions that depart from a literal reading, both deliberate.**
+
+1. *The proof is boxed.* The accepted spelling is `proof: GatherIndexBoundsProof`. Embedded by value it makes every `BoundsProof` carry three shapes, two resolved types, an ordered domain, and a region identity — in a `Vec<BoundsProof>` on every region, including regions with no gather. Clippy's `large_enum_variant` fires on it. `Box` preserves the semantics exactly: the encoder writes only the framed identity and the accessors are the proof's own.
+2. *The read-count gate is asymmetric.* With no gather it stays the exact `reads.len() == input_count` equality every pointwise region has always satisfied. With a gather it becomes `reads.len() >= input_count` and the ownership bijection does the accounting. Restating the count as `input_count + gathers` **makes `IndexUnowned` unreachable** — an extra address read is refused as a wrong count before the bijection can name which read is orphaned — and the accepted surface deliberately created that rule, and its `source_access: None` case, for exactly that defect. This was found by asking what it would take for each rule to say *no*, not by review.
+
+`verify_gather_address_reads` reports at the accepted first-failure precedence with one deliberate refinement, recorded in its own doc: when the relation is malformed there is no derived address map to compare against, so `IndexRelation` is *undecidable* rather than violated, and the case is reported at its own position as `OccurrenceBinding`. Attributing it to the address read would name the wrong thing.
+
+**Identity moved nowhere.** The schedule identity domain does **not** step, and no previously encodable region's bytes move: `0x01`–`0x08`, `0x0A`, `0x0B`, `0x0D` keep their tags and field layouts, `0x09` stays retired-and-never-reused, and `0x11`/`0x12` are untouched. Every pre-existing identity pin and golden in `tiler-ir` passes unchanged — the `tiler-ir` suite went 1,259 to 1,275 tests and **no existing test was edited for a moved value**. Three existing test files were touched, and none of them for that reason: `kernel/tests.rs` gained one arm in the closed body-shaping vocabulary census (a deliberate build error on widening), `schedule/builder/tests.rs` had `strict_numerical` widened to `pub(super)` so the new module could share the fixture, and `schedule/parametric.rs` had its partial five-of-twelve tag sample **replaced** by a complete `variant_count`-sized census — a strictly stronger check, and the one removal in this pass. No compiler pin moves, because no compiler surface was touched. `tiler.index-region.v11`, the realization-law registry, and the semantic snapshot are all unmoved by this pass.
+
+### Subject perturbations, each driven separately with its failure text
+
+Each of the eight association rules is driven by its own region perturbation asserting the exact diagnostic, including both access coordinates. Beyond those:
+
+| Perturbation | Failure |
+|---|---|
+| gather relation tag takes the retired `0x09` | `the pinned access-relation tag assignment moved` / `left: [1, 3, 4, 2, 5, 6, 7, 8, 10, 11, 13, 9]  right: [… 13, 12]` |
+| gather bounds proof takes the packet's `0x03` | `the bounds-proof family run is 0x1X and its assignment moved` / `left: [17, 18, 3]  right: [17, 18, 19]` |
+| encoder writes the index shape before the source shape | golden mismatch, `left: "0c0000000000000001…"  right: "0c0000000000000002…"` |
+| encoder drops the index-access ordinal | golden mismatch, the two fixed-width fields collapsing to one |
+| the association gate's result is discarded | ten of the fourteen gather tests redden; the survivor `a_gather_relation_paired_with_a_linear_range_is_refused` falls through to `left: [BoundsProof]`, showing `bounds_proof_refines_access`'s wildcard is the fail-closed backstop |
+| the index-layer deriver's precedence inverted (U32 before empty) | the **reference-crate** oracle catches it across a crate boundary: `[4294967296, 0]/[3]@0: the retained argument disagrees with an independent classification of the same operands` / `left: "u32-universe"  right: "vacuous"` |
+
+The two vocabulary censuses are sized by `variant_count`, so a widened `LogicalAccess`, `BoundsProofKind`, or `GatherAddressReadRule` is a length type error rather than a census that has silently stopped covering its domain. The access census also asserts `0x09` is absent, because distinctness alone would admit a relation that moved onto the retired value.
+
+### The blocked oracle item, and the slice that was taken
+
+**Still blocked, unchanged, and not worked around.** `GatherIndexBoundsProofIdentity` is `pub(super) Vec<u8>` with `as_bytes` its whole downstream surface, so `tiler-reference` cannot derive bytes to compare a retained identity against without reimplementing `encode_gather_bounds_identity` — forking the identity domain the index module exists to solely own.
+
+**Release trigger:** a public-boundary decision by Tom, choosing between a verifier-side re-derivation entry point and an identity-comparison entry point on the index module. Neither can be minted by a worker: it widens an accepted public surface, and the whole value of the missing constructor is that holding one of these values is evidence the closed proof ran.
+
+**The narrower slice was available and is taken.** `a_retained_gather_proof_agrees_with_an_independent_classification` in `crates/tiler-reference/tests/index_region_oracle.rs` re-derives the proof classification from the operand shapes alone, in code written out rather than called, over four cases — an empty result domain with an inhabited index, a gathered extent spanning U32, **both at once**, and neither. It touches no identity. It was worth taking: it is the only check anywhere that would catch a precedence inversion from outside the crate that decides it, and the perturbation above shows it does.
+
+## Remaining work - not landed here, and why
+
+The schedule vocabulary is a coherent stopping point: it is admitted and verified, nothing above it can reach it, and the kernel wall refuses it by name. What remains is the compiler vertical, which is a lane of its own rather than a tail:
+
+- `NormalizedOutput::Gather` and `NormalizedOutputSubject::Gather`, the `gather-f32.v1` output subtag, and compiler access-relation tag `0x06`. `NormalizedOutput` is `pub(crate)` with **five** variants and about **twenty** exhaustive matches across `normal_form.rs`, `physical.rs`, `pipeline.rs`, and `request/subject.rs`; `spell_output` in `physical.rs` would have to actually build a gather region. Each match needs a real gather answer, not an arm.
+- `InvocationGatherIndexValidationRequirement`, the two `InvocationValidationRequired` outcomes, `tiler_compiler::legality::PendingInvocationIndexValidation`, and the `gather-invocation-validation-required` reason. Nothing named `PendingInvocation*` exists in the workspace today; the nearest vocabulary is `IndexRefinementOutcome` and `LoweringError::reason`.
+- The governed lowering capability row, 21 to 22.
+- Three sites that record gather's absence and must flip with the above, none of which the earlier remainder named: `UNPLANNED_OPERATIONS` in `crates/tiler-compiler/src/policy.rs` lists `tiler::gather-f32@1`; `gather_is_absent_from_the_governed_fusion_roles` in `fusion_legality.rs`; and `gather_is_absent_from_the_real_request_recognition_operation_set` in `request/tests.rs`.
+
+No runtime receipt was minted and no obligation was treated as discharged. No artifact, manifest, cache, or Metal surface was touched by this pass.
+
 No runtime receipt was minted and no obligation was treated as discharged. No artifact, manifest, cache, or Metal surface was touched.

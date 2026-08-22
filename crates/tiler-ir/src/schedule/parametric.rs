@@ -371,8 +371,14 @@ pub(crate) fn encode_logical_access_bytes(access: &LogicalAccess) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
+    use std::mem::variant_count;
+
     use super::*;
-    use crate::schedule::{AxisDecode, LogicalAccess};
+    use crate::schedule::model::push_bounds_proof_for_test;
+    use crate::schedule::{
+        AccessOrdinal, AxisDecode, BoundsProof, BoundsProofKind, BoundsWitnessId, ContributorOrder,
+        LogicalAccess, TensorRole,
+    };
     use crate::semantic::{BroadcastAxisSource, F32Broadcast, InputKey, OutputKey};
     use crate::shape::{
         Axis, BindingSource, EXTENT_PHASE_CEILING, Extent, ExtentRelation, ExtentTerm,
@@ -661,34 +667,193 @@ mod tests {
         );
     }
 
+    /// The gather relation's exact canonical bytes, field by field.
+    ///
+    /// A tag census shows the leading byte is fresh; it says nothing about the
+    /// order of what follows. Two gathers that exchanged their source and index
+    /// shapes, or their axis and ordinal, would carry distinct tags and equal
+    /// lengths, so only a byte pin distinguishes them. The accepted surface
+    /// requires exactly this: "gather field-order injectivity".
+    ///
+    /// The frame is tag, framed source shape, framed result shape, axis,
+    /// index-access ordinal, framed index shape — every field recoverable at a
+    /// position the frames determine.
     #[test]
-    fn the_parametric_tag_is_append_only_and_injective() {
-        let environment = admitted_env(interval("t", 1, 64));
-        let parametric = carrier(&environment, operand_extent_n(), pad_t());
-        let parametric_bytes = encode_logical_access_bytes(&parametric);
+    fn the_gather_relation_canonical_bytes_are_pinned_field_by_field() {
+        let gather = LogicalAccess::GatherSource {
+            source_shape: Shape::from_dims([8, 3]),
+            result_shape: Shape::from_dims([2, 3]),
+            axis: Axis::new(0),
+            index_access: AccessOrdinal::new(1),
+            index_shape: Shape::from_dims([2]),
+        };
+        let encoded = |access: &LogicalAccess| hex(&encode_logical_access_bytes(access));
+        assert_eq!(
+            encoded(&gather),
+            concat!(
+                "0c",
+                "000000000000000200000000000000080000000000000003",
+                "000000000000000200000000000000020000000000000003",
+                "00000000",
+                "00000001",
+                "00000000000000010000000000000002",
+            ),
+        );
+        // The two shapes are not interchangeable: a gather whose source and
+        // index shapes are exchanged is a different relation and must not share
+        // these bytes.
+        let exchanged = LogicalAccess::GatherSource {
+            source_shape: Shape::from_dims([2]),
+            result_shape: Shape::from_dims([2, 3]),
+            axis: Axis::new(0),
+            index_access: AccessOrdinal::new(1),
+            index_shape: Shape::from_dims([8, 3]),
+        };
+        assert_ne!(encoded(&gather), encoded(&exchanged));
+        // Nor are the axis and the ordinal, which are adjacent fixed-width
+        // fields and would otherwise be silently transposable.
+        let transposed = LogicalAccess::GatherSource {
+            source_shape: Shape::from_dims([8, 3]),
+            result_shape: Shape::from_dims([2, 3]),
+            axis: Axis::new(1),
+            index_access: AccessOrdinal::new(0),
+            index_shape: Shape::from_dims([2]),
+        };
+        assert_ne!(encoded(&gather), encoded(&transposed));
+    }
 
-        let broadcast = LogicalAccess::BroadcastReplication {
-            operand_shape: Shape::from_dims([2]),
-            result_shape: Shape::from_dims([2, 2]),
-            axes: vec![AxisDecode::read(1, 2)],
-        };
-        let reindex = LogicalAccess::ReindexBijection {
-            operand_shape: Shape::from_dims([2, 3]),
-            result_shape: Shape::from_dims([3, 2]),
-            axes: vec![AxisDecode::read(1, 2), AxisDecode::read(2, 3)],
-        };
-        let tags = vec![
-            encode_logical_access_bytes(&LogicalAccess::LinearIdentity)[0],
-            encode_logical_access_bytes(&LogicalAccess::ScalarBroadcast)[0],
-            encode_logical_access_bytes(&reindex)[0],
-            encode_logical_access_bytes(&broadcast)[0],
-            parametric_bytes[0],
+    /// Every access relation's tag, sized from the enum rather than by hand.
+    ///
+    /// This is the whole-vocabulary injectivity test the tag derivations in
+    /// `model.rs` refer to. It was a five-of-twelve sample until the gather
+    /// relation landed; a sample cannot show that `0x0C` is free, which is
+    /// exactly the fact a new relation needs. Sizing the array from
+    /// [`variant_count`] makes a widened vocabulary a length type error here
+    /// instead of a census that has quietly stopped covering its own domain.
+    ///
+    /// The expected list is written out rather than merely deduplicated,
+    /// because distinctness alone would admit a relation that silently moved
+    /// onto another's retired value — `0x09` is retired-and-never-reused, and
+    /// no entry here may take it.
+    #[test]
+    fn every_access_relation_tag_is_distinct_and_pinned() {
+        let environment = admitted_env(interval("t", 1, 64));
+        let relations: [LogicalAccess; variant_count::<LogicalAccess>()] = [
+            LogicalAccess::LinearIdentity,
+            LogicalAccess::ScalarBroadcast,
+            LogicalAccess::PackedU4LsbZeroTail {
+                logical_elements: 4,
+            },
+            LogicalAccess::ReductionContributor {
+                input_shape: Shape::from_dims([2, 3]),
+                output_shape: Shape::from_dims([2]),
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            LogicalAccess::ContractionOperand {
+                operand_shape: Shape::from_dims([2, 3]),
+                output_shape: Shape::from_dims([2]),
+                contracted_shape: Shape::from_dims([3]),
+                sources: Vec::new(),
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            LogicalAccess::ReindexBijection {
+                operand_shape: Shape::from_dims([2, 3]),
+                result_shape: Shape::from_dims([3, 2]),
+                axes: vec![AxisDecode::read(1, 2), AxisDecode::read(2, 3)],
+            },
+            LogicalAccess::BroadcastReplication {
+                operand_shape: Shape::from_dims([2]),
+                result_shape: Shape::from_dims([2, 2]),
+                axes: vec![AxisDecode::read(1, 2)],
+            },
+            carrier(&environment, operand_extent_n(), pad_t()),
+            LogicalAccess::LiveRowMajorSource {
+                inner_axis: Axis::new(0),
+            },
+            LogicalAccess::LiveRowMajor,
+            LogicalAccess::PartitionedCopySource,
+            LogicalAccess::GatherSource {
+                source_shape: Shape::from_dims([8, 3]),
+                result_shape: Shape::from_dims([2, 3]),
+                axis: Axis::new(0),
+                index_access: AccessOrdinal::new(1),
+                index_shape: Shape::from_dims([2]),
+            },
         ];
+        let tags: Vec<u8> = relations
+            .iter()
+            .map(|relation| encode_logical_access_bytes(relation)[0])
+            .collect();
         let mut unique = tags.clone();
         unique.sort_unstable();
         unique.dedup();
         assert_eq!(unique.len(), tags.len(), "access tags collided: {tags:?}");
-        assert_eq!(tags, [0x01, 0x03, 0x06, 0x07, 0x08]);
+        assert_eq!(
+            tags,
+            [
+                0x01, 0x03, 0x04, 0x02, 0x05, 0x06, 0x07, 0x08, 0x0A, 0x0B, 0x0D, 0x0C,
+            ],
+            "the pinned access-relation tag assignment moved",
+        );
+        assert!(
+            !tags.contains(&0x09),
+            "0x09 is the retired live-row-major relation and is never reused",
+        );
+    }
+
+    /// Every bounds-proof kind's tag, sized from the enum.
+    ///
+    /// The proof tags occupy their own `0x1X` family run, which is a separate
+    /// frame from the access-relation space above: `0x01` means
+    /// `LinearIdentity` in one and nothing at all in the other. That is why the
+    /// gather proof takes `0x13` rather than the `0x03` its packet named — the
+    /// run convention, not a byte-level collision.
+    #[test]
+    fn every_bounds_proof_kind_tag_is_distinct_and_pinned() {
+        let kinds: [BoundsProofKind; variant_count::<BoundsProofKind>()] = [
+            BoundsProofKind::LinearRange { element_count: 4 },
+            BoundsProofKind::ReductionDomain {
+                input_shape: Shape::from_dims([2, 3]),
+                output_shape: Shape::from_dims([2]),
+                axes: vec![Axis::new(1)],
+                order: ContributorOrder::OriginalAxisLexicographic,
+            },
+            BoundsProofKind::GatherSource {
+                source_shape: Shape::from_dims([8, 3]),
+                result_shape: Shape::from_dims([2, 3]),
+                axis: Axis::new(0),
+                index_access: AccessOrdinal::new(1),
+                index_shape: Shape::from_dims([2]),
+                proof: Box::new(crate::schedule::builder::gather_tests::static_gather_proof()),
+            },
+        ];
+        let tags: Vec<u8> = kinds
+            .iter()
+            .map(|kind| {
+                let mut bytes = Vec::new();
+                push_bounds_proof_for_test(
+                    &mut bytes,
+                    &BoundsProof {
+                        id: BoundsWitnessId::new(0),
+                        tensor: TensorRole::Input,
+                        component_role: None,
+                        kind: kind.clone(),
+                    },
+                );
+                // id (4) + tensor role (1) + component role (1) then the kind tag.
+                bytes[6]
+            })
+            .collect();
+        let mut unique = tags.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), tags.len(), "proof tags collided: {tags:?}");
+        assert_eq!(
+            tags,
+            [0x11, 0x12, 0x13],
+            "the bounds-proof family run is 0x1X and its assignment moved",
+        );
     }
 
     #[test]

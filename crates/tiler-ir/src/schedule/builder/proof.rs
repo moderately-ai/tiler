@@ -224,7 +224,18 @@ fn bounds_proof_refines_access(
         // function's signature carries no access ordinal to look one up with.
         // The exact element-count agreement is owned by the
         // `partitioned-copy-source-shape` rule in the copy gate.
-        (BoundsProofKind::LinearRange { .. }, LogicalAccess::PartitionedCopySource) => true,
+        //
+        // The gather pair joins it for the same reason at a different layer:
+        // the exact agreement between the proof's five relation fields, the
+        // relation's own five, and the retained static proof's subject is the
+        // `gather-address-read-proof-mismatch` rule in the pointwise gate,
+        // which is the only place that can see the whole access list. What
+        // this arm contributes is the *crossing* refusal — a gather relation
+        // paired with a `LinearRange`, or a gather proof paired with any other
+        // relation, falls to the wildcard below and is refused as
+        // `BoundsProof` rather than admitted on a domain nobody proved.
+        (BoundsProofKind::LinearRange { .. }, LogicalAccess::PartitionedCopySource)
+        | (BoundsProofKind::GatherSource { .. }, LogicalAccess::GatherSource { .. }) => true,
         _ => false,
     }
 }
