@@ -89,6 +89,9 @@ The suite either asserts dispositions through a surface that is not the rendered
   printf 'portfolio structural seam:       %s\n' "$(grep -rl 'assemble_plan_artifact' $S/src | wc -l | tr -d ' ')"
   printf 'portfolio execution seam:        %s\n' "$(grep -rl 'route_with_adapter' $S/src | wc -l | tr -d ' ')"
   printf 'sibling carrier logged fired:    %s\n' "$(grep -c '2026-08-22 (supersedes the entry above) — \*\*fired\.\*\*' $C)"
+  printf 'fixture routes (tree-wide):      %s\n' "$(grep -rl 'route_with_adapter' crates/tiler-conformance/tests/independent_backend/ | wc -l | tr -d ' ')"
+  printf 'fixture reaches oracle:          %s\n' "$(grep -rl 'tiler_reference' crates/tiler-conformance/tests/independent_backend/ | wc -l | tr -d ' ')"
+  printf 'same two greps in main.rs only:  %s\n' "$(grep -c 'route_with_adapter\|tiler_reference' $F)"
   ```
 
   Actual output at `518c56c3`:
@@ -101,7 +104,12 @@ The suite either asserts dispositions through a surface that is not the rendered
   portfolio structural seam:       2
   portfolio execution seam:        3
   sibling carrier logged fired:    1
+  fixture routes (tree-wide):      1
+  fixture reaches oracle:          1
+  same two greps in main.rs only:  0
   ```
+
+  **The last three lines are a negative control against a false absence, and it fires here.** The fixture is split across five files, so `route_with_adapter` and `tiler_reference` are absent from `main.rs` and a per-file grep reports `0` — which reads as *the fixture neither routes nor reaches the oracle* rather than *the module was split*. The tree-wide counts locate them at `crates/tiler-conformance/tests/independent_backend/nodefold_adapter.rs` and `.../workload.rs`; `assemble_plan_artifact` is called from `.../nodefold.rs`. Search the directory, never `main.rs`, and treat a `0` on the last line as expected rather than as a regression.
 
   `operative condition stated` is **2** rather than 1 because the decision record's dated correction quotes the retired wording, as this repository's convention requires; before that repair it was 1. The first line is the one that ties the condition to *this* ticket by id, and would fall to 0 if the acceptance paragraph were rewritten to drop this carrier. What this block cannot do is read for meaning: it confirms the sentences and the two subjects are present, while the judgement that the condition is satisfied rests on the reading above and on the resolution it cites.
 
