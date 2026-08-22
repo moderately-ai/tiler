@@ -1,7 +1,7 @@
 ---
 id: narrow-the-contraction-witness-refusal-to-staging-it-cannot-read
 title: Narrow the contraction witness refusal to staging it cannot read
-status: in-progress
+status: todo
 priority: p2
 dependencies: []
 related: [join-the-scheduled-region-into-the-contraction-witness, derive-staged-combine-structure-from-program-scope]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [ir, witness, fail-closed, correctness]
-claimed_from: todo
-assignee: worker-narrow
-lease_expires_at: 1787443883
 ---
 ## User-visible outcome
 
