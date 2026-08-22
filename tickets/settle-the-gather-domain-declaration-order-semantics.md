@@ -40,6 +40,8 @@ Row 3 is an **uncorrupted region admitted by `gather_read` and then refused by `
 
 **Why the suite missed it.** Every fixture in `tests/index_gather.rs`, `tests/index_region_oracle.rs`, and `proof.rs`'s `admitted_gather()` declares result dimensions in ascending order, so caller order and ordinal order coincide.
 
+**Correction — 2026-08-22: the tag value is right, the collision framing was wrong.** I wrote that a bounds proof at `0x03` would collide with `TAG_SCALAR_BROADCAST` in the access-map space. It would not: `push_bounds_proof` and `push_logical_access` write into **disjoint frames**, and tag values already repeat across them — `TAG_LINEAR_IDENTITY = 0x01` and `TAG_COVERAGE_PADDED = 0x01` coexist in `crates/tiler-ir/src/schedule/model.rs`, which documents the overlap as deliberate (anchor `overlap deliberately`, wrapped across two `///` lines). **`0x13` remains correct**, on the `0x1X` bounds-proof family-run convention rather than on collision avoidance. Use that ground; do not restate the collision claim.
+
 ## The decision this turns on — do not pick the smaller diff
 
 The stored `domain` is **a set at rest**, so `prepare_gather_access` is currently checking a property the record does not retain. Two coherent repairs:
@@ -48,6 +50,12 @@ The stored `domain` is **a set at rest**, so `prepare_gather_access` is currentl
 2. **Make `GatherReadAccessData.domain` order-carrying.** Gives two spellings of one meaning **two identities** — an identity-domain question, with a step and pin consequences.
 
 Derive the choice; state which and why. **If you conclude (2), stop and report** — that is an identity-domain change and belongs to Tom, not to this repair.
+
+## Input from the realization-law layer — 2026-08-22, and it simplifies the decision
+
+`worker-gather-remainder` was asked whether its layer observes this ordering. Its answer, reported with the reasoning: **it cannot, and neither repair option moves any identity above the index layer.** `declare_parallel_domain` maps over result extents in order and `push_dimension` assigns strictly increasing ordinals, so caller order and ascending order coincide **by construction** at that layer — not by fixture convention. An order-carrying `domain` would therefore store exactly the ascending run the `BTreeSet` stores today.
+
+**What that does to the choice.** The identity-domain objection to option (2) is weaker than this ticket assumed: no realization-law, kernel-program, or artifact identity moves under either option. Re-derive that yourself rather than taking it — it is one worker's reading of one layer, and the index-layer identity question (two spellings, one or two identities) is unaffected by it. But do not carry the "option (2) necessarily steps an identity domain" framing into the decision without re-checking it.
 
 ## Required work
 
