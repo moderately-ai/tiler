@@ -42,3 +42,24 @@ Implementing explain-disposition assertability; reopening the sibling decision, 
 ## Closes when
 
 The carrier's trigger log names the condition the acceptance record actually deferred it under, every entry carries a command that has been run, the stale `fired` entry is explained, and the priority disagreement is resolved in favour of the artifact with authority.
+
+## Source-first Fact audit — 2026-08-22 at base `518c56c35e61a7bd21def8ab9572b4d2e125f99f`
+
+Every anchor below was run with `grep -c` against the file the citation names before being relied on, and every status was read from the file rather than from the reporting summary.
+
+| Fact as filed | Verdict | Evidence |
+| --- | --- | --- |
+| The carrier's trigger log never recorded the condition it was deferred under | **Verified** | [The carrier's](make-explain-dispositions-assertable-by-a-conformance-suite.md) `## Trigger check log` carried exactly three entries — 2026-08-05, 2026-08-09, 2026-08-17 — and none quotes the acceptance condition, which post-dates all three. The 2026-08-17 entry is marked `**fired.**` against the portfolio being `done` plus the decision ticket owning the coverage choice, and carries no command; the 2026-08-09 entry carries none either. Nothing was dated after 2026-08-18. |
+| Its priority disagrees with the artifact that presented it | **Verified as a disagreement, and the direction of the repair is the opposite of the one this ticket's outcome implies** | The carrier's frontmatter reads `priority: p2` and [`.ticketsplease/decision-queue.md`](../.ticketsplease/decision-queue.md) item 14 calls it `` (`p1`, blocked) ``. See the resolution below: the ticket file is the authority and the queue row is the wrong artifact. |
+
+**The acceptance does name a condition for this carrier specifically, so the stop-and-report branch does not apply.** [`decide-the-backend-provider-conformance-harness-public-surface`](decide-the-backend-provider-conformance-harness-public-surface.md) names this carrier by id in its `## Accepted decision — 2026-08-18` section — both carriers move to `deferred` `with that trigger rather than becoming dispatchable` — and *that trigger* is the sentence immediately before it. No trigger was invented.
+
+**The sufficient-versus-necessary shape the brief asked about is present, and it is the same one.** Two conditions bear on this carrier: the operative reopening condition, and the numbered `Explain coverage-expansion trigger` that is this ticket's own subject matter. Both are stated as sufficient and neither as necessary, so they do not compete; they are logged as two independent dated entries with different consequences rather than one being chosen over the other.
+
+## Priority resolution — 2026-08-22
+
+**The ticket file has authority, so the carrier's `p2` frontmatter stands and the queue row is what is wrong.** [`.ticketsplease/decision-queue.md`](../.ticketsplease/decision-queue.md) says so in its own header: `Ticket files remain the authority; this file records presentation order, holds, exact release triggers, and the current recommendation`. Reproduce with `grep -c 'Ticket files remain the authority' .ticketsplease/decision-queue.md`, which returns `1`.
+
+**The queue row was also inaccurate on the day it was written, not merely stale.** The carrier has been `p2` since its creation on 2026-08-05 and has never been `p1`; the only frontmatter changes it has ever taken over those two lines are `status` moves. Item 14 was written on 2026-08-17 in `c50a34f2`, when the carrier was already `p2`. Reproduce with `git log --format='%h %ad %s' --date=short -L '4,5:tickets/make-explain-dispositions-assertable-by-a-conformance-suite.md'`, whose three hunks — `9417f96b` 2026-08-05 creating it at `p2`, `7f839294` 2026-08-17 moving `status` and dropping the backward dependency edge, and `33c5db60` 2026-08-18 moving `status` alone — show no `priority` line ever changing. The queue calls the same carrier `optional` in that row while labelling it `p1`, which is internally inconsistent and consistent with the label having been carried across from the two rows beside it.
+
+**No frontmatter was moved.** The correct repair is to the queue row, and `.ticketsplease/decision-queue.md` is outside this ticket's edit permission — it is also declared in `paths:` on the decision ticket that owns it. Left for the coordinator, with the evidence above. Raising the carrier to `p1` to match the queue would propagate the error into the authoritative artifact.
