@@ -75,7 +75,7 @@ for locating one fact:
 - Normative contracts own detailed current behavior within their stated status.
 - Research reports establish evidence and limitations, not authority by
   themselves.
-- Spikes establish only the bounded claim they measured or modeled.
+- Spikes establish only the bounded claim they measured or modeled, at the base their own record names rather than at the tip. Nothing gates `spikes/`, so they are repaired on demand; the [experiment catalog](../spikes/README.md) states what to read and run before citing one as current.
 - Ticketsplease owns live work status; the roadmap is proposed progression.
 
 The exact metadata, relationship, and prose source-form rules are defined in [documentation metadata](document-metadata.md); read it before authoring a governed document. A disagreement among an accepted ADR, its normative owner, and indexed evidence is a documentation bug, not a choice left to the reader.
