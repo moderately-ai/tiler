@@ -20,15 +20,16 @@
 //!
 //! The manifest carries every fact the artifact layer owns: the governed
 //! component schema versions, the routing policy, the derived required-feature
-//! set, the reached semantic subjects including the retained shape environment, the ordered named interface, the
-//! selected capability providers, the backend payload descriptors, the shared
-//! ABI expression arena, and each plan variant with its guard, declared target
-//! profile and feasibility rule set, deferred predicates, and executable
+//! set, the reached semantic subjects including the retained shape environment,
+//! the ordered named interface, the selected lowering-capability providers, the
+//! backend payload descriptors, the shared ABI expression arena, each plan
+//! variant with its guard, declared target profile and feasibility rule set,
+//! selected physical-implementation run, deferred predicates, and executable
 //! entries — each entry's stage subject, proven resource requirements, declared
 //! numerical realization, ABI bindings with the interface reference each
-//! addresses, launch contract, and backend entry. It
-//! also carries the artifact's canonical identity once, which the decoder
-//! re-derives from the content and compares.
+//! addresses, launch contract, and backend entry — and the delivered-realization
+//! record. It also carries the *digest* of the artifact's canonical identity
+//! once, which the decoder re-derives from the content and compares.
 //!
 //! # What it deliberately excludes
 //!

@@ -473,7 +473,7 @@ fn read_outputs(
     )
 }
 
-/// Reads the selected capability providers and proves their canonical order.
+/// Reads the selected lowering-capability providers, proving canonical order.
 pub(super) fn read_providers(
     cursor: &mut Cursor<'_>,
 ) -> Result<Vec<SelectedLoweringProvider>, ArtifactCodecError> {

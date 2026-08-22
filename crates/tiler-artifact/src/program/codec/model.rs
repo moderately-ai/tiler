@@ -746,7 +746,8 @@ impl ArtifactEnvelope {
         &self.features
     }
 
-    /// Returns the three reached semantic subjects the artifact realizes.
+    /// Returns the semantic subjects the artifact realizes: the three reached
+    /// subjects and the retained shape environment travelling beside them.
     pub(crate) const fn semantic(&self) -> &SemanticSubjects {
         &self.semantic
     }
@@ -761,7 +762,7 @@ impl ArtifactEnvelope {
         &self.outputs
     }
 
-    /// Returns the selected capability providers in canonical key order.
+    /// Returns the selected lowering-capability providers in canonical key order.
     pub(crate) fn providers(&self) -> &[SelectedLoweringProvider] {
         &self.providers
     }

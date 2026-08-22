@@ -1420,12 +1420,15 @@ pub(super) fn packaged_entry_positions(variants: &[VariantData]) -> Vec<u32> {
 /// schemas, the semantic subject it realizes, the complete kernel program of
 /// every packaged variant, the guards and routing that choose among them, the
 /// neutral ABI and launch contracts of every entry, the declared target
-/// requirements, the backend payload descriptors and entry mappings, and the
-/// provenance the packaged plan actually reached.
+/// requirements, the backend payload descriptors and entry mappings, the
+/// provenance the packaged plan actually reached, and, per variant, which
+/// physical authority implemented each cover-region occurrence under which
+/// implementation proposal.
 ///
 /// It deliberately excludes three things. **Unused compilation-environment
-/// providers** never enter it: only reached admission provenance and selected
-/// capability providers do, so an artifact is not invalidated by a provider it
+/// providers** never enter it: only reached admission provenance, the selected
+/// lowering-capability providers, and each variant's selected physical
+/// implementations do, so an artifact is not invalidated by a provider it
 /// never used (ADR 0072). **Transient ordinals** never enter it: expressions are
 /// written once in canonical arena order and referenced by canonical position;
 /// providers and payloads are ordered by canonical key, payload references carry
@@ -1442,8 +1445,9 @@ pub(super) fn packaged_entry_positions(variants: &[VariantData]) -> Vec<u32> {
 /// The last exclusion is the load-bearing one for anything that has to decide
 /// *whether to compile*. Every fact folded here is a compilation **input**: the
 /// component schemas, the semantic subjects, the interface, the selected
-/// providers, each variant's complete program identity, its guards, routing,
-/// ABI, launch contracts, declared target requirements and deferred predicates,
+/// lowering providers and physical implementations, each variant's complete
+/// program identity, its guards, routing, ABI, launch contracts, declared
+/// target requirements and deferred predicates,
 /// and — through each [`BackendPayloadDescriptor`]'s digest — that payload's
 /// source, flags, resolved toolchain, entry mappings, and recorded obligations.
 /// No output of a backend compiler is among them.
