@@ -488,4 +488,56 @@ mod tests {
             other => panic!("the governed-identity collision was reported as {other:?}"),
         }
     }
+
+    /// A population large enough that any plausible installation-time count
+    /// policy would have refused it.
+    ///
+    /// One above the accepted request-scoped raw-outcome value, 1,024. That is
+    /// the only calibrated number in this family and therefore the one most
+    /// likely to be misread as a provider count, so the witness is sized to
+    /// prove this seam is not it. The number bounds nothing and no refusal
+    /// compares against it.
+    const UNCOUNTED_WITNESS: u32 = 1_025;
+
+    /// **Installation does not count, and its refusal vocabulary names no
+    /// count.**
+    ///
+    /// A provider count is not enforceable here and is deliberately absent.
+    /// This constructor runs before a request exists, so it sees the caller's
+    /// provider list and none of the target profiles, numerical-contract
+    /// candidates, or region subjects that decide how much work that list
+    /// causes; a number refused here would bound one factor of a product whose
+    /// other factors are not visible. The offered-population authority is
+    /// `MAX_OFFERED_PHYSICAL_PROVIDERS` in `tiler-artifact`, which bounds what
+    /// a compilation may package, and the host-work authority is the
+    /// per-request invocation charge the frontier sink owns.
+    ///
+    /// The two assertions guard independent properties and fail to different
+    /// perturbations: widening the vocabulary breaks the first, and adding a
+    /// count branch to `installed` breaks the second.
+    #[test]
+    fn installation_admits_any_count_and_names_no_count_refusal() {
+        assert_eq!(
+            std::mem::variant_count::<PhysicalProviderInstallationError>(),
+            3,
+            "the installation vocabulary is exactly unrepresentable provenance, \
+             duplicate identity, and governed identity; a fourth cause must be \
+             justified against the recorded decision that installation does not count",
+        );
+
+        let providers: Vec<NamedProvider> = (1..=UNCOUNTED_WITNESS)
+            .map(|revision| named("uncounted-witness", revision))
+            .collect();
+        let installed = InstalledPhysicalProviders::installed(
+            providers
+                .iter()
+                .map(|provider| provider as &dyn PhysicalImplementationProvider),
+        )
+        .expect("installation refuses on identity, never on how many identities there are");
+        assert_eq!(
+            installed.identities().len(),
+            UNCOUNTED_WITNESS as usize,
+            "every distinct identity installed",
+        );
+    }
 }
