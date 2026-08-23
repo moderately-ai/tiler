@@ -1,7 +1,7 @@
 ---
 id: split-the-schedule-builder-test-monolith-into-focused-modules
 title: Split the schedule builder test monolith into focused modules
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-artifact-program-test-monoliths-into-focused-modules]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets, contracts/decisions, research/reference, research/scheduling]
 paths: []
 tags: [refactor, maintainability, tests]
-claimed_from: todo
-assignee: worker-splitsched
-lease_expires_at: 1787482848
 ---
 ## User-visible outcome
 
@@ -44,3 +41,17 @@ The first tranche pinned these, and one of its recorded lessons was wrong; the c
 ## Closes when
 
 `crates/tiler-ir/src/schedule/builder/tests.rs` is a directory whose largest member is under 1,500 lines, the before/after test lists are identical, the gates above are green, and the delivery note records the mapping rule, the per-file line counts, and any test that did not have an obvious home.
+
+## Coordinator correction — 2026-08-23: the citation census command I supplied was incomplete, in four consecutive briefs
+
+Every split brief I wrote — kernel, compiler pipeline, IR program, and this one — gave the external-citation census as a line-anchored grep of the shape `git grep -noE "<path>\.rs:[0-9]+(-[0-9]+)?"`. **That vocabulary is incomplete.** It matches `path.rs:123` and misses the **anchor form** `path.rs "quoted text"`, which this repository uses widely.
+
+Verified by the coordinator at `bcc63fe8`: for this file the line-anchored form returns **0**, while the anchor form returns **5 files**. This lane found 6 such citations across one live ticket and three live documents and repaired them all.
+
+**The failure mode is worse than line-rot, which is why the omission matters.** A split turns the named file into a **directory**, so an anchor-form citation into it fails as **outright non-existence** rather than as a rotted line — and my census would have reported the population as empty.
+
+**Why nothing broke across the earlier three splits:** `make citations` caught them, not my census. The pipeline split's report says so explicitly — it found 11 broken citations via the gate after its line-number census had missed them. So the gate was doing the work my supplied command claimed to do, which is exactly the situation AGENTS.md warns about when it says a supplied command that has never been run is a claim rather than a check.
+
+**The correct census for a module split is both forms**, and `make citations` remains the authority over either. This is the fifth census-vocabulary error I have made this session, and the only one I propagated across multiple briefs before it was caught.
+
+**Verified by the coordinator:** 169 `#[test]` at the base and 169 across the split modules; `STRICT_F32_REGION_IDENTITY_HEX` (10 occurrences) and `ONE_COMMITTER_COOPERATIVE_IDENTITY_HEX` (2) both present at the base and preserved by the lane's verbatim reconstruction check.
