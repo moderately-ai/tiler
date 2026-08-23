@@ -1,7 +1,7 @@
 ---
 id: decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary
 title: Decide how a dynamic bounds witness enters the schedule vocabulary
-status: todo
+status: in-progress
 priority: p2
 dependencies: [package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
 related: [replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges, carry-live-extent-operands-through-the-artifact-envelope]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, contracts/foundation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, identity, public-boundary, schedule]
+claimed_from: todo
+assignee: worker-witness
+lease_expires_at: 1787490424
 ---
 ## User-visible outcome
 
