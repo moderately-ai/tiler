@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: []
 related: []
-scopes: []
+scopes: [research/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, spikes, falsified-evidence]
@@ -44,3 +44,16 @@ Filed 2026-08-22 by the coordinator. Reported by `worker-research` as a site out
 ## Closes when
 
 The line states what is and is not reached, the deferred item's conclusion is re-grounded on what survives, retired wording is preserved, and the record has been swept for the same shape.
+
+## Repair, at `2b179263`
+
+**Fact audit, re-read at this base, both VERIFIED.**
+
+- `docs/research/cache/build-tool-exercise.md:159` carries the quoted sentence verbatim — `grep -c 'No \`make\` target touches \`spikes/\`' docs/research/cache/build-tool-exercise.md` returned `1` before the edit, on the anchor fragment rather than the full rendered sentence.
+- The claim is false since `04d5eae9` (`git log --oneline -1 04d5eae9` → `Merge spike link coverage into the citation gate`). Ran the perturbation myself rather than relaying the coordinator's: appended one broken link to `spikes/cache/README.md` and ran `make citations`, which exited 2 with `FAIL spikes/cache/README.md` / `link: [...](does-not-exist-perturbation.md)` / `no tracked file or directory at spikes/cache/does-not-exist-perturbation.md`, then `make: *** [citations] Error 1`. Reverted with `git checkout -- spikes/cache/README.md` and reran `make citations`: exit 0, `every pinned citation and every local markdown link resolves`.
+
+**Repair.** Narrowed "No `make` target touches `spikes/`" to "No `make` target builds, runs, or lints anything under `spikes/`", which is what stays true, and added a dated `**Correction — 2026-08-22.**` paragraph immediately after that quotes the retired sentence verbatim, cites `decide-whether-the-citation-checker-should-reach-spike-records` and `04d5eae9`, states that `make citations` reaches this driver's own `spikes/cache/README.md` and `spikes/cache/build-tool-exercise/` for markdown links while declining pinned citations by decision, and reports the perturbation and its revert inline. The deferred item's conclusion — that collecting a driven-build scenario into the gate is not a gap under the current contract — is unchanged, because no target executes this driver either way; only the "touches" premise under it was false. `grep -c 'No \`make\` target touches \`spikes/\`'` still returns `1` after the edit (the quote inside the correction), so the count did not shrink.
+
+**Scope.** Added `research/cache` (maps to `docs/research/cache/**` and `spikes/cache/**` in `ticketsplease.toml`) as scheduling metadata: the only edited files are `docs/research/cache/build-tool-exercise.md` and this ticket, both already inside that scope's paths.
+
+**Sweep of the rest of the record.** Grepped `docs/research/cache/build-tool-exercise.md` for `make|gate|citation|touch|reach` (case-insensitive). Every other hit is unrelated to what the build gate reaches: line 19's "gate" is the ADR follow-up sequence, not `make`; the "reach/reached/reachable" hits (lines 30, 63, 72, 78, 102, 116, 124, 126, 150, 155, 158) are all about experiment/measurement coverage (analyzer reachability, LSP session, cache-root reachability, cargo fingerprint invalidation) with no claim about what a `make` target reaches under `spikes/`. Line 159 (this entry) was the only site making a gate-reach claim. Clean otherwise.
