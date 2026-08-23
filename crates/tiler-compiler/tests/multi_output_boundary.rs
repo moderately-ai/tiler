@@ -77,7 +77,7 @@
 //! declares, and no kernel loads.
 //!
 //! **The later-input fold row is now positive, but this fixture does not own that
-//! guarantee.** `request::tests::a_fold_over_a_later_declared_input_retains_its_ordinal`
+//! guarantee.** `request::tests::recognize::a_fold_over_a_later_declared_input_retains_its_ordinal`
 //! proves that a bare fold keeps the contributor's true declared-input ordinal
 //! through recognition and request-subject identity.
 //! `pipeline::conformance`'s

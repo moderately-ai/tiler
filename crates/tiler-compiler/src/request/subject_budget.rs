@@ -20,7 +20,7 @@ use crate::target::honourability::encode_declared_behaviours;
 /// is not. Only the breakdown distinguishes those two.
 #[test]
 fn the_explain_subject_byte_budget() {
-    let program = super::tests::program();
+    let program = super::tests::support::program();
     let verified = verify_planned_request(CompilationRequest::governed(&program)).unwrap();
     let target = verified.for_target(0).unwrap();
     let subject = target.subject();

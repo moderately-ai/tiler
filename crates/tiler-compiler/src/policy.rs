@@ -1552,7 +1552,7 @@ mod tests {
     ///
     /// A named point of the space, not the space: injectivity over the whole
     /// dimension product is checked exhaustively by
-    /// `crate::request::tests::the_canonical_key_is_injective_over_the_statable_space`.
+    /// `crate::request::tests::contract::the_canonical_key_is_injective_over_the_statable_space`.
     /// This pins the documented five, so a named contract accidentally spelled
     /// the same as a sibling fails here rather than by two names quietly sharing
     /// one artifact.
