@@ -9,6 +9,8 @@ scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [optimizer, budgets, measurement, public-boundary]
+assignee: worker-provcount
+lease_expires_at: 1787493486
 ---
 ## User-visible outcome
 
