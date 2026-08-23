@@ -56,7 +56,7 @@ use tiler_ir::semantic::{
     SLICE_SELECTION_ATTRIBUTE, SemanticCapabilityAuthority, SemanticRegistrySnapshotIdentity,
     SliceSelection, broadcast_f32_op, slice_f32_op,
 };
-use tiler_ir::shape::{Extent, Shape, SourcedExtent};
+use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
 
 /// Returns whether this occurrence's index law builds against the program environment.
 ///
@@ -1001,6 +1001,45 @@ impl<'a> IndexAccessLoweringContext<'a> {
         coordinates: &[IndexExprId],
     ) -> Result<ScalarValueId, LoweringEmitError> {
         Ok(self.builder.read(tensor, domain, coordinates)?)
+    }
+
+    /// Creates or reuses one address-only indirect read and its scalar result.
+    ///
+    /// The exact facade the accepted data-dependent index surface fixes, and it
+    /// is a pure delegation: every rule about what a gather may be — the
+    /// operand roles, the two element types, the three literal-boundary
+    /// refusals, the coordinate arities, and the domain-shape comparison —
+    /// belongs to [`IndexRegionBuilder::gather_read`] and is stated once there.
+    /// Restating any of them here would give a provider two authorities that
+    /// could disagree about what it emitted.
+    ///
+    /// `source_coordinates` supplies every source axis **except** `axis`, in
+    /// source-axis order; `index_coordinates` supplies every index axis in
+    /// index-axis order. The loaded U32 index supplies exactly the omitted
+    /// `axis` coordinate and never becomes a scalar value of its own, so a
+    /// consumer pairing scalar leaves to reads by ordinal cannot mistake the
+    /// address read for a value input.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LoweringEmitError`] when the canonical builder rejects it.
+    pub fn gather_read(
+        &mut self,
+        source: TensorId,
+        index: TensorId,
+        domain: &[DimensionId],
+        source_coordinates: &[IndexExprId],
+        index_coordinates: &[IndexExprId],
+        axis: Axis,
+    ) -> Result<ScalarValueId, LoweringEmitError> {
+        Ok(self.builder.gather_read(
+            source,
+            index,
+            domain,
+            source_coordinates,
+            index_coordinates,
+            axis,
+        )?)
     }
 
     /// Creates or reuses a write access.

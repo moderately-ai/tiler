@@ -32,16 +32,17 @@ use tiler_ir::semantic::{
     BroadcastAxisMapping, BroadcastAxisSource, CONCATENATE_AXIS_ATTRIBUTE,
     CONTRACTION_INDEX_STRUCTURE_ATTRIBUTE, CanonicalField, CanonicalIntegerWidth, CanonicalValue,
     CanonicalValueView, ContractionIndex, ContractionIndexStructure, F32,
-    F32_CONSTANT_BITS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS, MIN_CONCATENATE_OPERANDS, OpKey,
-    OperationAttributes, ProviderIdentity, REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE,
-    RMS_NORM_EPS_BITS_ATTRIBUTE, RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind,
-    ResolvedValueType, SLICE_SELECTION_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE,
-    STRICT_AFFINE_SCALE_ROLE, STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection,
-    StrictAffineU4, TypeKey, add_bf16_op, add_f32_op, broadcast_f32_op, concatenate_axis,
-    concatenate_f32_op, concatenate_result_shape, constant_bf16_op, constant_f32_op,
-    dequantize_strict_affine_op, multiply_bf16_op, multiply_f32_op, reindex_f32_op,
-    rms_norm_f32_op, silu_f32_op, slice_f32_op, strict_serial_sum_f32_op,
-    tensor_contraction_f32_op,
+    F32_CONSTANT_BITS_ATTRIBUTE, GATHER_AXIS_ATTRIBUTE, MAX_CONCATENATE_OPERANDS,
+    MIN_CONCATENATE_OPERANDS, OpKey, OperationAttributes, ProviderIdentity,
+    REDUCTION_AXES_ATTRIBUTE, REINDEX_MAPPING_ATTRIBUTE, RMS_NORM_EPS_BITS_ATTRIBUTE,
+    RMS_NORM_REDUCED_AXES_ATTRIBUTE, ReindexForm, ReindexFormKind, ResolvedValueType,
+    SLICE_SELECTION_ATTRIBUTE, STRICT_AFFINE_CODES_ROLE, STRICT_AFFINE_SCALE_ROLE,
+    STRICT_AFFINE_ZERO_POINT_ROLE, SliceAxisSelection, SliceSelection, StrictAffineU4, TypeKey,
+    add_bf16_op, add_f32_op, broadcast_f32_op, concatenate_axis, concatenate_f32_op,
+    concatenate_result_shape, constant_bf16_op, constant_f32_op, dequantize_strict_affine_op,
+    gather_axis, gather_f32_op, gather_index_resolved_type, gather_result_shape, multiply_bf16_op,
+    multiply_f32_op, reindex_f32_op, rms_norm_f32_op, silu_f32_op, slice_f32_op,
+    strict_serial_sum_f32_op, tensor_contraction_f32_op,
 };
 use tiler_ir::shape::{Axis, Extent, Shape, SourcedExtent};
 
@@ -236,12 +237,12 @@ impl GovernedIndexAccess {
 
 /// How many index-access capabilities the governed profile ships.
 ///
-/// Fourteen fixed-signature families plus the concatenation's one registration
+/// Fifteen fixed-signature families plus the concatenation's one registration
 /// per admitted operand arity. Named so a test can count the frozen registry
 /// against a number stated here rather than against whatever the list happens to
 /// hold.
 #[cfg(test)]
-pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 21;
+pub(crate) const GOVERNED_INDEX_ACCESS_CAPABILITIES: usize = 22;
 
 /// Returns the shipped index-access capabilities in canonical family order.
 ///
@@ -459,6 +460,26 @@ pub(crate) fn governed_index_access_capabilities()
             )?,
             emitted: vec![strict_affine_u4_dequantize_scalar_op()],
             implementation: Arc::new(GovernedStrictAffineU4Dequantize),
+        },
+        GovernedIndexAccess {
+            provider: governed_provider("gather-f32"),
+            operation: gather_f32_op(),
+            // The index operand's exact identity is part of the signature the
+            // registry resolves on, not part of the family key, so this row
+            // admits `tiler::u32@1` alone and a second admitted index identity
+            // would be an additive registration rather than a second family.
+            signature: LoweringSignature::new(
+                [F32::resolved_type(), gather_index_resolved_type()],
+                [F32::resolved_type()],
+            )?,
+            // Deliberately empty, for the reason the reindex, broadcast, slice,
+            // and concatenate rows' are: a gather applies no scalar operation
+            // at all. The gathered element reaches the result unchanged, so the
+            // emitted region reaches no scalar authority, and declaring one
+            // anyway would make refinement's containment check pass over an
+            // operation the region never emits.
+            emitted: Vec::new(),
+            implementation: Arc::new(GovernedGatherF32),
         },
     ];
     // One registration per admitted operand arity, and one *provider* per
@@ -2332,6 +2353,111 @@ fn lower_source_bearing_slice(
     let output = context.sourced_output_tensor(result_type, result_shape)?;
     let write = context.write(output, &dimensions, &coordinates)?;
     context.output(write, value)
+}
+
+/// Emits the single region realizing one governed gather occurrence.
+///
+/// **The derivation is the registered `tiler::gather-f32@1` realization law's,
+/// not an independent one.** Refinement compares the emitted realization's
+/// canonical identity against the law's own, so a provider that split the
+/// composed result domain differently, declared its two operands in the other
+/// order, or reordered the write would emit a structurally well-formed region
+/// that is not this occurrence's realization and would be refused as a
+/// semantic-realization mismatch rather than accepted.
+///
+/// The bounds obligation on the loaded index is *not* this lowering's to
+/// discharge: `IndexRegionBuilder::gather_read` commits the access and the
+/// index layer's closed deriver mints either a
+/// `tiler_ir::index::GatherIndexBoundsProof` or a validation requirement for
+/// it. A gather this build cannot prove statically therefore still lowers, and
+/// is stopped above by `crate::physical::RegionVocabularyWall`, which is where
+/// the missing invocation-scoped receipt is owed.
+struct GovernedGatherF32;
+
+impl IndexAccessLoweringProvider for GovernedGatherF32 {
+    fn lower(&self, context: &mut IndexAccessLoweringContext<'_>) -> Result<(), LoweringEmitError> {
+        let occurrence = context.occurrence();
+        let ([source, index], [result]) = (occurrence.inputs(), occurrence.results()) else {
+            return Err(occurrence_error("gather-arity"));
+        };
+        if occurrence.operands() != [0, 1] {
+            return Err(occurrence_error("gather-operand-binding"));
+        }
+        let [field] = occurrence.attributes().fields() else {
+            return Err(occurrence_error("gather-attributes"));
+        };
+        if field.id() != GATHER_AXIS_ATTRIBUTE {
+            return Err(occurrence_error("gather-attribute-key"));
+        }
+        let axis =
+            gather_axis(field.value()).map_err(|_| occurrence_error("gather-axis-attribute"))?;
+        // The *sourced* boundary with a literal demanded, rather than
+        // `shape()`, whose empty answer for a boundary naming a symbol would
+        // silently become a rank-zero operand and derive a result shape for a
+        // program nobody wrote. Three separate refusals so a reader learns
+        // which boundary was sourced.
+        let Some(source_shape) = source.sourced_shape().as_static().cloned() else {
+            return Err(occurrence_error("gather-source-shape-not-literal"));
+        };
+        let Some(index_shape) = index.sourced_shape().as_static().cloned() else {
+            return Err(occurrence_error("gather-index-shape-not-literal"));
+        };
+        let Some(result_shape) = result.sourced_shape().as_static().cloned() else {
+            return Err(occurrence_error("gather-result-shape-not-literal"));
+        };
+        if index.value_type() != &gather_index_resolved_type() {
+            return Err(occurrence_error("gather-index-type"));
+        }
+        let source_type = source.value_type().clone();
+        let index_type = index.value_type().clone();
+        let result_type = result.value_type().clone();
+
+        // Re-derived rather than trusted, exactly as the reindex lowering
+        // re-derives its form's result: the declared result must be the one
+        // this source, index, and axis compose to, or the region about to be
+        // emitted realizes a different occurrence than the one requested.
+        let (_, derived) = gather_result_shape(axis, &source_shape, &index_shape)
+            .map_err(|_| occurrence_error("gather-result-shape"))?;
+        if derived != result_shape {
+            return Err(occurrence_error("gather-result-shape"));
+        }
+
+        let dimensions = declare_parallel_domain(context, &result_shape)?;
+        let coordinates = dimension_expressions(context, &dimensions)?;
+
+        // Result axes are `[source before axis | index | source after axis]`,
+        // which is the composition `gather_result_shape` performs. The gathered
+        // source axis has no result coordinate of its own — the loaded U32
+        // supplies it — which is why the source run is one shorter than the
+        // source rank.
+        let position = usize::try_from(axis.get()).unwrap_or(usize::MAX);
+        let index_rank = index_shape.rank();
+        let leading = coordinates.get(..position).unwrap_or_default();
+        let trailing = coordinates
+            .get(position.saturating_add(index_rank)..)
+            .unwrap_or_default();
+        let mut source_coordinates = Vec::with_capacity(source_shape.rank().saturating_sub(1));
+        source_coordinates.extend_from_slice(leading);
+        source_coordinates.extend_from_slice(trailing);
+        let index_coordinates = coordinates
+            .get(position..position.saturating_add(index_rank))
+            .unwrap_or_default()
+            .to_vec();
+
+        let source_tensor = context.input_tensor(source_type, source_shape)?;
+        let index_tensor = context.input_tensor(index_type, index_shape)?;
+        let value = context.gather_read(
+            source_tensor,
+            index_tensor,
+            &dimensions,
+            &source_coordinates,
+            &index_coordinates,
+            axis,
+        )?;
+        let output = context.output_tensor(result_type, result_shape)?;
+        let write = context.write(output, &dimensions, &coordinates)?;
+        context.output(write, value)
+    }
 }
 
 /// Emits the partitioned write realizing one `tiler::concatenate-f32@1`

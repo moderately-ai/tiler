@@ -1145,11 +1145,17 @@ mod tests {
     /// the append-only tagged form, and `IndexRegionBuilder::gather_read`
     /// authors one compound access naming both tensors, with the address held
     /// on the access rather than in an `IndexNode` — which is how ADR 0046's
-    /// direct-access guarantees stay untouched. What is still absent is
-    /// everything *above* the index region: no schedule access relation, no
-    /// realization law row, and no lowering capability names this family, so
-    /// the entry here is "expressible at the index layer, and not yet routed
-    /// past it", each remaining step being its own admission.
+    /// direct-access guarantees stay untouched. The layers above it have since
+    /// filled in as well: `tiler_ir::schedule` defines the `GatherSource`
+    /// access relation, `IndexRealizationLaw::gather_f32` is a registered
+    /// realization law row, and `crate::governed`'s `GovernedGatherF32`
+    /// capability lowers a recognized occurrence to a verified region. What is
+    /// still absent is the one step above those: no scheduled region spells a
+    /// gather, because `crate::physical::RegionVocabularyWall::GatherProofUnavailable`
+    /// declines every gather member set for want of a seam carrying the
+    /// realized region's `GatherIndexBoundsProof` into physical planning. So
+    /// the entry here is "lowered, and not yet schedulable", and the remaining
+    /// step is its own admission.
     ///
     /// It correspondingly holds **no** fusion role in `crate::fusion_legality`,
     /// which is where it parts company with the concatenate and the selection.

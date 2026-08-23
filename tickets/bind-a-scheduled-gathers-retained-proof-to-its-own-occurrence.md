@@ -62,3 +62,9 @@ Threading resolved lowering into the spelling path, which depends on this and is
 ## Closes when
 
 A proof belonging to a different occurrence is refused by name with its output quoted, each comparison is perturbed separately, and no identity value has moved.
+
+## Correction — 2026-08-23, from a later lane at `d9f1a000`
+
+The paragraph above states that `gather_accesses_match`'s positive direction "cannot be exercised yet" and cites `a_gather_occurrence_resolves_no_lowering_at_this_base` as pinning the reason. Both are now historical. [`lower-a-recognized-gather-through-a-governed-capability`](lower-a-recognized-gather-through-a-governed-capability.md) landed the governed `tiler::gather-f32@1` capability row, so a gather resolves and refines, and that test was inverted and renamed `a_gather_occurrence_resolves_a_governed_lowering_and_refines` — **a grep for the old name returns 0, which is a rename and not a removal.**
+
+`a_gather_proof_minted_for_another_region_is_refused` gained the positive control its own documentation said belonged to the emission lane: the occurrence's own realized region's proof admits the identical scheduled region, while the transplant and an `unresolved_for_test()` lowering both refuse under `Intrinsic { rule: "request-binding" }`. This ticket's landed repair is unchanged and is what makes that discrimination possible; only its stated reachability limitation is superseded.
