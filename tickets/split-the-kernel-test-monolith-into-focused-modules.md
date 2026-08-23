@@ -1,7 +1,7 @@
 ---
 id: split-the-kernel-test-monolith-into-focused-modules
 title: Split the kernel test monolith into focused modules
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-artifact-program-test-monoliths-into-focused-modules]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [refactor, maintainability, tests]
-claimed_from: todo
-assignee: worker-splitkernel
-lease_expires_at: 1787471310
 ---
 ## User-visible outcome
 
