@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-provider-count-at-the-installation-seam
 title: Calibrate the physical provider count at the installation seam
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets, replace-provider-offer-with-a-host-bounded-frontier-sink]
