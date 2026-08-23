@@ -41,7 +41,6 @@ Changing what any identity encodes, its field order, or its domain tag. Any publ
 
 Every framed record in the index-region identity encoders is destructured exhaustively, the paired length invariant is shown to hold, the emitted bytes are demonstrated unchanged over a discriminating population, no identity value has moved, and a field-addition perturbation is watched failing at an encoder span.
 
-<<<<<<< HEAD
 ## Coordinator correction, 2026-08-22 — my third anchor failure of this session, same shape each time
 
 The ticket text above cites the `numerics.rs` convention *"at the anchor `a field added to a provenance record is then a build error at the encoder`"*. Retired wording preserved. **That anchor returns 0.** A line break falls after `build error at`, so the full sentence never appears in the bytes. The shortest resolving fragment is `a field added to a provenance record is then a build error at`, which returns 1. Verified by the coordinator at `5c104c59`.
@@ -57,7 +56,6 @@ The fourth site the ticket left unverified is **real**: `alpha_access_key` in `c
 **The finding worth carrying forward is about what region identity can discriminate.** Perturbing `access_read_key` and `alpha_access_key` initially moved **zero** of 117 dumped records, because a consistent field reordering inside a structural or alpha key is a bijection on keys — interning and canonical order are unchanged, so every region identity stays put. Region identity therefore **cannot discriminate those two encoders at all**, and a byte-identity harness that only dumps region identities would have reported a clean comparison while proving nothing about them. The lane found this by extending the harness to dump the draft keys directly, turning 0 into 6/1/7/1. Any future byte-identity demonstration over this layer must dump the keys, not only the identities.
 
 Confirmed by the coordinator: `INDEX_REGION_DOMAIN` has **0** occurrences in the diff, no golden or pinned identity file is in the commit, and `git grep` for `drift_probe` and `regionenc_harness` at the landed commit both return nothing.
-=======
 ## Worker Fact audit at `eaab762d`, 2026-08-22 — `worker-regionenc`
 
 Each verdict rests on the file read at this base, not on the brief.
@@ -75,4 +73,3 @@ Each verdict rests on the file read at this base, not on the brief.
 **One more rest pattern than the record census.** `encoded_index_domain_subject_predicate_len` sized `IndexDomainPredicate` and `IndexExtentRef` through three `..` patterns. Those are variants rather than records, so they fall outside the census below, but they are the same defect on the same pair: a widened variant would have been a build error at `encode_index_domain_subject_predicate`, which binds every field, and a silently stale count here. Closed with the rest; `identity.rs` now carries no rest pattern at all.
 
 **Wider than three sites.** The census below is by record rather than by grep string, because a search vocabulary over spellings like `gather.` would have missed `t.role`, `d.extent`, `v.definition`, and `o.access` — single-letter binders that frame four more records in the same two functions. Sixteen records are framed by these encoders; every one is now destructured with no `..`, and a field added to each is an `E0027` at an encoder span.
->>>>>>> a0659d05
