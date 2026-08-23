@@ -1,7 +1,7 @@
 ---
 id: correct-the-spike-records-that-still-say-spikes-is-outside-every-gate
 title: Correct the spike records that still say spikes/ is outside every gate
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree, decide-whether-the-citation-checker-should-reach-spike-records]
@@ -9,9 +9,6 @@ scopes: [research/scheduling, research/runtime, research/target-profiles, resear
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, graph-hygiene, spikes]
-claimed_from: todo
-assignee: worker-spikerec
-lease_expires_at: 1787452689
 ---
 ## User-visible outcome
 
@@ -63,3 +60,13 @@ Each of the four carries a dated correction whose reproduction supports the clai
 **Checks run:** `tkt lint` (`ok: no problems found`), `make citations` (exit 0; `spikes 609 link(s) ... 62 pinned citation(s) DECLINED`, both up from 601/61 because of the new ticket links and one new pinned citation my corrections quote), `git diff --check` (exit 0). `tkt guard --base 2c312826b60e275002f7332f167dd3c795861b99` run and reviewed.
 
 **Nothing in this ticket contradicted the brief.** `Spikes gate nothing.` (verbatim, in `spikes/runtime/backend-provider-portfolio/README.md`, `spikes/extensions/forkless-physical-provider/README.md`, and `spikes/program-planning/physical-frontier-budget-calibration/README.md`) was deliberately left untouched: read literally it says spikes-as-subjects don't gate anything else (a broken spike never blocks a merge), which stays true, rather than "nothing gates spikes" — the false claim this ticket targets.
+
+## Coordinator close, 2026-08-22 at `d07bfb7a` — four sites repaired, three split out rather than closed over
+
+Merged as `e139baee`. Four sites repaired, each preserving its retired wording, and one of them — `spikes/program-planning/physical-frontier-budget-calibration/README.md` — was **not named by this ticket** and was found by re-deriving the population instead of trusting the handed-over split. That is the census discipline working.
+
+**One reported Fact of this ticket was stale and the lane was right to refuse it.** `spikes/reference/staged-combine-derivability/README.md` had already been repaired by `46f74a90`, which retired the exact wording this ticket cited and stated the current gate reach. No action was correct there.
+
+**The remainder is split out, not closed over.** The lane left three sites carrying the bare sentence `Spikes gate nothing.`, reasoning that read literally it says a broken spike never blocks a merge and that this stays true. **The coordinator verified that reasoning is wrong**, by perturbation rather than argument: appending one broken markdown link to `spikes/runtime/backend-provider-portfolio/README.md` exits `make citations` at 2 with `make: *** [citations] Error 1`, and `full: check doc` with `check: citations …` puts that on the merge path. The perturbation was reverted and the tree confirmed clean. Those three sites are now [`retire-the-bare-spikes-gate-nothing-sentence-in-three-spike-records`](retire-the-bare-spikes-gate-nothing-sentence-in-three-spike-records.md), which carries the reproduction.
+
+Closing this ticket on its four repaired sites with that remainder named, rather than reporting a Closes-when that the three sites do not meet.

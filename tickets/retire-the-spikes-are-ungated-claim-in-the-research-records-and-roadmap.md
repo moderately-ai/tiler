@@ -1,7 +1,7 @@
 ---
 id: retire-the-spikes-are-ungated-claim-in-the-research-records-and-roadmap
 title: Retire the spikes-are-ungated claim in the research records and roadmap
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/apple-targets, research/shapes, research/verification, contrac
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, spikes, falsified-evidence]
-claimed_from: todo
-assignee: worker-research
-lease_expires_at: 1787452688
 ---
 ## User-visible outcome
 
