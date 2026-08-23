@@ -1,7 +1,7 @@
 ---
 id: correct-the-spike-portals-false-claim-that-no-make-target-reaches-spikes
 title: Correct the spike portal's false claim that no make target reaches spikes
-status: in-progress
+status: todo
 priority: p3
 dependencies: []
 related: [decide-whether-the-citation-checker-should-reach-spike-records, repair-the-staged-combine-spikes-citations-the-join-made-stale]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, spikes, gates]
-claimed_from: todo
-assignee: worker-portal
-lease_expires_at: 1787448544
 ---
 ## User-visible outcome
 
