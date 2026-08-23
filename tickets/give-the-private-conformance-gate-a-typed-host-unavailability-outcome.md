@@ -1,7 +1,7 @@
 ---
 id: give-the-private-conformance-gate-a-typed-host-unavailability-outcome
 title: Give the private conformance gate a typed host-unavailability outcome
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-the-backend-provider-conformance-harness-public-surface]
@@ -9,6 +9,9 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance]
+claimed_from: todo
+assignee: worker-unavail
+lease_expires_at: 1787457351
 ---
 ## User-visible outcome
 
@@ -36,3 +39,17 @@ Any public export. This is explicitly not the conformance facade — that questi
 ## Closes when
 
 The private gate's unavailable outcome is typed, has no path to a pass, and its policy is the caller's; the crate still exports nothing; and each property has been watched failing separately.
+
+## Coordinator re-audit at `d3170995`, 2026-08-22 — both Facts verified, plus one thing that looks like a defect and is not
+
+**Fact 1 — verified.** `crates/tiler-conformance/src/measurement.rs` carries `Unavailable(String)` and `pub(crate) const REQUIRE_MEASUREMENT: &str = "TILER_REQUIRE_METAL_CONFORMANCE";`. The single read is `std::env::var_os(REQUIRE_MEASUREMENT).is_none()` inside an `assert!` in `require_or_report`.
+
+**Fact 2 — verified.** The fixture's `ExecutionOutcome` in `crates/tiler-conformance/tests/independent_backend/nodefold_adapter.rs` derives only `Clone, Debug` — no `PartialEq`, no `Default` — so an unavailable outcome cannot compare equal to a completed one.
+
+**Also verified: the crate still exports nothing.** `grep -c "^pub " crates/tiler-conformance/src/lib.rs` returns **0**. That is the boundary you must not move.
+
+**The thing that looks like a defect and is not — read this before deciding to retire the switch.** Nothing in `crates/` or the `Makefile` ever *sets* `TILER_REQUIRE_METAL_CONFORMANCE`, so under `make full` the `assert!` always holds and the unavailable path prints its notice and passes. That reads exactly like the unfireable check AGENTS.md warns about, and I nearly briefed it as one. **It is deliberate.** The switch is opt-in hardening a human applies by hand, and it has been watched firing in both directions with quoted output — see [`produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate`](produce-the-conformance-envelope-in-process-so-the-routed-half-reaches-the-gate.md), which records `env -i PATH=/var/empty … TILER_REQUIRE_METAL_CONFORMANCE=1` producing `TILER_REQUIRE_METAL_CONFORMANCE is set and the measured half is unavailable: no qualified Apple Metal…`, and passing with `PATH` emptied when the variable is unset. [`conform-the-bf16-vertical-end-to-end`](conform-the-bf16-vertical-end-to-end.md) records the same pair independently.
+
+So the Required work's "retire or retain" question is genuinely open, but **retiring it must preserve that hardening capability or argue explicitly why it is no longer needed** — the ability to make an unavailable host a hard failure is a property two landed tickets paid for and watched. A call-site policy can supply it; an omission cannot. Do not treat the absence of a setter in `make full` as evidence the switch is dead.
+
+**On the perturbations.** The two properties really are independent, as the ticket says: no-equality-with-pass is a type property of the outcome, and no-ambient-read is a property of where policy is decided. Perturb each separately and quote both failures; a perturbation that reddens both cannot show which is load-bearing.
