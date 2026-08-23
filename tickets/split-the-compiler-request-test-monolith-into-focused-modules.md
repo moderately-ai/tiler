@@ -1,7 +1,7 @@
 ---
 id: split-the-compiler-request-test-monolith-into-focused-modules
 title: Split the compiler request test monolith into focused modules
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-artifact-program-test-monoliths-into-focused-modules]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [contracts/foundation, contracts/optimizer, research/reference, project/tickets, contracts/decisions]
 paths: []
 tags: [refactor, maintainability, tests]
-claimed_from: todo
-assignee: worker-splitreq
-lease_expires_at: 1787486699
 ---
 ## User-visible outcome
 
