@@ -65,3 +65,18 @@ That lane wrote the sentence **conditionally on purpose**, naming this ticket as
 **Known next wall, probed but not landed.** The lane patched the test to print, ran it, reverted, and confirmed a clean tree. The outcome after the classifier retires is `InvalidCompilerOutput(Program(CoreConstruction(StageElementType { position: 1, expected: U32, actual: F32 })))`: `BoundedCarrier::of` in `crates/tiler-compiler/src/program.rs` materializes every boundary value at the program's arithmetic carrier, so a `tiler::u32@1` index input is declared `f32`. `tiler_ir::program::StorageScalar::U32` already exists — the missing half is the compiler's per-input carrier selection, not an IR carrier.
 
 **Also outside that lane's scopes, for a coordinator pass:** `docs/roadmap.md`'s gather row still reads that `LogicalAccess` has no indirect relation and no lowering capability, which three landed commits have falsified.
+
+### Sequencing, made explicit — the dependent lane must branch from `cd3d689a`, not from `main`
+
+The release trigger above is correct but under-specified, and the under-specification is a trap. `retire-the-gather-kernel-lowering-classification-after-the-body-landed` declares `depends_on: [lower-the-indirect-gather-read-through-the-structured-kernel-body]`, and that ticket cannot reach `done` until its branch merges — which is precisely what the hold forbids. **So the dependent ticket will never surface on the ready board on its own.** Waiting for it to appear is waiting forever.
+
+It is also not work that can be done on `main`: retiring a classifier whose arm is still reachable would make `main` refuse a gather it can no longer classify, turning a correct report into an absent one.
+
+**The correct sequence, for whoever picks this up:**
+
+1. Wait for `implementation/compiler` to free — currently held by `split-the-compiler-pipeline-test-monolith-by-orchestration-phase`.
+2. Create the dependent lane's worktree from **`cd3d689a`** (this branch's tip), not from `main`, so the body is present and the classifier's arm is genuinely unreachable in its tree.
+3. Land the classifier retirement there, over the body.
+4. Merge the combined result into `main` **once**, and gate the merged tree. The expected baseline is 4060 workspace / 1350 release **plus** this lane's +5 new tests, minus whatever the retirement removes — derive it, do not assume it.
+
+**Do not merge this branch alone at any point in that sequence.** The single red test is the whole reason the hold exists, and greening it by any route other than the dependent lane means editing a test to match code rather than fixing the code the test is about.
