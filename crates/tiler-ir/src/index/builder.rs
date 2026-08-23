@@ -955,12 +955,22 @@ impl IndexRegionBuilder {
                     .extent
                     .symbol()
                     .is_some(),
-                IndexNode::LinearCombination { terms, .. } => {
+                // `constant` is a plain `IndexInteger`, which holds a magnitude
+                // and never a `ShapeSymbol`, so it cannot be what makes an
+                // expression read the environment. `dividend` and each term's
+                // `value` are ordinals `mark_expr` already added to `reached`,
+                // so this arm answers for one node rather than recursing.
+                IndexNode::LinearCombination { constant: _, terms } => {
                     terms.iter().any(|term| term.coefficient.symbol().is_some())
                 }
-                IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
-                    divisor.symbol().is_some()
+                IndexNode::FloorDiv {
+                    dividend: _,
+                    divisor,
                 }
+                | IndexNode::Modulo {
+                    dividend: _,
+                    divisor,
+                } => divisor.symbol().is_some(),
             })
     }
 
@@ -2819,7 +2829,20 @@ fn check_index_node_integers(node: &IndexNode) -> Result<(), IndexBuildError> {
             }
             Ok(())
         }
-        IndexNode::Dimension(_) | IndexNode::FloorDiv { .. } | IndexNode::Modulo { .. } => Ok(()),
+        // No arm here carries an `IndexInteger` to bound: a dimension is an
+        // ordinal, and a `SourcedExtent` divisor is bounded by the extent and
+        // symbol-declaration limits at its own admission. Bound field by field
+        // so a form that gains an authored integer is a build error here rather
+        // than a magnitude that enters a region unchecked.
+        IndexNode::Dimension(_)
+        | IndexNode::FloorDiv {
+            dividend: _,
+            divisor: _,
+        }
+        | IndexNode::Modulo {
+            dividend: _,
+            divisor: _,
+        } => Ok(()),
     }
 }
 fn too_many(entity: IndexEntityKind) -> IndexBuildError {
