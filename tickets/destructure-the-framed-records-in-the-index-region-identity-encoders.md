@@ -1,7 +1,7 @@
 ---
 id: destructure-the-framed-records-in-the-index-region-identity-encoders
 title: Destructure the framed records in the index-region identity encoders
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, identity]
+claimed_from: todo
+assignee: worker-regionenc
+lease_expires_at: 1787456482
 ---
 ## User-visible outcome
 
