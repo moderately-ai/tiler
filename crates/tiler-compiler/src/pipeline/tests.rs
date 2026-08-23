@@ -8652,9 +8652,21 @@ pub(super) fn bits_of(values: &[f32]) -> Vec<u32> {
 /// for the reason it exists. The oracle for the order the split actually
 /// performs is the partitioned sum, and the comparison is bit for bit.
 ///
-/// The oracle's input is the program's own prologue output rather than a value
-/// re-derived here: the prologue is unchanged by the split, and re-implementing
-/// `scale * x + bias` in the test would assert the test's arithmetic.
+/// **The oracle's input is re-derived here and never read back from the run.**
+/// It used to be the program's own executed prologue output, justified on the
+/// grounds that the split leaves the prologue alone and that re-implementing
+/// `scale * x + bias` in the test would assert the test's arithmetic. That is
+/// the shared-implementation failure `docs/correctness-and-testing.md` names: a
+/// prologue wrong in the implementation is wrong identically in the oracle, and
+/// every comparison below still agrees. `split_request` builds the recognized
+/// prologue from `2.0` and `1.0`, so the test computes `x * 2 + 1` itself and
+/// requires the executed prologue to reproduce it before any fold is compared.
+///
+/// That direct prologue comparison is load-bearing rather than a restatement of
+/// the folds below it. This fixture's magnitudes absorb the bias entirely, so a
+/// prologue that regressed to `x * 2 + 2` reaches neither the partials nor the
+/// total, and the cancellation maps every scale to `+0.0` at the total. The
+/// control below pins both of those blind spots.
 #[test]
 fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
     let shape = Shape::from_dims([1, 4]);
@@ -8677,15 +8689,26 @@ fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
         .iter()
         .map(|region| crate::physical::lower_structured_kernel(region).expect("each pass lowers"))
         .collect();
+    // The prologue the recognized program applies before the fold, applied here
+    // so the oracle's contributors are derived independently of this run.
+    let scaled: Vec<f32> = values
+        .iter()
+        .map(|value| value * 2.0_f32 + 1.0_f32)
+        .collect();
     let pointwise = interpret_fused(&kernels[0], &values);
+    assert_eq!(
+        bits_of(&pointwise),
+        bits_of(&scaled),
+        "the prologue pass does not compute the recognized `x * 2 + 1`"
+    );
     let partials = interpret_fused(&kernels[1], &pointwise);
     let actual = interpret_fused(&kernels[2], &partials);
 
-    let pointwise_tensor = f32_tensor(shape, &pointwise);
+    let scaled_tensor = f32_tensor(shape, &scaled);
     let axes = [Axis::new(1)];
     let expected_partials =
-        tiler_reference::strict_partial_sums(&pointwise_tensor, &axes, 2, 2).unwrap();
-    let expected = tiler_reference::strict_partitioned_sum(&pointwise_tensor, &axes, 2, 2).unwrap();
+        tiler_reference::strict_partial_sums(&scaled_tensor, &axes, 2, 2).unwrap();
+    let expected = tiler_reference::strict_partitioned_sum(&scaled_tensor, &axes, 2, 2).unwrap();
     assert_eq!(
         bits_of(&partials),
         tensor_bits(&expected_partials),
@@ -8713,6 +8736,82 @@ fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
         bits_of(&actual),
         "the fixture no longer distinguishes the two orders, so this test would \
          pass for an implementation that never split"
+    );
+}
+
+/// The negative control for the oracle's provenance above.
+///
+/// A regressed prologue stands in for the program's own: `x * 3 + 1` where the
+/// recognized program means `x * 2 + 1`. Five properties, each a separate
+/// claim, and each watched failing on its own.
+///
+/// The executed prologue is not the regression, so a program that regressed to
+/// it fails here as well as next door. Fed the regression, an oracle derived
+/// from that same output — the shape this test carried until the repair —
+/// reproduces it exactly at *both* comparisons, so the defective provenance has
+/// no way to say *no*; that refusal is what deriving the contributors
+/// independently supplies. The independently derived partial fold does refuse
+/// it. The independently derived total does not, because this fixture cancels
+/// and both scales sum to `+0.0`: the total alone is blind to the prologue,
+/// which is why the partial comparison is not redundant and why the prologue is
+/// compared directly rather than only through its folds.
+#[test]
+fn a_regressed_prologue_is_refused_only_where_the_oracle_is_derived_independently() {
+    let shape = Shape::from_dims([1, 4]);
+    let values: Vec<f32> = vec![1.0e20_f32, 1.0, -1.0e20, 1.0];
+    let axes = [Axis::new(1)];
+    let (_, request) = split_request(shape.clone());
+    let kernels: Vec<_> = split_regions(&request)
+        .iter()
+        .map(|region| crate::physical::lower_structured_kernel(region).expect("each pass lowers"))
+        .collect();
+
+    let regressed: Vec<f32> = values
+        .iter()
+        .map(|value| value * 3.0_f32 + 1.0_f32)
+        .collect();
+    assert_ne!(
+        bits_of(&interpret_fused(&kernels[0], &values)),
+        bits_of(&regressed),
+        "the executed prologue is the regression this control stands against"
+    );
+
+    let regressed_partials = interpret_fused(&kernels[1], &regressed);
+    let regressed_total = interpret_fused(&kernels[2], &regressed_partials);
+    let regressed_tensor = f32_tensor(shape.clone(), &regressed);
+    assert_eq!(
+        bits_of(&regressed_partials),
+        tensor_bits(&tiler_reference::strict_partial_sums(&regressed_tensor, &axes, 2, 2).unwrap()),
+        "an oracle derived from the executed prologue refuses the partial fold of \
+         a regressed prologue, so the repaired provenance is not what supplies \
+         that refusal"
+    );
+    assert_eq!(
+        bits_of(&regressed_total),
+        tensor_bits(
+            &tiler_reference::strict_partitioned_sum(&regressed_tensor, &axes, 2, 2).unwrap()
+        ),
+        "an oracle derived from the executed prologue refuses the total of a \
+         regressed prologue, so the repaired provenance is not what supplies \
+         that refusal"
+    );
+
+    let scaled: Vec<f32> = values
+        .iter()
+        .map(|value| value * 2.0_f32 + 1.0_f32)
+        .collect();
+    let scaled_tensor = f32_tensor(shape, &scaled);
+    assert_ne!(
+        bits_of(&regressed_partials),
+        tensor_bits(&tiler_reference::strict_partial_sums(&scaled_tensor, &axes, 2, 2).unwrap()),
+        "the independently derived partial fold cannot tell the two prologues \
+         apart, so nothing here refuses a regressed prologue"
+    );
+    assert_eq!(
+        bits_of(&regressed_total),
+        tensor_bits(&tiler_reference::strict_partitioned_sum(&scaled_tensor, &axes, 2, 2).unwrap()),
+        "the fixture no longer cancels at the total, so the direct prologue \
+         comparison is no longer the only guard the bias regression has"
     );
 }
 
