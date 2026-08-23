@@ -1,7 +1,7 @@
 ---
 id: restate-the-gather-standing-after-the-kernel-body-and-classifier-landed
 title: Restate the gather standing after the kernel body and classifier landed
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [retire-the-gather-kernel-lowering-classification-after-the-body-landed, lower-the-indirect-gather-read-through-the-structured-kernel-body, restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired, route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type, emit-the-indirect-gather-on-metal]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, gather, contract, roadmap]
+claimed_from: todo
+assignee: worker-optrestate2
+lease_expires_at: 1787482848
 ---
 ## User-visible outcome
 

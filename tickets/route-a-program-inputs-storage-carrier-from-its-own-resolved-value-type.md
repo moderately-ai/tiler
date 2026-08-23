@@ -1,7 +1,7 @@
 ---
 id: route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type
 title: Route a program input's storage carrier from its own resolved value type
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [retire-the-gather-kernel-lowering-classification-after-the-body-landed, lower-the-indirect-gather-read-through-the-structured-kernel-body, emit-the-indirect-gather-on-metal, admit-a-storage-carrier-for-integer-program-inputs]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, gather, compiler, program-identity, abi]
+claimed_from: todo
+assignee: worker-carrier
+lease_expires_at: 1787482848
 ---
 ## User-visible outcome
 
