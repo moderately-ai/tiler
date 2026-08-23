@@ -61,7 +61,7 @@ fn live_contraction_kernel_for_program() -> VerifiedKernel {
                 id: BoundsWitnessId::new(witness),
                 tensor,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange { element_count: 0 },
+                kind: BoundsProofKind::LiveExtentReach,
             })
             .expect("live bounds");
     }

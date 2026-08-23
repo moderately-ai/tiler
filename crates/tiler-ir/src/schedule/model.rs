@@ -579,6 +579,36 @@ pub enum BoundsProofKind {
         /// identity, and the accessors are the proof's own.
         proof: Box<crate::index::GatherIndexBoundsProof>,
     },
+    /// The access reaches the region's live inner extent, which this layer
+    /// does not state.
+    ///
+    /// Paired with the three relations whose domain is sized by a runtime
+    /// extent operand: [`LogicalAccess::LiveRowMajorSource`], its fieldless
+    /// [`LogicalAccess::LiveRowMajor`] consumer, and a
+    /// [`LogicalAccess::ContractionOperand`] under
+    /// [`super::ReductionTopology::LiveContraction`]. Those three are exactly
+    /// the accesses whose reach is an
+    /// [`crate::program::abi::AbiRoot::InputExtent`]-rooted expression the
+    /// program layer declares and the runtime binds at preflight, so a
+    /// schedule cannot name the quantity without specializing it.
+    ///
+    /// **It replaced a `LinearRange { element_count: 0 }` that stated
+    /// something false.** A bounds proof reading "zero in-range positions" is
+    /// not a weaker claim about an access that reaches `N` — it is a wrong
+    /// one, and a reader holding a [`BoundsProof`] alone had no way to tell it
+    /// from a genuinely empty static domain. It also left the live pairing
+    /// satisfiable by *accident*: a caller whose static count reached zero
+    /// through an empty shape or an overflow passed the live rule for a reason
+    /// the rule never checked. Stating the absence as its own variant makes
+    /// that reason unrepresentable rather than merely unlikely.
+    ///
+    /// **Fieldless deliberately**, on the [`LogicalAccess::LiveRowMajor`]
+    /// precedent where the tag alone is the whole encoding. An `outer_elements`
+    /// or an `inner_axis` here would restate what the region's iteration shape
+    /// and its unique live marker already fix, which is the second authority
+    /// that variant's own record refuses by name: a mismatch between the two
+    /// accounts should be unrepresentable, not representable-and-refused.
+    LiveExtentReach,
 }
 
 /// A witnessed proof that an access stays within its tensor bounds.
@@ -2801,6 +2831,47 @@ const TAG_REDUCTION_DOMAIN: u8 = 0x12;
 /// encodable region's bytes move and the schedule identity domain does not
 /// step.
 const TAG_GATHER_INDEX_BOUNDS: u8 = 0x13;
+/// Bounds-proof tag of an access that reaches the region's live inner extent.
+///
+/// The next free value in the `0x1X` **family run** the bounds-proof kinds
+/// occupy, whose three earlier members are `TAG_LINEAR_RANGE`,
+/// `TAG_REDUCTION_DOMAIN`, and `TAG_GATHER_INDEX_BOUNDS`. Allocated on the run
+/// convention `TAG_GATHER_INDEX_BOUNDS` states rather than on collision
+/// avoidance, for the reason recorded there: `push_bounds_proof` and
+/// `push_logical_access` write into disjoint frames.
+///
+/// **Fieldless: the tag alone is the whole encoding**, as
+/// `TAG_LIVE_ROW_MAJOR_CONSUMER` is at the access-map position. There is no
+/// live extent to write — that is the fact this tag states — and everything
+/// else a reader could ask is a derivation from the containing region's unique
+/// live marker and its iteration shape.
+///
+/// **The schedule identity domain does not step, and the argument has two
+/// halves because this replacement moves bytes as well as appending a tag.**
+///
+/// *Appended tag.* `0x11`, `0x12`, and `0x13` keep their tags and their field
+/// layouts, so no static region's bytes move. `0x14` is a byte no earlier
+/// region could write at a bounds-proof tag position, so a new identity cannot
+/// equal an old one and a reader that reaches `0x14` is reading a proof the
+/// earlier vocabulary could not express.
+///
+/// *Moved bytes.* Every live region's schedule identity value moves, because
+/// its nine-byte `0x11` plus a zero count becomes the bare `0x14` — and
+/// therefore every kernel, kernel-program, and artifact identity nesting one
+/// moves too. That is a value migration and not a domain step, on the exact
+/// precedent `TAG_LIVE_ROW_MAJOR_SOURCE` records, where the 2026-08-18
+/// fieldless-marker replacement moved every live identity value and
+/// deliberately did not step the domain. The direction is what makes it safe:
+/// the narrowed pairing rule means no region can *any longer* encode a live
+/// relation beside a zero `LinearRange`, so a retained pre-migration live
+/// identity is unreachable rather than reinterpretable, and a cache or artifact
+/// holding one misses instead of hitting a subject it does not name.
+///
+/// The one narrowing creates no collision in the other direction either: a live
+/// region and a statically empty one already differ at the access-map position
+/// — `0x0A`, `0x0B`, or `0x05` against `0x01` — so nothing that stops carrying
+/// `0x11` here becomes indistinguishable from something that still does.
+const TAG_LIVE_EXTENT_REACH: u8 = 0x14;
 const TAG_SCALAR_SERIAL_SUM: u8 = 0x22;
 const TAG_SCALAR_FUSED_SUM: u8 = 0x23;
 const TAG_SCALAR_POINTWISE_F32: u8 = 0x24;
@@ -3548,6 +3619,10 @@ fn push_bounds_proof(bytes: &mut Vec<u8>, proof: &BoundsProof) {
             push_shape(bytes, index_shape);
             push_slice(bytes, proof.identity().as_bytes());
         }
+        // Fieldless: the tag alone, because the reach this proof is about is
+        // deliberately not a quantity this layer holds. See
+        // `TAG_LIVE_EXTENT_REACH` for the injectivity and non-step argument.
+        BoundsProofKind::LiveExtentReach => bytes.push(TAG_LIVE_EXTENT_REACH),
     }
 }
 

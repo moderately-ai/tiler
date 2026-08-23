@@ -46,23 +46,16 @@ pub(super) fn access_elements(
         .find(|proof| proof.id == access.bounds)
         .ok_or(KernelDiagnostic::BoundsEvidence)?;
     match &proof.kind {
-        BoundsProofKind::LinearRange { element_count } => {
-            if matches!(
-                access.map,
-                crate::schedule::LogicalAccess::LiveRowMajorSource { .. }
-                    | crate::schedule::LogicalAccess::LiveRowMajor
-            ) || (matches!(
-                access.map,
-                crate::schedule::LogicalAccess::ContractionOperand { .. }
-            ) && matches!(
-                schedule.schedule.reduction,
-                ReductionTopology::LiveContraction { .. }
-            )) {
-                Ok(0)
-            } else {
-                Ok(*element_count)
-            }
-        }
+        BoundsProofKind::LinearRange { element_count } => Ok(*element_count),
+        // A live access declares no static element count, and the parameter
+        // this sizes carries its extent as a runtime operand instead. The zero
+        // is read from the *proof kind* rather than reconstructed by
+        // classifying the access map against the region's topology, which is
+        // what the previous arrangement did: the schedule verifier has already
+        // proved that exactly these three relations carry this variant, so
+        // re-deriving the classification here would be a second authority over
+        // a fact `bounds_proof_refines_access` owns.
+        BoundsProofKind::LiveExtentReach => Ok(0),
         BoundsProofKind::ReductionDomain { input_shape, .. } => {
             element_count(input_shape).map_err(|_| KernelDiagnostic::ElementCountOverflow)
         }

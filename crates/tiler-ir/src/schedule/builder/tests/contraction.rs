@@ -70,7 +70,7 @@ fn live_contraction_builder(
                 id: BoundsWitnessId::new(witness),
                 tensor,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange { element_count: 0 },
+                kind: BoundsProofKind::LiveExtentReach,
             })
             .unwrap();
     }
@@ -154,6 +154,63 @@ fn a_live_contraction_admits_the_named_inner_axis_and_refuses_a_swapped_symbol()
     assert_eq!(
         swapped.diagnostics()[0].rule(),
         "numerical-or-access-refinement"
+    );
+}
+
+/// A live contraction operand may not spell its obligation as a zero range.
+///
+/// The narrowing that `BoundsProofKind::LiveExtentReach` bought. The retired
+/// spelling made the live pairing satisfiable by a count that happened to be
+/// zero rather than by anything checked about the access, and the guard on the
+/// *static* `ContractionOperand` arm is what stops the demoted proof falling
+/// through to a concrete operand-product comparison instead — which would bake
+/// the live extent it exists to keep symbolic.
+#[test]
+fn a_live_contraction_operand_refuses_a_zero_linear_range() {
+    let mut builder = live_contraction_builder(0, 1, [2, 3]);
+    builder.bounds_proofs[0].kind = BoundsProofKind::LinearRange { element_count: 0 };
+    let error = builder
+        .build()
+        .expect_err("a live operand's obligation is not a zero range");
+    assert_eq!(
+        error.diagnostics(),
+        [ScheduledRegionDiagnostic::BoundsProof],
+        "zero-range live contraction operand: {error}"
+    );
+    assert_eq!(error.diagnostics()[0].rule(), "bounds-proof");
+}
+
+/// The same refusal for a count that matches the operand's own product.
+///
+/// The negative control on the arm above: it is the *relation under this
+/// topology* that may not carry a `LinearRange`, not merely the value zero, so
+/// the static comparison a non-live operand passes must not rescue this one.
+#[test]
+fn a_live_contraction_operand_refuses_its_own_static_product() {
+    let mut builder = live_contraction_builder(0, 1, [2, 3]);
+    builder.bounds_proofs[0].kind = BoundsProofKind::LinearRange { element_count: 2 };
+    let error = builder
+        .build()
+        .expect_err("a live operand may not be sized by its static product");
+    assert_eq!(
+        error.diagnostics(),
+        [ScheduledRegionDiagnostic::BoundsProof],
+        "static-product live contraction operand: {error}"
+    );
+}
+
+/// A static contraction operand may not wear the live variant either.
+#[test]
+fn a_static_contraction_operand_refuses_the_live_extent_reach() {
+    let mut builder = contraction_builder();
+    builder.bounds_proofs[0].kind = BoundsProofKind::LiveExtentReach;
+    let error = builder
+        .build()
+        .expect_err("a static operand's reach is a quantity it must state");
+    assert_eq!(
+        error.diagnostics(),
+        [ScheduledRegionDiagnostic::BoundsProof],
+        "live reach on a static contraction operand: {error}"
     );
 }
 

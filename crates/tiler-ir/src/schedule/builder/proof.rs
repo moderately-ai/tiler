@@ -155,12 +155,33 @@ fn bounds_proof_refines_access(
         }
         // Both live relations record the same absence: the buffer is sized by
         // the live inner extent the schedule does not specialize, so the proof
-        // is a zero linear range for the source marker and every consumer
-        // alike.
+        // is the fieldless `LiveExtentReach` for the source marker and every
+        // consumer alike.
+        //
+        // The variant is *required*, not merely accepted, and that is what the
+        // variant is for. The retired `LinearRange { element_count: 0 }`
+        // spelling left this arm satisfiable by accident: a count that reached
+        // zero for an unrelated reason — an empty operand shape, a saturated
+        // product — passed a rule that had checked nothing about the access.
+        // A `LinearRange` beside a live relation now falls to the wildcard and
+        // is refused as `BoundsProof`, as is a `LiveExtentReach` beside any
+        // relation that is not one of these three.
+        //
+        // Kept a separate arm from the structural pairings at the bottom, which
+        // share its `true`: those admit a pairing whose exact agreement another
+        // rule owns and must therefore say where that rule lives, while this one
+        // admits a pairing with *nothing to agree about*, because the quantity
+        // is not stated at this layer. Merging them would leave one comment
+        // standing for two different reasons, and the delegation warning below
+        // would read as if it applied here.
+        #[expect(
+            clippy::match_same_arms,
+            reason = "an unstated reach and a delegated agreement admit for different reasons"
+        )]
         (
-            BoundsProofKind::LinearRange { element_count },
+            BoundsProofKind::LiveExtentReach,
             LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor,
-        ) => *element_count == 0,
+        ) => true,
         (BoundsProofKind::LinearRange { element_count }, LogicalAccess::ScalarBroadcast) => {
             *element_count == 1
         }
@@ -194,31 +215,40 @@ fn bounds_proof_refines_access(
         }
         // A live contraction's operand buffers are sized by the live inner
         // extent, which the schedule does not specialize. The proof records
-        // that absence as a zero linear range, the same convention
-        // `LiveRowMajor` uses. The static `ContractionOperand` arm below still
-        // compares a concrete operand product, so a live region cannot inherit
-        // that check and silently bake `S`.
-        (
-            BoundsProofKind::LinearRange { element_count },
-            LogicalAccess::ContractionOperand { .. },
-        ) if matches!(
+        // that absence as `LiveExtentReach`, the same convention the two
+        // live row-major relations use.
+        //
+        // The topology is the discriminator here rather than the relation,
+        // because `ContractionOperand` is the *same* relation in both the live
+        // and the static case — unlike the row-major pair, where a distinct
+        // access variant carries the distinction.
+        (BoundsProofKind::LiveExtentReach, LogicalAccess::ContractionOperand { .. }) => matches!(
             region.schedule.reduction,
             ReductionTopology::LiveContraction { .. }
-        ) =>
-        {
-            *element_count == 0
-        }
+        ),
         // A contraction operand's proven domain is the contiguous linear range
         // of its own elements, exactly as an identity-mapped access's is. It
         // pairs with `LinearRange` for that reason rather than needing a fourth
         // proof structure: which of those positions the access touches is what
         // the map states, and `verify_contraction` proves every coordinate the
         // map derives is in range by requiring per-axis extent agreement.
+        //
+        // The negative topology guard is load-bearing and is not the inverse of
+        // a preceding arm any more: without it a live contraction operand
+        // paired with a `LinearRange` would fall through to *this* arm and be
+        // compared against a concrete operand product, which is exactly the
+        // silent bake of `S` the live arm above exists to prevent.
         (
             BoundsProofKind::LinearRange { element_count },
             LogicalAccess::ContractionOperand { operand_shape, .. },
-        ) => crate::schedule::model::element_count(operand_shape)
-            .is_ok_and(|elements| *element_count == elements),
+        ) if !matches!(
+            region.schedule.reduction,
+            ReductionTopology::LiveContraction { .. }
+        ) =>
+        {
+            crate::schedule::model::element_count(operand_shape)
+                .is_ok_and(|elements| *element_count == elements)
+        }
         // Both structural relations prove the same domain a contraction operand
         // does, and for the same reason: the access ranges over its operand's own
         // contiguous element range, and *which* of those positions each iteration

@@ -25,12 +25,25 @@ const RETIRED_CONTEXTUAL_LIVE_ROW_MAJOR_SCHEDULE_IDENTITY_HEX: &str = "74696c657
 /// The same fixture's retired kernel bytes, which frame the schedule bytes.
 const RETIRED_CONTEXTUAL_LIVE_ROW_MAJOR_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763900000000000000018474696c65722e7363686564756c652e763700000000000000000100000000000000020000000000000002010001090000000100000000000200020900000001000000010100000000000000000000000200000000010011000000000000000000000001020011000000000000000000000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010101010000000000000002000000010100000000310000000000000002000000010100000000000000020100030101000000000000000002000301020000000000000000000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010101000000020000000100000000000000000101000101010101010101010100000000000000120202020102020202020203030303030303020000000000000000000000000000000520000000000000000000000001000000001101000000000000000100000001120200000000000000020000000000000001000000021401000000010000000200000000000000010000000318000000030000000000000000000000000000000312020000000000000000000000000000000100000004120200000000000000000000000000000001000000051f000000040000000000000000000000010000000500000000000000010000000700000000000000020000000600000007000000000000000a13020000000100000000000000000000000100000008130100000008000000060000000000000001000000091600000000000000090000000000000000000000010000000a12034000000000000000000000010000000b13060000000a0000000b00000000000000010000000c15010000000c00000000000000010000000d12033f80000000000000000000010000000e13050000000d0000000e00000000000000010000000f15010000000f00000000000000010000001017000000010000000900000010000000010000000000000000000000000000000000000001000000110000000000000000fe00000000000000010000000000000001";
 /// The source-bound live fixture's schedule bytes: `0x0A` plus the axis on the
-/// one marker read, the bare `0x0B` on the consuming write.
+/// one marker read, the bare `0x0B` on the consuming write, and the bare `0x14`
+/// on each of its two bounds proofs.
 ///
-/// Rebaselined deliberately at the accepted 2026-08-18 fieldless-marker
-/// replacement; the retired constants above hold the exact prior values.
-const LIVE_ROW_MAJOR_SCHEDULE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7637000000000000000001000000000000000200000000000000020100010a0000000100000000000200020b000000010100000000000000000000000200000000010011000000000000000000000001020011000000000000000000000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101010101010101010100000000000000020000000101000000003100000000000000020000000101";
-const LIVE_ROW_MAJOR_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763900000000000000018074696c65722e7363686564756c652e7637000000000000000001000000000000000200000000000000020100010a0000000100000000000200020b000000010100000000000000000000000200000000010011000000000000000000000001020011000000000000000000000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010101010000000000000002000000010100000000310000000000000002000000010100000000000000020100030101000000000000000002000301020000000000000000000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010101000000020000000100000000000000000101000101010101010101010100000000000000120202020102020202020203030303030303020000000000000000000000000000000520000000000000000000000001000000001101000000000000000100000001120200000000000000020000000000000001000000021401000000010000000200000000000000010000000318000000030000000000000000000000000000000312020000000000000000000000000000000100000004120200000000000000000000000000000001000000051f000000040000000000000000000000010000000500000000000000010000000700000000000000020000000600000007000000000000000a13020000000100000000000000000000000100000008130100000008000000060000000000000001000000091600000000000000090000000000000000000000010000000a12034000000000000000000000010000000b13060000000a0000000b00000000000000010000000c15010000000c00000000000000010000000d12033f80000000000000000000010000000e13050000000d0000000e00000000000000010000000f15010000000f00000000000000010000001017000000010000000900000010000000010000000000000000000000000000000000000001000000110000000000000000fe00000000000000010000000000000001";
+/// Rebaselined twice, deliberately both times. First at the accepted 2026-08-18
+/// fieldless-marker replacement, whose exact prior values the retired constants
+/// above hold; then again when `BoundsProofKind::LiveExtentReach` replaced the
+/// `LinearRange { element_count: 0 }` a live access used to carry, which is
+/// **sixteen bytes shorter** — two proofs each trading a nine-byte `0x11` plus
+/// a `u64` for a one-byte `0x14`. The kernel pin below frames these bytes, so
+/// its own nested length prefix moves from `0x0180` to `0x0170` by the same
+/// sixteen.
+///
+/// Neither rebaseline stepped a domain, and the second one's argument is
+/// recorded at `TAG_LIVE_EXTENT_REACH`: `0x14` is unreachable to any earlier
+/// region, and the retired spelling becomes unreachable to any later one, so a
+/// retained pre-migration identity misses rather than matching a subject it
+/// does not name.
+const LIVE_ROW_MAJOR_SCHEDULE_IDENTITY_HEX: &str = "74696c65722e7363686564756c652e7637000000000000000001000000000000000200000000000000020100010a0000000100000000000200020b0000000101000000000000000000000002000000000100140000000102001400000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc00000010101010101010101010100000000000000020000000101000000003100000000000000020000000101";
+const LIVE_ROW_MAJOR_KERNEL_IDENTITY_HEX: &str = "74696c65722e6b65726e656c2e763900000000000000017074696c65722e7363686564756c652e7637000000000000000001000000000000000200000000000000020100010a0000000100000000000200020b0000000101000000000000000000000002000000000100140000000102001400000000020000000000000002240000000000000005000000000000001500000000000000010100000000000000040000000000000000000000150000000000000001020000000000000004400000000000000000000021000000000000000104000000000000000400000000000000000000000400000001000000000000001500000000000000010200000000000000043f8000000000000000000021000000000000000103000000000000000400000002000000000000000400000003000000000000000400000004000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010101010000000000000002000000010100000000310000000000000002000000010100000000000000020100030101000000000000000002000301020000000000000000000000000000000101000000000000001574696c65722e746573742e7374726963742d6633327fc0000001010101010101010101000000020000000100000000000000000101000101010101010101010100000000000000120202020102020202020203030303030303020000000000000000000000000000000520000000000000000000000001000000001101000000000000000100000001120200000000000000020000000000000001000000021401000000010000000200000000000000010000000318000000030000000000000000000000000000000312020000000000000000000000000000000100000004120200000000000000000000000000000001000000051f000000040000000000000000000000010000000500000000000000010000000700000000000000020000000600000007000000000000000a13020000000100000000000000000000000100000008130100000008000000060000000000000001000000091600000000000000090000000000000000000000010000000a12034000000000000000000000010000000b13060000000a0000000b00000000000000010000000c15010000000c00000000000000010000000d12033f80000000000000000000010000000e13050000000d0000000e00000000000000010000000f15010000000f00000000000000010000001017000000010000000900000010000000010000000000000000000000000000000000000001000000110000000000000000fe00000000000000010000000000000001";
 
 #[derive(Clone, Copy)]
 enum PointwiseWidth {
@@ -63,14 +76,42 @@ fn two_input_pointwise_builder(
     read_maps: [LogicalAccess; 2],
     write_map: LogicalAccess,
 ) -> ScheduledRegionBuilder {
+    two_input_pointwise_builder_with_proofs(width, rows, read_maps, write_map, [None, None, None])
+}
+
+/// The same fixture with per-access bounds-proof overrides.
+///
+/// An override is how a test perturbs the *pairing* rather than the relation:
+/// `ScheduledRegionBuilder`'s proof list is private outside its own module, so
+/// a refusal test cannot reach in and demote a proof after the fact. Passing
+/// `None` takes the kind the relation implies, which is what every other
+/// caller wants.
+fn two_input_pointwise_builder_with_proofs(
+    width: PointwiseWidth,
+    rows: u64,
+    read_maps: [LogicalAccess; 2],
+    write_map: LogicalAccess,
+    proof_overrides: [Option<BoundsProofKind>; 3],
+) -> ScheduledRegionBuilder {
+    let [read_0_proof, read_1_proof, write_proof] = proof_overrides;
+    let mut read_proofs = [read_0_proof, read_1_proof].into_iter();
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(23));
     builder.iteration_shape(Shape::from_dims([rows])).unwrap();
     for (position, map) in read_maps.into_iter().enumerate() {
-        let elements = match &map {
-            LogicalAccess::LinearIdentity => rows,
-            LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor => 0,
+        // The *kind* is chosen from the relation, not an element count chosen
+        // from it. A live access states `LiveExtentReach`; only a static one
+        // has a count to state. Deriving a zero here instead is what let this
+        // fixture spell a live obligation as a bounded range over a variable,
+        // which no literal-`0` census could have found.
+        let kind = read_proofs.next().flatten().unwrap_or_else(|| match &map {
+            LogicalAccess::LinearIdentity => BoundsProofKind::LinearRange {
+                element_count: rows,
+            },
+            LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor => {
+                BoundsProofKind::LiveExtentReach
+            }
             _ => panic!("the focused fixture only constructs identity and live accesses"),
-        };
+        });
         let witness = u32::try_from(position).unwrap();
         builder
             .push_access(Access {
@@ -87,17 +128,19 @@ fn two_input_pointwise_builder(
                 id: BoundsWitnessId::new(witness),
                 tensor: TensorRole::Input,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange {
-                    element_count: elements,
-                },
+                kind,
             })
             .unwrap();
     }
-    let write_elements = match &write_map {
-        LogicalAccess::LinearIdentity => rows,
-        LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor => 0,
+    let write_kind = write_proof.unwrap_or_else(|| match &write_map {
+        LogicalAccess::LinearIdentity => BoundsProofKind::LinearRange {
+            element_count: rows,
+        },
+        LogicalAccess::LiveRowMajorSource { .. } | LogicalAccess::LiveRowMajor => {
+            BoundsProofKind::LiveExtentReach
+        }
         _ => panic!("the focused fixture only constructs identity and live accesses"),
-    };
+    });
     builder
         .push_access(Access {
             tensor: TensorRole::Intermediate,
@@ -113,9 +156,7 @@ fn two_input_pointwise_builder(
             id: BoundsWitnessId::new(2),
             tensor: TensorRole::Intermediate,
             component_role: None,
-            kind: BoundsProofKind::LinearRange {
-                element_count: write_elements,
-            },
+            kind: write_kind,
         })
         .unwrap();
     builder
@@ -259,7 +300,7 @@ fn a_source_marker_on_an_intermediate_read_is_refused() {
                 id: BoundsWitnessId::new(witness),
                 tensor,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange { element_count: 0 },
+                kind: BoundsProofKind::LiveExtentReach,
             })
             .unwrap();
     }
@@ -278,7 +319,7 @@ fn a_source_marker_on_an_intermediate_read_is_refused() {
             id: BoundsWitnessId::new(2),
             tensor: TensorRole::Output,
             component_role: None,
-            kind: BoundsProofKind::LinearRange { element_count: 0 },
+            kind: BoundsProofKind::LiveExtentReach,
         })
         .unwrap();
     builder
@@ -475,6 +516,72 @@ fn static_and_same_axis_live_pointwise_identities_remain_exact() {
         .expect("one marker plus fieldless consumers remain valid");
         lower_scheduled_region(&scheduled).expect("both valid all-live widths still lower");
     }
+}
+
+/// A live row-major access may not spell its obligation as a zero range.
+///
+/// The correctness the `LiveExtentReach` variant bought, stated as a refusal.
+/// The retired `LinearRange { element_count: 0 }` spelling said "zero in-range
+/// positions" about an access that reaches the live inner extent, and the rule
+/// that admitted it checked only that the number happened to be zero — so a
+/// count that reached zero for an unrelated reason passed a check that had
+/// examined nothing. Both live relations are covered because they are separate
+/// variants and a rule can stop reaching one of them silently.
+#[test]
+fn a_live_row_major_access_refuses_a_zero_linear_range() {
+    let inner = Axis::new(1);
+    let zero = || Some(BoundsProofKind::LinearRange { element_count: 0 });
+    for (overrides, label) in [
+        ([zero(), None, None], "the source marker"),
+        ([None, zero(), None], "the consuming read"),
+        ([None, None, zero()], "the consuming write"),
+    ] {
+        let error = two_input_pointwise_builder_with_proofs(
+            PointwiseWidth::F32,
+            2,
+            [
+                LogicalAccess::LiveRowMajorSource { inner_axis: inner },
+                LogicalAccess::LiveRowMajor,
+            ],
+            LogicalAccess::LiveRowMajor,
+            overrides,
+        )
+        .build()
+        .unwrap_err();
+        assert_eq!(
+            error
+                .diagnostics()
+                .iter()
+                .map(|diagnostic| diagnostic.rule())
+                .collect::<Vec<_>>(),
+            ["bounds-proof"],
+            "{label} must refuse a zero linear range by name: {error}"
+        );
+    }
+}
+
+/// The live variant is refused on a static access, which is the other
+/// direction of the same exclusivity.
+#[test]
+fn a_static_access_refuses_the_live_extent_reach() {
+    let error = two_input_pointwise_builder_with_proofs(
+        PointwiseWidth::F32,
+        2,
+        [LogicalAccess::LinearIdentity, LogicalAccess::LinearIdentity],
+        LogicalAccess::LinearIdentity,
+        [Some(BoundsProofKind::LiveExtentReach), None, None],
+    )
+    .build()
+    .unwrap_err();
+    assert_eq!(
+        error
+            .diagnostics()
+            .iter()
+            .map(|diagnostic| diagnostic.rule())
+            .collect::<Vec<_>>(),
+        ["bounds-proof"],
+        "a static identity access states a count it must not omit: {error}"
+    );
 }
 
 /// Each fresh tag reaches the canonical bytes on a legal program: moving the
