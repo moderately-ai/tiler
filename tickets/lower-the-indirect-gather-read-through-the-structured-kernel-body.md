@@ -41,3 +41,13 @@ Filed 2026-08-23 from [`thread-resolved-lowering-into-the-governed-spelling-path
 ## Non-goals
 
 Scatter. The Metal emission. Invocation-scoped index validation — an undischarged gather never reaches this layer, because the region vocabulary declines it at `RegionVocabularyWall::GatherIndexBoundsUnproved`.
+
+## Coordinator note — 2026-08-23: one contract paragraph expires when this lane lands
+
+`restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired` landed as `0b51531f` and repaired `docs/compiler/optimizer.md` to the standing true at that moment: the retired `GatherProofUnavailable`, the narrower `GatherIndexBoundsUnproved` for the undischarged population, a proved gather reaching `RegionSpellingKind::Gather`, and — as the reason a gather still does not compile end to end — the kernel-body wall **this ticket owns**.
+
+That lane wrote the sentence **conditionally on purpose**, naming this ticket as in progress and saying the boundary "may itself move next", rather than asserting a permanent state. So this is a known expiry, not drift it left behind.
+
+**When this ticket lands, that paragraph needs a further dated correction.** The scope is `contracts/optimizer`, which this ticket does **not** hold, so it is a follow-up to file at merge rather than something to reach for from this lane. This is the third link in that chain — `27fa3043`, then `0b51531f` — and each one flagged its own successor rather than leaving a stale sentence, which is the pattern to continue.
+
+**Also verified by the coordinator at `db8ae185`, so you need not re-derive it:** `GATHER_KERNEL_BODY_RULE` is `"gather-kernel-body"` at `crates/tiler-compiler/src/pipeline/planning.rs`, and the classifier reports rather than refuses — it stops being reached once your body lands, which is the intended retirement path for it.
