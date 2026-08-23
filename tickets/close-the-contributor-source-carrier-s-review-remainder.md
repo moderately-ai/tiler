@@ -1,7 +1,7 @@
 ---
 id: close-the-contributor-source-carrier-s-review-remainder
 title: Close the contributor-source carrier's review remainder
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [replace-the-serial-sum-contributor-fields-with-the-exhaustive-source, re-derive-the-contraction-fusion-role-rationale-after-the-key-replacement]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, documentation, test-coverage]
+claimed_from: todo
+assignee: worker-remainder
+lease_expires_at: 1787485111
 ---
 ## User-visible outcome
 
