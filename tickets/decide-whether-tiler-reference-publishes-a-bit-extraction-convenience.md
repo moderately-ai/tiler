@@ -9,9 +9,6 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [reference, public-boundary, decision, needs-tom]
-claimed_from: todo
-assignee: worker-bits
-lease_expires_at: 1787457908
 ---
 ## User-visible outcome
 
