@@ -1,7 +1,7 @@
 ---
 id: name-the-physical-selection-role-in-the-expansion-subject-facet-doc
 title: Name the physical-selection role in the expansion subject facet doc
-status: in-progress
+status: todo
 priority: p3
 dependencies: []
 related: [repair-the-artifact-identity-prose-the-v22-run-falsified]
@@ -9,9 +9,6 @@ scopes: [implementation/cache]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, artifact, identity, cache]
-claimed_from: todo
-assignee: worker-cachefacet
-lease_expires_at: 1787448544
 ---
 ## User-visible outcome
 
