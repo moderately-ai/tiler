@@ -1,7 +1,7 @@
 ---
 id: record-typed-refusals-for-uncovered-contraction-realizations
 title: Record typed refusals for uncovered contraction realizations
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [realize-the-attention-contractions-on-metal, admit-reassociated-contraction-schedule-alternatives, qualify-the-simdgroup-matrix-contraction-realization]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, explainability, contraction]
+claimed_from: todo
+assignee: worker-decline
+lease_expires_at: 1787454809
 ---
 ## User-visible outcome
 

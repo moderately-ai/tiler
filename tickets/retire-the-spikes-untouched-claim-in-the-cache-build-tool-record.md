@@ -1,7 +1,7 @@
 ---
 id: retire-the-spikes-untouched-claim-in-the-cache-build-tool-record
 title: Retire the spikes-untouched claim in the cache build-tool record
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, spikes, falsified-evidence]
+claimed_from: todo
+assignee: worker-cache
+lease_expires_at: 1787454809
 ---
 ## User-visible outcome
 
