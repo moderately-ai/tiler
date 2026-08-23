@@ -25,9 +25,19 @@ impl IndexRegionBuilder {
         let reachable_values = self.reachable_values();
         let reachable_accesses: BTreeSet<_> = reachable_values
             .iter()
+            // Rest-free in both arms, here and in the two walks below, so a
+            // widened definition or operation vocabulary is a build error at
+            // the walk that computes an obligation rather than a branch that
+            // quietly stops contributing to one.
             .filter_map(|i| match self.values[*i as usize].definition {
                 ScalarValueDefinition::AccessRead { access } => Some(access),
-                ScalarValueDefinition::OperationResult { .. } => None,
+                // A value defined by an operation names no access itself; the
+                // accesses its operands read are reached through
+                // `reachable_values`, which already walked them.
+                ScalarValueDefinition::OperationResult {
+                    operation: _,
+                    result: _,
+                } => None,
             })
             .chain(self.outputs.iter().map(|o| o.access))
             .collect();
@@ -35,18 +45,36 @@ impl IndexRegionBuilder {
         let reachable_operations: BTreeSet<_> = reachable_values
             .iter()
             .filter_map(|value| match self.values[*value as usize].definition {
-                ScalarValueDefinition::OperationResult { operation, .. } => Some(operation),
-                ScalarValueDefinition::AccessRead { .. } => None,
+                // `result` selects which of the operation's results this value
+                // is; an operation is reachable whichever result named it.
+                ScalarValueDefinition::OperationResult {
+                    operation,
+                    result: _,
+                } => Some(operation),
+                ScalarValueDefinition::AccessRead { access: _ } => None,
             })
             .collect();
         let used_reductions: BTreeSet<_> = reachable_operations
             .iter()
             .filter_map(
+                // `traversal` names no dimension. `init` and `contributors` are
+                // the same value ordinals `reduce` folded into `operands`, so
+                // `reachable_values` already walked them and whatever
+                // dimensions they bind belong to their own reductions. `body`
+                // is canonicalized on its own index space and never names one
+                // of this region's dimensions.
                 |operation| match &self.operations[*operation as usize].kind {
-                    ScalarOperationKindData::Reduce { dimensions, .. } => {
-                        Some(dimensions.iter().copied())
-                    }
-                    ScalarOperationKindData::Apply { .. } => None,
+                    ScalarOperationKindData::Reduce {
+                        dimensions,
+                        traversal: _,
+                        init: _,
+                        contributors: _,
+                        body: _,
+                    } => Some(dimensions.iter().copied()),
+                    ScalarOperationKindData::Apply {
+                        key: _,
+                        attributes: _,
+                    } => None,
                 },
             )
             .flatten()
@@ -259,8 +287,14 @@ impl IndexRegionBuilder {
                 }
                 continue;
             }
+            // Bound exhaustively: `interval_proved` is the *positive* half of
+            // the verdict, read by `bounds_proved_without_enumeration` and by
+            // compaction's retained-evidence choice, so this refusal site reads
+            // only the refutation. A third verdict field would be a build error
+            // here rather than evidence this path silently never consults.
             let IntervalVerdict {
-                definitely_outside, ..
+                interval_proved: _,
+                definitely_outside,
             } = self.interval_verdict(access, shape);
             // A coordinate outside every axis is only a refutation over a
             // domain that is visited. A symbolic extent whose environment
@@ -674,11 +708,25 @@ impl IndexRegionBuilder {
                 IndexNode::Dimension(dimension) if access.domain.contains(&dimension) => {
                     Some(dimension)
                 }
+                // Only a bare in-domain dimension gives the structural
+                // extent-equality argument its premise. Every other form is
+                // named with its fields bound rather than elided, so widening
+                // one is a build error here: whether a form is a domain
+                // dimension is a claim about the whole node.
                 IndexNode::Constant(_)
                 | IndexNode::Dimension(_)
-                | IndexNode::LinearCombination { .. }
-                | IndexNode::FloorDiv { .. }
-                | IndexNode::Modulo { .. } => None,
+                | IndexNode::LinearCombination {
+                    constant: _,
+                    terms: _,
+                }
+                | IndexNode::FloorDiv {
+                    dividend: _,
+                    divisor: _,
+                }
+                | IndexNode::Modulo {
+                    dividend: _,
+                    divisor: _,
+                } => None,
             };
             let structural = domain_dimension.is_some_and(|dimension| {
                 self.extents_proved_equal(&self.dimensions[dimension as usize].extent, &extent)
@@ -851,10 +899,23 @@ impl IndexRegionBuilder {
             count = count.saturating_add(1);
             integer_bytes = integer_bytes.saturating_add(self.expression_integer_bytes(expression));
             match &*self.expressions[expression as usize].node {
-                IndexNode::LinearCombination { terms, .. } => {
+                // `constant` is a plain `IndexInteger`, never an expression
+                // ordinal, so it adds no node to the plan. Its magnitude is
+                // already charged by `expression_integer_bytes` above.
+                IndexNode::LinearCombination { constant: _, terms } => {
                     pending.extend(terms.iter().map(|term| term.value));
                 }
-                IndexNode::FloorDiv { dividend, .. } | IndexNode::Modulo { dividend, .. } => {
+                // `divisor` is a `SourcedExtent` resolved against the shape
+                // environment rather than an ordinal into `self.expressions`,
+                // so it names no node the plan has to size.
+                IndexNode::FloorDiv {
+                    dividend,
+                    divisor: _,
+                }
+                | IndexNode::Modulo {
+                    dividend,
+                    divisor: _,
+                } => {
                     pending.push(*dividend);
                 }
                 IndexNode::Constant(_) | IndexNode::Dimension(_) => {}
@@ -1093,11 +1154,20 @@ impl IndexRegionBuilder {
             self.mark_expr(*coordinate, &mut reached);
         }
         reached.into_iter().all(
+            // `mark_expr` already closed this set over `dividend` and over each
+            // term's `value`, so the sourced positions are all that is left to
+            // decide here; both are bound by name rather than elided, and
+            // `constant` is a literal magnitude that is always evaluable.
             |expression| match &*self.expressions[expression as usize].node {
-                IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
-                    self.determined(divisor).is_some()
+                IndexNode::FloorDiv {
+                    dividend: _,
+                    divisor,
                 }
-                IndexNode::LinearCombination { terms, .. } => terms.iter().all(|term| {
+                | IndexNode::Modulo {
+                    dividend: _,
+                    divisor,
+                } => self.determined(divisor).is_some(),
+                IndexNode::LinearCombination { constant: _, terms } => terms.iter().all(|term| {
                     term.coefficient.as_literal().is_some()
                         || self.determined_scalar(&term.coefficient).is_some()
                 }),
@@ -1125,11 +1195,21 @@ impl IndexRegionBuilder {
             coefficients: BTreeMap::new(),
         };
         for index in plan {
+            // The sourced positions are exactly the two bound by name below;
+            // `dividend` and `term.value` are ordinals the plan already
+            // contains, and `constant` is a literal needing no resolution.
             match &*self.expressions[*index as usize].node {
-                IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
+                IndexNode::FloorDiv {
+                    dividend: _,
+                    divisor,
+                }
+                | IndexNode::Modulo {
+                    dividend: _,
+                    divisor,
+                } => {
                     scalars.divisors.insert(*index, self.determined(divisor)?);
                 }
-                IndexNode::LinearCombination { terms, .. } => {
+                IndexNode::LinearCombination { constant: _, terms } => {
                     for term in terms {
                         if let Some(symbol) = term.coefficient.symbol() {
                             scalars
@@ -1172,12 +1252,19 @@ impl IndexRegionBuilder {
                         sum + coefficient * &values[&term.value]
                     })
                 }
-                IndexNode::FloorDiv { dividend, .. } => {
-                    values[dividend].div_floor(&BigInt::from(scalars.divisors[index]))
-                }
-                IndexNode::Modulo { dividend, .. } => {
-                    values[dividend].mod_floor(&BigInt::from(scalars.divisors[index]))
-                }
+                // `divisor` is read from `scalars`, which `plan_scalars`
+                // resolved against the environment before any budget was taken,
+                // rather than from the node: evaluation at a point must be
+                // total arithmetic, and re-asking the environment here could
+                // fail halfway through a walk.
+                IndexNode::FloorDiv {
+                    dividend,
+                    divisor: _,
+                } => values[dividend].div_floor(&BigInt::from(scalars.divisors[index])),
+                IndexNode::Modulo {
+                    dividend,
+                    divisor: _,
+                } => values[dividend].mod_floor(&BigInt::from(scalars.divisors[index])),
             };
             values.insert(*index, value);
         }
@@ -1261,7 +1348,18 @@ impl IndexRegionBuilder {
                 };
                 constant.0.to_u64().map(|offset| (offset, Some(dimension)))
             }
-            IndexNode::FloorDiv { .. } | IndexNode::Modulo { .. } => None,
+            // Outside the rectangle vocabulary entirely, whatever the operands
+            // are — a quotient's image over a dimension is not contiguous — so
+            // both fields are bound rather than elided and a widened form has
+            // to state its own answer here.
+            IndexNode::FloorDiv {
+                dividend: _,
+                divisor: _,
+            }
+            | IndexNode::Modulo {
+                dividend: _,
+                divisor: _,
+            } => None,
         }
     }
 

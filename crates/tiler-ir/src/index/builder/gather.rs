@@ -198,7 +198,11 @@ fn node_reads_environment(
         IndexNode::Dimension(dimension) => {
             dimensions[*dimension as usize].extent.symbol().is_some()
         }
-        IndexNode::LinearCombination { terms, .. } => terms.iter().any(|term| {
+        // `constant` is a plain `IndexInteger`, which holds a magnitude and
+        // never a `ShapeSymbol`, so it cannot be the thing that makes this
+        // expression read the environment. Only the sourced positions can:
+        // `term.coefficient` here and `divisor` below.
+        IndexNode::LinearCombination { constant: _, terms } => terms.iter().any(|term| {
             term.coefficient.symbol().is_some()
                 || node_reads_environment(term.value, dimensions, expressions)
         }),

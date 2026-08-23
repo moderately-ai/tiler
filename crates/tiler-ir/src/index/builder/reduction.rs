@@ -84,11 +84,25 @@ pub(super) fn accumulate_linear_term(
         return Ok(());
     }
     let expression = &expressions[value as usize];
+    // Wildcard-free and rest-free so a widened node vocabulary is a build error
+    // here: distributability is a claim about the *whole* node, and a new form
+    // or a new field inheriting `false` from a catch-all would silently decide
+    // that claim rather than have it decided. `constant` is folded by the
+    // distributable arm below rather than consulted to reach it.
     let distributable = match &*expression.node {
-        IndexNode::LinearCombination { terms, .. } => terms
+        IndexNode::LinearCombination { constant: _, terms } => terms
             .iter()
             .all(|term| term.coefficient.as_literal().is_some()),
-        _ => false,
+        IndexNode::Constant(_)
+        | IndexNode::Dimension(_)
+        | IndexNode::FloorDiv {
+            dividend: _,
+            divisor: _,
+        }
+        | IndexNode::Modulo {
+            dividend: _,
+            divisor: _,
+        } => false,
     };
     match &*expression.node {
         IndexNode::Constant(inner) => {
@@ -116,7 +130,25 @@ pub(super) fn accumulate_linear_term(
                 )?;
             }
         }
-        _ => {
+        // The opaque arm, named exhaustively rather than reached by a catch-all
+        // so a new node form has to choose whether it distributes. A sum that
+        // `distributable` declined, a bare dimension, a quotient, and a
+        // remainder all become one term scaled by `coefficient`, which is
+        // exact; their own fields are folded into `structural_key`, which is
+        // what merges two mentions of the same opaque operand.
+        IndexNode::LinearCombination {
+            constant: _,
+            terms: _,
+        }
+        | IndexNode::Dimension(_)
+        | IndexNode::FloorDiv {
+            dividend: _,
+            divisor: _,
+        }
+        | IndexNode::Modulo {
+            dividend: _,
+            divisor: _,
+        } => {
             let entry = coefficients
                 .entry(Arc::clone(&expression.structural_key))
                 .or_insert_with(|| (value, BigInt::zero()));
@@ -137,8 +169,13 @@ pub(super) fn compact_reducer_body(
         if !reached_values.insert(value) {
             continue;
         }
-        if let ReducerBodyValueSource::OperationResult { operation, .. } =
-            body.values[value as usize].source
+        // `result` selects which of the operation's results this value is;
+        // reachability needs only the operation, whose full operand and result
+        // lists are pushed below regardless of which result named it.
+        if let ReducerBodyValueSource::OperationResult {
+            operation,
+            result: _,
+        } = body.values[value as usize].source
             && reached_operations.insert(operation)
         {
             let occurrence = &body.operations[operation as usize];
