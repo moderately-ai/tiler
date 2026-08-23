@@ -1,7 +1,7 @@
 ---
 id: check-the-retained-gather-resolution-in-the-reference-evaluator
 title: Check the retained gather resolution in the reference evaluator
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [decide-how-the-oracle-independently-checks-a-gather-proof-identity, admit-the-selected-data-dependent-index-representation, bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence]
@@ -9,6 +9,9 @@ scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, gather, reference, identity]
+claimed_from: todo
+assignee: worker-refeval
+lease_expires_at: 1787450840
 ---
 ## User-visible outcome
 

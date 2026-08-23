@@ -1,7 +1,7 @@
 ---
 id: retire-the-spikes-are-ungated-claim-across-the-repository
 title: Retire the spikes-are-ungated claim across the repository
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [correct-the-spike-portals-false-claim-that-no-make-target-reaches-spikes, decide-whether-the-citation-checker-should-reach-spike-records]
@@ -9,6 +9,9 @@ scopes: [implementation/workspace, contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, spikes, gates, misattribution]
+claimed_from: todo
+assignee: worker-ungated
+lease_expires_at: 1787450840
 ---
 ## User-visible outcome
 
