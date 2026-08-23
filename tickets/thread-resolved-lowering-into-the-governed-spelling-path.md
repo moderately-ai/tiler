@@ -1,7 +1,7 @@
 ---
 id: thread-resolved-lowering-into-the-governed-spelling-path
 title: Thread resolved lowering into the governed spelling path
-status: todo
+status: in-progress
 priority: p1
 dependencies: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence]
 related: [decide-whether-refinement-evidence-may-reach-a-physical-provider, emit-the-indirect-gather-on-metal]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, gather, frontier]
+claimed_from: todo
+assignee: worker-thread
+lease_expires_at: 1787467109
 ---
 ## User-visible outcome
 
