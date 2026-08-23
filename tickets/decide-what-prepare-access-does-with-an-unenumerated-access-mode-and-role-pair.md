@@ -1,7 +1,7 @@
 ---
 id: decide-what-prepare-access-does-with-an-unenumerated-access-mode-and-role-pair
 title: Decide what prepare_access does with an unenumerated access-mode and role pair
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing]
-claimed_from: todo
-assignee: worker-prepaccess
-lease_expires_at: 1787486699
 ---
 ## User-visible outcome
 
