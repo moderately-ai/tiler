@@ -1,7 +1,7 @@
 ---
 id: decide-how-the-oracle-independently-checks-a-gather-proof-identity
 title: Decide how the oracle independently checks a gather proof identity
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-the-selected-data-dependent-index-representation, carry-the-gather-relation-through-the-compiler-vertical]
@@ -9,9 +9,6 @@ scopes: [contracts/decisions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [decision, needs-tom, public-boundary, identity, reference]
-claimed_from: todo
-assignee: worker-oracleid2
-lease_expires_at: 1787449582
 ---
 ## User-visible outcome
 

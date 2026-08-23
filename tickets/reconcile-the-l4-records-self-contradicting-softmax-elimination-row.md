@@ -1,7 +1,7 @@
 ---
 id: reconcile-the-l4-records-self-contradicting-softmax-elimination-row
 title: Reconcile the L4 record's self-contradicting softmax elimination row
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [plan-the-materialized-attention-decomposition]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, scheduling]
-claimed_from: todo
-assignee: worker-l4row2
-lease_expires_at: 1787449582
 ---
 
 The L4 attention-planning record, [`first-attention-program-vertical.md`](../docs/research/program-planning/first-attention-program-vertical.md), contradicted itself about threadgroup-cooperative softmax within one file. Its elimination table rejected the candidate on a zero-synchronization barrier ground, while a dated 2026-08-10 correction lower in the same document already superseded that ground. A reader landing on the table got one answer and a reader reaching the correction got another, and neither knew the other existed.
