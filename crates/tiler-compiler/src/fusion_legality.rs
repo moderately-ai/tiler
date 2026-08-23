@@ -507,15 +507,22 @@ impl FusionNumericalCapabilities {
         // folds over one contributor sequence carrying *different* order
         // obligations. A contraction carries one fold and nothing in it is
         // order-insensitive, so that role would claim a freedom — the softmax
-        // maximum's permission-free reassociation — this family's own
-        // `reassociation-permitted: false` withholds.
+        // maximum's permission-free reassociation, unconditional on every
+        // binary32 input — that this family does not have: its own reduction
+        // descriptor declares reassociation `permission-gated`, a freedom
+        // resolved against the caller's contract rather than held outright.
         //
         // *Why not `ElementwiseArithmetic`.* `is_reduction` would answer false
         // and all four reduction obligations would discharge vacuously as a
-        // structural fact, so a region containing a contraction would derive
-        // `Legal` under a reassociating contract that grants exactly the
-        // regrouping this family forbids. That is a silently wrong accept, which
-        // is the one outcome this authority may not produce.
+        // structural fact — including reassociation, which for every other
+        // reduction role instead resolves against the caller's contract. A
+        // region containing a contraction would then derive `Legal` under a
+        // reassociating contract without ever asking the question the family's
+        // own reduction descriptor poses: reassociation is declared
+        // `permission-gated`, so an ungranted permission is exactly the case
+        // the contract-driven discharge leaves unknown rather than accepts.
+        // That is a silently wrong accept, which is the one outcome this
+        // authority may not produce.
         //
         // *Why not a seventh role.* A new variant must derive some obligation
         // differently or fall outside the four structural buckets. This one does
@@ -549,7 +556,9 @@ impl FusionNumericalCapabilities {
         // reduction, so a permitting contract leaves it unknown rather than
         // discharged. Operand permutation is discharged from the role: the
         // ordered left fold fixes the contributor sequence, and the family's own
-        // `permutation-permitted: false` agrees. The ninth — ADR 0015's
+        // reduction descriptor agrees — its permutation row is `unsupported`,
+        // not merely a withheld permission, so no caller contract could grant
+        // it even were the discharge to consult one. The ninth — ADR 0015's
         // arithmetic contraction — is decided in
         // `is_exact_governed_same_family_pointwise` below, where this family is
         // the case that closure was written for.
