@@ -1,7 +1,7 @@
 ---
 id: run-the-owed-non-apple-cross-target-check-for-tiler-conformance
 title: Run the owed non-Apple cross-target check for tiler-conformance
-status: todo
+status: awaiting-decision
 priority: p2
 dependencies: []
 related: []

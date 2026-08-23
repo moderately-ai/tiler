@@ -1,7 +1,7 @@
 ---
 id: admit-an-explicit-non-arithmetic-region-and-delivery-state
 title: Admit an explicit non-arithmetic region and delivery state
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-partitioned-copy-scheduled-region]
 related: [admit-the-partitioned-copy-scheduled-region, derive-target-numerical-feasibility-from-reached-arithmetic-only]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, implementation/build, imple
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, public-boundary, numerics, artifacts, identity, strict, decision, needs-tom]
+claimed_from: todo
+assignee: worker-nonarith
+lease_expires_at: 1787459513
 ---
 ## Outcome
 
