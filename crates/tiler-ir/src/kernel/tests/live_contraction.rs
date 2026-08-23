@@ -46,7 +46,7 @@ fn live_contraction_region(id: RegionId) -> VerifiedScheduledRegion {
                 id: BoundsWitnessId::new(witness),
                 tensor,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange { element_count: 0 },
+                kind: BoundsProofKind::LiveExtentReach,
             })
             .unwrap();
     }

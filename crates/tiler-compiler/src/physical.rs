@@ -1821,10 +1821,13 @@ pub(crate) fn admits_source_bound_live_schedule(request: &VerifiedTargetRequest)
 /// loop, the exact root-realizing read carrying
 /// [`LogicalAccess::LiveRowMajorSource`] with the decoded root axis, and every
 /// other access the fieldless [`LogicalAccess::LiveRowMajor`] consumer. Bounds
-/// proofs record the unspecialized live buffers as zero linear ranges, exactly
-/// as the accepted live-operand vocabulary states, and the launch is one
-/// static outer invocation whose inner loop is the runtime operand — at
-/// `n == 0` it enters a zero-trip loop and executes no element access.
+/// proofs record the unspecialized live buffers as
+/// [`BoundsProofKind::LiveExtentReach`], which states that the reach is the
+/// region's live extent and that this layer does not name it; the schedule
+/// verifier requires that variant for these relations and refuses a
+/// `LinearRange` beside them. The launch is one static outer invocation whose
+/// inner loop is the runtime operand — at `n == 0` it enters a zero-trip loop
+/// and executes no element access.
 ///
 /// Nothing here reads `ExtentSources::determined` or any bound value: the
 /// symbol's root arrives only through the retained identity bytes, so a
@@ -1900,7 +1903,7 @@ fn live_pointwise_region(
             id: witness(position),
             tensor: TensorRole::Input,
             component_role: None,
-            kind: BoundsProofKind::LinearRange { element_count: 0 },
+            kind: BoundsProofKind::LiveExtentReach,
         })
         .collect();
     accesses.push(Access {
@@ -1915,7 +1918,7 @@ fn live_pointwise_region(
         id: BoundsWitnessId::new(write_witness),
         tensor: write_tensor,
         component_role: None,
-        kind: BoundsProofKind::LinearRange { element_count: 0 },
+        kind: BoundsProofKind::LiveExtentReach,
     });
     let region = ScheduledRegion {
         index: IndexRegion {

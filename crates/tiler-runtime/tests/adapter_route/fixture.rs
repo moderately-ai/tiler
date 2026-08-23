@@ -2135,7 +2135,7 @@ fn live_row_major_kernel() -> VerifiedKernel {
                 id: BoundsWitnessId::new(witness),
                 tensor,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange { element_count: 0 },
+                kind: BoundsProofKind::LiveExtentReach,
             })
             .expect("bounds");
     }
@@ -2324,7 +2324,7 @@ fn live_contraction_kernel() -> VerifiedKernel {
                 id: BoundsWitnessId::new(witness),
                 tensor,
                 component_role: None,
-                kind: BoundsProofKind::LinearRange { element_count: 0 },
+                kind: BoundsProofKind::LiveExtentReach,
             })
             .expect("live bounds");
     }

@@ -827,6 +827,7 @@ mod tests {
                 index_shape: Shape::from_dims([2]),
                 proof: Box::new(crate::schedule::builder::gather_tests::static_gather_proof()),
             },
+            BoundsProofKind::LiveExtentReach,
         ];
         let tags: Vec<u8> = kinds
             .iter()
@@ -851,7 +852,7 @@ mod tests {
         assert_eq!(unique.len(), tags.len(), "proof tags collided: {tags:?}");
         assert_eq!(
             tags,
-            [0x11, 0x12, 0x13],
+            [0x11, 0x12, 0x13, 0x14],
             "the bounds-proof family run is 0x1X and its assignment moved",
         );
     }
