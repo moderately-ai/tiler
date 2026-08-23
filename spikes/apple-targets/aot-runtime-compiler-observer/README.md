@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.spike.apple-targets.aot-runtime-compiler-observer"
+kind: "experiment"
+title: "AOT-compatible Metal runtime-compiler observer"
+topics: ["apple-targets", "metal", "runtime-compilation", "compiler-identity", "aot"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
+supports: ["tiler.research.apple-targets.numerical-behaviour"]
+entrypoints: ["spikes/apple-targets/aot-runtime-compiler-observer/run.sh"]
+last_verified: "2026-07-31"
+ticket: "prove-an-aot-compatible-metal-runtime-compiler-observer"
+---
+
 # AOT-compatible Metal runtime-compiler observer
 
 This bounded experiment asks whether native metallib loading and compute-pipeline preparation expose an exact runtime-compiler identity without runtime source compilation. It deliberately accepts a negative answer: loaded-image evidence that cannot be attributed to the exact preparation remains weaker than a compiler identity and cannot satisfy host eligibility.

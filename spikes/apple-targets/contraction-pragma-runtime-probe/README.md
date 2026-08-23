@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.spike.apple-targets.contraction-pragma-runtime-probe"
+kind: "experiment"
+title: "Contraction-pragma runtime probe"
+topics: ["apple-targets", "metal", "numerics", "bf16", "contraction", "runtime-compilation"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["bounded-measurement"]
+supports: ["tiler.research.apple-targets.numerical-behaviour", "tiler.research.numerics.bf16-computation-accumulator-and-conversion"]
+entrypoints: ["spikes/apple-targets/contraction-pragma-runtime-probe/pragma_probe.py"]
+last_verified: "2026-08-02"
+ticket: "probe-the-bf16-contraction-pragma-on-the-metal-runtime-path"
+---
+
 # Contraction-pragma runtime probe
 
 This bounded experiment asks one question the [numerical-behaviour probe](../README.md#numerical-behaviour-probe) is structurally unable to ask: **does `#pragma METAL fp contract(off)` survive `newLibraryWithSource` to the Metal runtime compiler?**

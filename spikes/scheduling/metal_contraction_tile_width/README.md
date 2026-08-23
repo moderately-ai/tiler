@@ -7,6 +7,7 @@ topics: ["scheduling", "contraction", "matmul", "metal", "target-profiles"]
 experiment_status: "harness-validated"
 implementation_status: "spike-only"
 evidence_classes: ["bounded-measurement"]
+supports: ["tiler.research.scheduling.first-metal-contraction-realizations"]
 entrypoints: ["spikes/scheduling/metal_contraction_tile_width/tile_width_sweep.py", "spikes/scheduling/metal_contraction_tile_width/kernels.metal", "spikes/scheduling/metal_contraction_tile_width/host.m"]
 last_verified: "2026-08-22"
 ticket: "calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol"
