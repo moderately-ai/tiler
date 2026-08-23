@@ -1,7 +1,7 @@
 ---
 id: split-the-ir-program-test-monolith-into-focused-modules
 title: Split the IR program test monolith into focused modules
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-artifact-program-test-monoliths-into-focused-modules]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: []
 paths: []
 tags: [refactor, maintainability, tests]
+claimed_from: todo
+assignee: worker-splitprog
+lease_expires_at: 1787477160
 ---
 ## User-visible outcome
 
