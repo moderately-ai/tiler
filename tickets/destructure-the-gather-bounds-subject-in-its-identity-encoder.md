@@ -37,3 +37,17 @@ Changing what the identity encodes, its field order, or its domain tag. Any publ
 ## Closes when
 
 The encoder destructures its subject exhaustively; the emitted bytes are unchanged and that is demonstrated rather than asserted; the sibling-encoder sweep is reported; and a perturbation shows the alarm firing — add a field to `GatherIndexBoundsSubject`, quote the build error, and confirm it names the encoder.
+
+## Coordinator re-audit at `3bf144f0`, 2026-08-22 — Fact verified, and narrowed in two ways that matter for the repair
+
+Read in full at this base rather than relayed.
+
+**Verified.** `encode_gather_bounds_identity` in `crates/tiler-ir/src/index/builder/gather.rs` reaches its subject entirely by field access and has no exhaustive construct over the struct. `GatherIndexBoundsSubject` in `crates/tiler-ir/src/index/model.rs` declares **exactly twelve** fields: `region`, `access`, `source`, `index`, `source_type`, `index_type`, `source_shape`, `index_shape`, `result_shape`, `axis`, `source_extent`, `domain`. A thirteenth would compile and silently stay out of the identity bytes.
+
+**Narrowing 1 — all twelve are encoded today, so the byte-identity requirement is genuinely checkable.** I traced each field to its write: `region` through `push_slice`, the three ids through `bounded_index(..).to_be_bytes()`, the two types through `canonical_encoding()`, the three shapes through `push_shape`, `axis` and `source_extent` through `get().to_be_bytes()`, and `domain` through `push_len` plus one `bounded_index` per dimension. **No field is missing right now**, so this ticket is purely a build-time guarantee against future drift and the emitted bytes must not move. That makes "the bytes are unchanged" a real check rather than a formality — if your destructure changes any byte, you have reordered or dropped something and must stop.
+
+**Narrowing 2 — the enum half is already drift-safe; only the struct half is exposed.** The `match kind` at the top of the same function covers `VacuousEmptyResultDomain => 0x01` and `U32RangeContainedBySourceExtent => 0x02` with **no wildcard arm**, so a third `GatherIndexBoundsProofKind` variant is already a build error at this encoder. Do not "fix" that half, and do not add a wildcard to it. State this in your sibling sweep so a later reader can see the asymmetry was deliberate: the enum is guarded by exhaustive matching, the struct needs destructuring to get the same property.
+
+**On the perturbation the Closes-when requires.** Adding a field to `GatherIndexBoundsSubject` must produce a build error that names this encoder. Note the struct is `pub(super)`, so the perturbation is in-crate and cheap. Confirm the error actually names `encode_gather_bounds_identity` rather than only the construction site — a perturbation that reddens the constructor but not the encoder has not demonstrated the property this ticket exists for.
+
+**Still blocked on scope at the time of this audit.** `implementation/ir` is held by `lower-and-emit-the-batched-cooperative-contraction`. This audit is recorded now so the ticket is dispatch-ready the moment that scope frees; re-audit at your own base regardless, since that lane edits this crate.
