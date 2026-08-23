@@ -1,7 +1,7 @@
 ---
 id: admit-an-invocation-scoped-gather-index-validation-receipt
 title: Admit an invocation-scoped gather-index validation receipt
-status: todo
+status: in-progress
 priority: p1
 dependencies: [admit-the-selected-data-dependent-index-representation, admit-a-storage-carrier-for-integer-program-inputs]
 related: [accept-the-invocation-scoped-gather-validation-public-surface, validate-device-resident-gather-indices-before-dispatch, admit-a-zero-copy-exclusive-lease-for-validated-gather-indices, generalize-invocation-bound-index-validation-beyond-gather]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/artifact, implementation/compiler, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, gather, validation, fail-closed, public-boundary, identity]
+claimed_from: todo
+assignee: worker-gatherreceipt
+lease_expires_at: 1787495155
 ---
 ## User-visible outcome
 
