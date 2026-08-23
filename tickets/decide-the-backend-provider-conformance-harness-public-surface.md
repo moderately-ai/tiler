@@ -295,3 +295,13 @@ Reviewed at the exact packet commit `5b08faae` in a detached worktree. **The rev
 **Also folded into the same pass:** the "accepted seams" mislabel, the 3,758 → 3,348 line count, the reversal condition's capability/reuse mismatch, and the missing ADR body or carrier.
 
 **Scheduling.** Re-derivation needs `contracts/decisions`, held by the live oracle-identity lane. **Release trigger: that lane merges or stops at a gated boundary.** Do not present to Tom before the re-derivation lands.
+
+## Coordinator check of the re-derived packet's crux, 2026-08-22 at `2c312826` — the conclusion holds, one stated evidence line does not
+
+Checked before this packet reaches Tom, because a decision packet is the worst place for an imprecise evidence line to survive.
+
+**Holds — the fixture reaches the accepted seams with no facade.** `grep -rn 'tiler_conformance' crates/tiler-conformance/tests/` returns **0**. The independent fixture imports directly from the production crates instead: `tiler_artifact::program`, `tiler_build::{BackendEntryDeclaration, PlanDeterminismDeclaration, assemble_plan_artifact}`, `tiler_compiler::session`, `tiler_compiler::target`, `tiler_ir::kernel`, and `tiler_ir::program::StageRef`. So an external author demonstrably reaches the seams today without any published conformance surface, which is the packet's load-bearing point and it is sound.
+
+**Imprecise — "the fixture merge `829bd1f0` changed no production crate source".** It did: `git diff 829bd1f0^1 829bd1f0 -- crates/tiler-conformance/src/lib.rs` shows **24 lines added**. They are entirely `//!` documentation — the section `# One integration test, and why it is not a module here` — carrying no public item, no code, no `metal` edge, and no macOS predicate. So the **conclusion is untouched** and the accurate claim is *narrower and stronger*: the merge added **no public item to any production crate**, which is what the argument actually needs. State it that way. As written, the sentence is refutable by a one-command diff, and a reviewer who ran that diff would reasonably distrust the rest of the packet for it.
+
+Neither finding changes the packet's recommendation. Whoever re-derives it should carry the corrected wording rather than restating the original, and should not treat this note as having done the re-derivation.
