@@ -1,7 +1,7 @@
 ---
 id: repair-the-flash-class-records-falsified-supplied-greps
 title: Repair the flash-class record's falsified supplied greps
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [reconcile-the-l4-records-self-contradicting-softmax-elimination-row, re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree]
@@ -9,6 +9,9 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, falsified-evidence]
+claimed_from: todo
+assignee: worker-flash
+lease_expires_at: 1787452688
 ---
 ## User-visible outcome
 

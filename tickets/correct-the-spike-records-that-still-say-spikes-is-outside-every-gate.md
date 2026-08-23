@@ -1,7 +1,7 @@
 ---
 id: correct-the-spike-records-that-still-say-spikes-is-outside-every-gate
 title: Correct the spike records that still say spikes/ is outside every gate
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree, decide-whether-the-citation-checker-should-reach-spike-records]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, graph-hygiene, spikes]
+claimed_from: todo
+assignee: worker-spikerec
+lease_expires_at: 1787452689
 ---
 ## User-visible outcome
 
