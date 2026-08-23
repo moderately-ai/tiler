@@ -1,7 +1,7 @@
 ---
 id: close-the-contributor-source-carrier-s-review-remainder
 title: Close the contributor-source carrier's review remainder
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [replace-the-serial-sum-contributor-fields-with-the-exhaustive-source, re-derive-the-contraction-fusion-role-rationale-after-the-key-replacement]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler, implementation/frontend]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, documentation, test-coverage]
-claimed_from: todo
-assignee: worker-remainder
-lease_expires_at: 1787485111
 ---
 ## User-visible outcome
 
@@ -74,3 +71,13 @@ Every comment above states what the code does, the producer-and-produced-fold po
 ### Identity
 
 No identity value moves. The change is three doc comments, one test-fixture extraction, one added assertion in an existing macros test, two added guard assertions in an existing compiler test, and one added test. Nothing touches an identity encoder, a governed key, a schema version, or a golden.
+
+## Coordinator correction — 2026-08-23: I verified five anchors and missed the sixth citation's file path
+
+This ticket's Fact 3 named `crates/tiler-compiler/src/pipeline/tests.rs`. **That file does not exist**, and has not since `split-the-compiler-pipeline-test-monolith-by-orchestration-phase` landed — a split **I merged myself** earlier the same day. The test is at `crates/tiler-compiler/src/pipeline/tests/produced_folds.rs`. Confirmed by the coordinator at `bcc63fe8`.
+
+I checked all five *anchors* in this ticket before dispatching, including confirming that the one it warns about returns 0. I did not check the **file path** of the sixth citation. A path is a citation too, and after a module split it is the part most likely to be wrong.
+
+**This is the louder variant of the module-split hazard**, and worth distinguishing from the quiet one AGENTS.md documents. When a split leaves the named file behind a re-export, a grep returns 0 and reads as *the item was removed*. Here the file was **deleted outright**, so a grep against it **errors** rather than returning 0. Louder, but only if someone runs it — and my pre-dispatch check ran greps against files I had assumed existed.
+
+**The lane also found the strengthening this ticket imagined is not reachable, and proved it rather than asserting it.** `record_numerical_equivalence` cannot be reached for a produced fold on any path: the recording is gated on `fused_prologue_constants` of the output the whole-program candidate implements, and a `Materialized` contributor has no prologue to recover one from. The guard's *first* conjunct declines even earlier — measured, not inferred: the candidate covers 4 occurrences and `output_for_region` answers `None`. Nor can the call be assembled by hand, since its `FusionNumericalProof` comes from `prove_fused_numerics` over a fused region a produced fold has no spelling for. So the proxy stays, its reason is now written down, and **both guard conjuncts are asserted beside the lookup** so a change that opens the path reddens there rather than silently beginning to record a proof about a fold the test only inspects. That is a better outcome than the strengthening the ticket asked for.
