@@ -7010,42 +7010,67 @@ fn a_gather_occurrence_resolves_a_governed_lowering_and_refines() {
     assert_eq!(error.reason(), "missing-capability");
 }
 
-/// A statically proved gather is spelled, admitted, and then declined by name
-/// for the kernel body it has no emission for.
+/// A statically proved gather clears kernel lowering and stops at the program's
+/// single arithmetic carrier.
 ///
-/// **This pins the boundary the region-vocabulary retirement moved the refusal
-/// to, and it pins its *class*.** The occurrence is recognized, lowered,
-/// refined, statically proved, spelled by `physical::gather_region`, verified
-/// intrinsically, bound to its request subject, and admitted as hard-feasible.
-/// `tiler_ir::kernel`'s lowering then refuses it under `body-refinement`,
-/// because emitting an indirect read needs an address *load* inside the body and
-/// no `ReadAddressing` form has one.
+/// **The vacuous closed bounds argument is what this fixture uniquely carries
+/// down the whole compiler path.** A `[4, 0]` source has an empty result domain,
+/// so the index layer discharges the gather's bounds obligation *vacuously* — no
+/// `2^32` gathered extent required. Its sibling
+/// `a_gathers_spelling_follows_its_own_occurrences_bounds_evidence` asserts its
+/// own proof kind is `U32RangeContainedBySourceExtent` and says in its own words
+/// that the fixture "must rest on the inhabited argument, not on vacuity", so
+/// this is the only compiler-level witness that the other closed argument is
+/// spelled and admitted too. That half is unchanged by the kernel body landing
+/// and is why this test was rewritten rather than deleted.
 ///
-/// **The class is the assertion.** That refusal is a
-/// `PhysicalError::Refinement`, whose ordinary compiler class is
-/// `InvalidCompilerOutput` — a claim that the compiler emitted something
-/// malformed, which is false here: the governed builder emitted exactly the
-/// region the schedule layer admits, and the kernel profile has no body for it.
-/// `pipeline::planning`'s `kernel_lowering_failure` therefore reports the
-/// missing capability, and this is what would notice it silently reverting to
-/// the malformed-output claim.
+/// **The wall moved two stages down, and naming it is the second assertion.**
+/// This test asserted `("kernel-lowering", "gather-kernel-body")` until
+/// [`lower-the-indirect-gather-read-through-the-structured-kernel-body`](../../tickets/lower-the-indirect-gather-read-through-the-structured-kernel-body.md)
+/// emitted the indirect body: that classification existed only to report a
+/// `KernelDiagnostic::BodyRefinement` this build can no longer take, so it and
+/// its rule were retired with it. The compile now clears `lower_structured_kernel`
+/// and stops inside `build_plan_program`. `crate::program`'s `BoundedCarrier::of`
+/// materializes every declared value at the *program's* arithmetic carrier —
+/// `ArithmeticType::F32` yields `KernelType::F32` — while the emitted body
+/// declares its address operand at the exact-width `KernelType::U32`, so
+/// `KernelProgramBuilder` refuses that stage access. Position 1 is the index
+/// operand; position 0 is the `f32` source, which agrees.
 ///
-/// **The population is reachable and cheap rather than exotic**, which is why
-/// the classification matters at all. A `[4, 0]` source has an empty result
-/// domain, so the index layer discharges the bounds obligation *vacuously* — no
-/// `2^32` extent required — and this tiny program reaches the boundary. Its
-/// sibling `a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary`
-/// stops one layer earlier because its obligation is undischarged, so the two
-/// together show both layers refusing their own population by their own name.
+/// **The asserted class is the one the compiler produces and is deliberately not
+/// endorsed as truthful.** `InvalidCompilerOutput` claims something malformed was
+/// emitted, and nothing here is: `tiler_ir::program::StorageScalar::U32` exists,
+/// the body declares exactly the type it reads, and the governed builder emitted
+/// exactly the region the schedule layer admits. What is missing is a compiler
+/// capability — a program input's carrier selected from its own resolved value
+/// type rather than from the program's arithmetic — owned by
+/// [`route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type`](../../tickets/route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type.md).
+/// Reclassifying it here would install a second stopgap of exactly the kind the
+/// one above was retired for. Pinning it instead makes this test the thing that
+/// notices when that ticket lands, which is the intended way for it to fail.
 ///
-/// Watched failing under a deliberate subject perturbation: returning the
-/// `physical_error_stage` classification for every refusal — that is, deleting
-/// the gather arm of `kernel_lowering_failure` — reddens this with
-/// `left: None  right: Some(("kernel-lowering", "gather-kernel-body"))`, and the
-/// compile then reports
-/// `InvalidCompilerOutput(Physical(Refinement { rule: "body-refinement", region: RegionId(0) }))`.
+/// Watched failing under three deliberate subject perturbations, one per
+/// independent property, each on the code the property is about rather than on
+/// the assertion:
+///
+/// - **The body cleared.** Returning `Err(KernelDiagnostic::BodyRefinement)` at
+///   the head of the `LogicalAccess::GatherSource` arm in
+///   `crates/tiler-ir/src/kernel/lower.rs` — that is, removing the body again —
+///   reports `got Physical(Refinement { rule: "body-refinement", region: RegionId(0) })`.
+///   Note that the class stays `InvalidCompilerOutput` either way, so it is the
+///   payload and not the class that carries this discrimination.
+/// - **Which operand disagrees.** Giving `ArithmeticType::F32` the `U32` carrier
+///   in `BoundedCarrier::of` moves the mismatch to the source operand and
+///   reports `got Program(CoreConstruction(StageElementType { position: 0, expected: F32, actual: U32 }))`,
+///   so this witnesses the exact disagreement rather than merely that a type
+///   check fired somewhere.
+/// - **The vacuous proof reaches the spelling path.** Inverting the proof gate
+///   in `physical.rs` to `gather_bounds_proof(lowering, normalized.member).is_none()`
+///   reports `a vacuously proved gather is spelled by the governed vocabulary: GatherIndexBoundsUnproved`
+///   from the earlier `expect`, so the premise is load-bearing rather than
+///   incidental setup for the refusal below.
 #[test]
-fn a_statically_proved_gather_is_declined_for_its_missing_kernel_body() {
+fn a_statically_proved_gather_clears_kernel_lowering_and_stops_at_the_program_carrier() {
     // Empty result domain: the vacuous closed argument, so the obligation is
     // discharged without the `2^32` extent the inhabited argument needs.
     let program = gather_program_over([4, 0], [2], 0);
@@ -7061,7 +7086,8 @@ fn a_statically_proved_gather_is_declined_for_its_missing_kernel_body() {
         panic!("the fixture declares one output");
     };
     // The premise: this occurrence really is statically proved, so the refusal
-    // below is about the kernel body rather than about the bounds obligation.
+    // below is about the program's carrier rather than about the bounds
+    // obligation, which would stop one whole layer earlier.
     let spelling = crate::physical::spell_region(
         &target,
         &output.members(),
@@ -7073,16 +7099,45 @@ fn a_statically_proved_gather_is_declined_for_its_missing_kernel_body() {
 
     let mut request = CompilationRequest::governed(&program);
     request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
-    let refusal = crate::pipeline::compile(request).expect_err("the fixture has no kernel body");
-    // Projected to the phase and rule alone, for the reason
+    let refusal =
+        crate::pipeline::compile(request).expect_err("the fixture has no per-input carrier");
+    // Projected to the innermost typed payload, for the reason
     // `a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary`
     // projects its own: a `CompileError` reaching this layer carries a whole
     // explain trace, and printing it whole on failure buries the one difference
-    // this test is about under fifteen megabytes of canonical bytes.
-    assert_eq!(
-        planning_capability_rule(&refusal),
-        Some(("kernel-lowering", "gather-kernel-body")),
-        "a region this build spells but cannot emit is a missing capability, not \
-malformed compiler output",
+    // this test is about under fifteen megabytes of canonical bytes. `Display`
+    // peels to the innermost source, so the messages below stay short.
+    let output_error = compiler_output_refusal(&refusal)
+        .unwrap_or_else(|| panic!("the fixture stops as invalid compiler output, got {refusal}"));
+    assert!(
+        matches!(
+            output_error,
+            crate::pipeline::CompilerOutputError::Program(
+                crate::program::ProgramError::CoreConstruction(
+                    tiler_ir::program::KernelProgramBuildError::StageElementType {
+                        position: 1,
+                        expected: tiler_ir::kernel::KernelType::U32,
+                        actual: tiler_ir::kernel::KernelType::F32,
+                    }
+                )
+            )
+        ),
+        "the index operand is declared at the program's f32 carrier while the \
+emitted body reads it at u32, got {output_error:?}",
     );
+}
+
+/// The innermost invalid-compiler-output payload one refusal carries.
+///
+/// Recursive over `Explained` for the same reason `planning_capability_rule` is:
+/// the explain wrapper is added at the target boundary and says nothing about
+/// which authority refused.
+fn compiler_output_refusal(
+    error: &crate::pipeline::CompileError,
+) -> Option<&crate::pipeline::CompilerOutputError> {
+    match error {
+        crate::pipeline::CompileError::InvalidCompilerOutput(output) => Some(output),
+        crate::pipeline::CompileError::Explained { source, .. } => compiler_output_refusal(source),
+        _ => None,
+    }
 }
