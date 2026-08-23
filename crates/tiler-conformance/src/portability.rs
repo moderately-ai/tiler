@@ -128,7 +128,17 @@ use std::path::{Path, PathBuf};
 /// grouping-sensitive). The measured runs are device-free *tests* that report
 /// their measured half as unavailable when there is no device. The floor moved
 /// with the population and by the same eight.
-const DEVICE_FREE_TEST_FLOOR: usize = 80;
+///
+/// **2026-08-22 — it rises 80 → 84 under
+/// `give-the-private-conformance-gate-a-typed-host-unavailability-outcome`.**
+/// Four device-free tests land in the new `measurement::tests`: the typed
+/// unavailable outcome watched under both host policies, a refused stage held to
+/// a defect under either, the derive census that keeps the two outcome types
+/// uncomparable and unfabricable, and the ambient census that keeps the crate's
+/// one policy read out of the gate. The census above printed 85 device-free
+/// tests after they landed and 81 before, so the floor moved with the population
+/// and by the same four, preserving the one-below relation this note rests on.
+const DEVICE_FREE_TEST_FLOOR: usize = 84;
 
 /// A non-Apple host still runs the device-free test population.
 ///
@@ -292,7 +302,10 @@ fn child_module_paths(parent: &Path, name: &str) -> Vec<PathBuf> {
 
 /// Collects every `.rs` file beneath one directory.
 ///
-fn collect_rust_sources(directory: &Path, into: &mut Vec<PathBuf>) {
+/// `pub(crate)` because `measurement::tests` walks the same population for a
+/// different property, and two walkers would be two chances for one of them to
+/// stop finding files.
+pub(crate) fn collect_rust_sources(directory: &Path, into: &mut Vec<PathBuf>) {
     let entries = std::fs::read_dir(directory).expect("the crate's source directory is readable");
     for entry in entries {
         let path = entry.expect("a directory entry is readable").path();

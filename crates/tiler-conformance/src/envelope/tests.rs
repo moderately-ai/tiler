@@ -38,6 +38,7 @@ use super::{
     require_contraction_interface, require_serial_sum_interface, result_digest, sha256_hex,
     sidecar_path,
 };
+use crate::measurement::ambient::require_measurement_policy;
 use crate::measurement::require_or_report;
 use crate::serial_sum::{COLUMNS, declaration};
 
@@ -848,7 +849,11 @@ fn the_routed_dtype_rows_are_the_declarations_own() {
 /// statement about both.
 #[test]
 fn the_published_matrix_agrees_with_its_record_on_the_routed_row() {
-    let Some(members) = require_or_report("envelope matrix", measured_matrix()) else {
+    let Some(members) = require_or_report(
+        require_measurement_policy(),
+        "envelope matrix",
+        measured_matrix(),
+    ) else {
         return;
     };
 
@@ -896,6 +901,7 @@ fn route_and_compare(members: &[&ContractionMember]) -> Option<(usize, usize)> {
     let (mut compared, mut declined) = (0_usize, 0_usize);
     for member in members {
         let routed = require_or_report(
+            require_measurement_policy(),
             &format!("envelope contraction {}", member.class),
             measured_contraction(member),
         )?;

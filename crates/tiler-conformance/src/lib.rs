@@ -159,7 +159,7 @@
 //! | `publication` | the envelopes and proof records that route reads, published in the same run |
 //! | `applicability` | whether this host may *offer* the profile it routes under, and the observation that is asked from |
 //! | `device_preflight` | every obligation a host discharges before a routing commit, and how each refusal is classified |
-//! | `measurement` | whether this host could measure, and the exact row a measured result is bounded to |
+//! | `measurement` | whether this host could measure, the exact row a measured result is bounded to, the caller's policy about an unmeasurable one, and — in `measurement::ambient` — the one ambient input this crate reads |
 //! | `retained_record` | the realization probe's retained record, its `direct` digests, and how this host's row compares against it |
 //! | `portability` | the census that holds the non-Apple claim below to a population rather than to this paragraph |
 //! | `lints` | this crate's uninherited lint table, held against the workspace's |

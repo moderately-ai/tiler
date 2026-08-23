@@ -32,17 +32,34 @@
 //! drifts: one of them acquires a silent skip and nothing compares the two. The
 //! rule is stated once and every run is held to it.
 //!
-//! # Setting `TILER_REQUIRE_METAL_CONFORMANCE`
+//! # The caller owns what unavailability means, and the gate reads nothing
 //!
-//! The one supported ambient input that applies to every vertical, and it can
-//! only make a run stricter: with it set, an `Unavailable` outcome is a failure
-//! rather than a reported boundary. Nothing here lets an environment variable
-//! weaken a check.
+//! [`Measured`] states what a host could establish about the measured half.
+//! [`HostPolicy`] states what a caller does about it. [`apply_policy`] is a pure
+//! function of the two and reads no ambient input at all, which is what makes
+//! both policies observable in one process against a single identical outcome.
+//!
+//! The ambient hardening input `TILER_REQUIRE_METAL_CONFORMANCE` is **retained**,
+//! and it lives in [`ambient`], whose entire content is that one read. It is
+//! retained because this gate's real callers are Rust test functions, which take
+//! no arguments: a policy literal at those call sites would be fixed at compile
+//! time, at either `Require` — reddening the workspace gate on every host
+//! without an Apple toolchain and a Metal device, when the whole point of the
+//! section above is that such a host still runs the deterministic half — or
+//! `Report`, which discards the ability to make an unmeasurable host a hard
+//! failure. An ambient input is the only channel a human has into a test
+//! function's policy. What changed is that it no longer reaches the reporting
+//! path, so a policy read drifting back in is a red census rather than an
+//! invisible regression.
+//!
+//! Nothing here lets an ambient input weaken a check: an unset variable resolves
+//! to [`HostPolicy::Report`], which is already the weaker of the two.
+
+pub(crate) mod ambient;
+#[cfg(test)]
+mod tests;
 
 use crate::bf16_vertical::{EmittedVertical, OperandStride};
-
-/// The ambient input that turns an unavailable measured half into a failure.
-pub(crate) const REQUIRE_MEASUREMENT: &str = "TILER_REQUIRE_METAL_CONFORMANCE";
 
 /// The exact environment row one measured result is bounded to.
 ///
@@ -116,13 +133,78 @@ impl std::fmt::Display for MeasurementBoundary {
     }
 }
 
+/// Why one host could not measure, in that host's own words.
+///
+/// A type rather than a bare `String` so an unavailability is distinguishable
+/// from every other message this gate carries, and so the outcomes that hold one
+/// can state which comparisons they admit. Two unavailabilities do compare —
+/// their reasons are ordinary data — but neither [`Measured`] nor [`Reported`]
+/// compares at all, so no unavailability ever reaches a comparison against a
+/// pass.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Unavailable {
+    /// What this host could not supply.
+    reason: String,
+}
+
+impl Unavailable {
+    /// States why this host could not measure.
+    pub(crate) fn new(reason: String) -> Self {
+        Self { reason }
+    }
+
+    /// What was missing, as the host reported it.
+    pub(crate) fn reason(&self) -> &str {
+        &self.reason
+    }
+}
+
+impl std::fmt::Display for Unavailable {
+    /// Renders the bare reason, with no prefix of its own.
+    ///
+    /// The two sentences that carry one — the reported boundary notice and the
+    /// required-host failure — supply their own framing, and both are quoted
+    /// verbatim as evidence on landed tickets.
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
+/// What a caller does when this host could not measure.
+///
+/// The judgement is always the caller's: [`Measured`] reports what the host
+/// could establish and never what that means to a run. Neither value is read
+/// here — [`ambient::require_measurement_policy`] is the one resolver this crate
+/// offers, and calling it is a caller's decision.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HostPolicy {
+    /// Unavailability fails the run, on the named authority.
+    Require {
+        /// What required the measured half.
+        ///
+        /// [`Refused::Required`] reads `<named> is set and …`, so this is the
+        /// name of an ambient input rather than an arbitrary authority, and
+        /// [`ambient::require_measurement_policy`] supplies the only one this
+        /// crate has.
+        named: &'static str,
+    },
+    /// Unavailability is a boundary the run reports and does not pass.
+    Report,
+}
+
 /// What one host could establish about the measured half of one run.
 ///
 /// The vocabulary is the same on every host and for every vertical, and that is
 /// the point: a non-Apple host states an outcome from this enum rather than
 /// having the question compiled away, and two verticals state theirs in one
 /// vocabulary rather than in two that can drift apart.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// **Deliberately without `PartialEq`, `Eq`, or `Default`.** An unavailable
+/// outcome must have no path by which it compares equal to, or degrades into, a
+/// measured one, and the cheapest way to guarantee that is a type that offers no
+/// comparison and no fabricable value at all. `measurement::tests` censuses this
+/// derive, so restoring one of them is a red test rather than a silent widening.
+#[derive(Clone, Debug)]
 #[cfg_attr(
     not(target_os = "macos"),
     allow(
@@ -139,44 +221,124 @@ pub(crate) enum Measured<T> {
         observed: T,
     },
     /// The environment this run needs is not present, and here is what is missing.
-    Unavailable(String),
+    Unavailable(Unavailable),
     /// A stage this host reached refused, which is a defect rather than a boundary.
     Failed(String),
 }
 
-/// Reports one measured half's outcome and honours the require-measurement input.
+/// What one caller's policy made of one measured half.
+///
+/// **Deliberately without `PartialEq`, `Eq`, or `Default`**, and with no
+/// accessor that yields an observation for a host that could not measure. An
+/// unavailable outcome cannot be compared equal to a measured one because the
+/// type offers no comparison at all, and [`Self::observed`] answers `None` for
+/// one, so every expression that reaches a device result has destructured a
+/// completion first. `measurement::tests` censuses the derive.
+#[derive(Clone, Debug)]
+pub(crate) enum Reported<T> {
+    /// The device ran; here is the row it is bounded to and what it observed.
+    Observed {
+        /// The environment row this result is bounded to.
+        boundary: Box<MeasurementBoundary>,
+        /// What the run observed, in the vertical's own terms.
+        observed: T,
+    },
+    /// This host could not measure, and this caller reports the boundary.
+    Boundary(Unavailable),
+}
+
+impl<T> Reported<T> {
+    /// What the device observed, and `None` for a host that could not measure.
+    pub(crate) fn observed(self) -> Option<T> {
+        match self {
+            Self::Observed { observed, .. } => Some(observed),
+            Self::Boundary(_) => None,
+        }
+    }
+}
+
+/// Why one caller's policy refused a measured half.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum Refused {
+    /// The caller required the measured half and this host could not supply it.
+    Required {
+        /// The authority that required it, as [`HostPolicy::Require`] named it.
+        named: &'static str,
+        /// What this host could not supply.
+        unavailable: Unavailable,
+    },
+    /// A stage this host reached refused, which is a defect rather than a boundary.
+    Defect(String),
+}
+
+impl std::fmt::Display for Refused {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Required { named, unavailable } => write!(
+                formatter,
+                "{named} is set and the measured half is unavailable: {unavailable}",
+            ),
+            Self::Defect(detail) => write!(
+                formatter,
+                "the measured half reached its environment and refused: {detail}",
+            ),
+        }
+    }
+}
+
+/// Applies one caller's host policy to one measured half.
+///
+/// Pure, total, and free of ambient input, which is what lets one identical
+/// [`Measured`] value be watched under both policies in a single process with
+/// nothing set. [`Measured::Failed`] refuses under either policy, because a host
+/// that reached its environment and was refused has found a defect rather than a
+/// boundary; collapsing it into an unavailability would let a real defect wear
+/// the shape of an absent machine.
+pub(crate) fn apply_policy<T>(
+    policy: HostPolicy,
+    outcome: Measured<T>,
+) -> Result<Reported<T>, Refused> {
+    match outcome {
+        Measured::Ran { boundary, observed } => Ok(Reported::Observed { boundary, observed }),
+        Measured::Unavailable(unavailable) => match policy {
+            HostPolicy::Require { named } => Err(Refused::Required { named, unavailable }),
+            HostPolicy::Report => Ok(Reported::Boundary(unavailable)),
+        },
+        Measured::Failed(detail) => Err(Refused::Defect(detail)),
+    }
+}
+
+/// Reports one measured half under the caller's policy, or fails the run.
 ///
 /// Returns what the run observed when the device ran. **A skip is impossible**:
-/// either the boundary is printed or the reason it does not exist is, and with
-/// [`REQUIRE_MEASUREMENT`] set the second is a failure. A caller that receives
-/// `None` has had the boundary reported for it and states nothing further.
+/// either the boundary is printed or the reason it does not exist is, and under
+/// [`HostPolicy::Require`] the second fails the run instead. A caller that
+/// receives `None` has had the boundary reported for it and states nothing
+/// further; it never receives a value the device did not produce.
 ///
 /// # Panics
 ///
-/// Panics when the measured half [`Measured::Failed`], because a host that
-/// reached its environment and was refused has found a defect rather than a
-/// boundary; and when [`REQUIRE_MEASUREMENT`] is set and the outcome is
-/// [`Measured::Unavailable`].
-pub(crate) fn require_or_report<T>(label: &str, outcome: Measured<T>) -> Option<T> {
-    match outcome {
-        Measured::Ran { boundary, observed } => {
+/// Panics on every [`Refused`] [`apply_policy`] returns: when the measured half
+/// [`Measured::Failed`], and when the caller's policy is
+/// [`HostPolicy::Require`] and the outcome is [`Measured::Unavailable`].
+pub(crate) fn require_or_report<T>(
+    policy: HostPolicy,
+    label: &str,
+    outcome: Measured<T>,
+) -> Option<T> {
+    match apply_policy(policy, outcome) {
+        Ok(Reported::Observed { boundary, observed }) => {
             eprintln!("{label}: measured on this row:\n{boundary}");
             Some(observed)
         }
-        Measured::Unavailable(reason) => {
-            assert!(
-                std::env::var_os(REQUIRE_MEASUREMENT).is_none(),
-                "{REQUIRE_MEASUREMENT} is set and the measured half is unavailable: {reason}",
-            );
+        Ok(Reported::Boundary(unavailable)) => {
             eprintln!(
-                "{label}: MEASUREMENT BOUNDARY UNAVAILABLE — {reason}. The deterministic half \
-                 above ran; nothing here claims a device result.",
+                "{label}: MEASUREMENT BOUNDARY UNAVAILABLE — {unavailable}. The deterministic \
+                 half above ran; nothing here claims a device result.",
             );
             None
         }
-        Measured::Failed(detail) => {
-            panic!("{label}: the measured half reached its environment and refused: {detail}")
-        }
+        Err(refused) => panic!("{label}: {refused}"),
     }
 }
 
@@ -198,7 +360,7 @@ pub(crate) mod host {
     use tiler_metal_aot::input::AppleSdk;
     use tiler_metal_aot::record::ResolvedToolchain;
 
-    use super::MeasurementBoundary;
+    use super::{MeasurementBoundary, Unavailable};
     use crate::applicability::{describe_probed_gpu_family, normalized_architecture, sw_vers};
     use crate::dispatch::probe_apple_families;
 
@@ -219,7 +381,7 @@ pub(crate) mod host {
     /// that could not tell them apart would let one wear the other's shape.
     pub(crate) enum Unresolved {
         /// This host does not have the environment; that is a boundary.
-        Absent(String),
+        Absent(Unavailable),
         /// The environment is here and a stage refused; that is a defect.
         Defect(String),
     }
@@ -234,9 +396,9 @@ pub(crate) mod host {
                 error @ (DriverError::ToolchainUnavailable { .. }
                 | DriverError::SdkUnavailable { .. }),
             ) => {
-                return Err(Unresolved::Absent(format!(
+                return Err(Unresolved::Absent(Unavailable::new(format!(
                     "no qualified Apple Metal toolchain resolved: {error}"
-                )));
+                ))));
             }
             // Every other variant means the driver reached the tools and
             // something else went wrong, which is a defect rather than a
@@ -254,10 +416,10 @@ pub(crate) mod host {
             }
         };
         let Some(device) = Device::system_default() else {
-            return Err(Unresolved::Absent(
+            return Err(Unresolved::Absent(Unavailable::new(
                 "this host resolves an Apple Metal toolchain and offers no default Metal device"
                     .to_owned(),
-            ));
+            )));
         };
         Ok(AppleHost {
             toolchain,
@@ -411,12 +573,12 @@ mod apple {
         reason = "the non-Apple unavailability sentence has no caller on macOS, where every vertical resolves a real row or reports a resolution failure instead. It is compiled on both hosts so the two spellings cannot drift."
     )
 )]
-pub(crate) fn absent_apple_row() -> String {
-    format!(
+pub(crate) fn absent_apple_row() -> Unavailable {
+    Unavailable::new(format!(
         "this host is {}; the Metal binding and the Apple offline toolchain are selected by \
          cfg(target_os = \"macos\"), so no device row exists here to measure",
         std::env::consts::OS,
-    )
+    ))
 }
 
 /// Runs the BF16 vertical's measured half, or states why this host cannot.
