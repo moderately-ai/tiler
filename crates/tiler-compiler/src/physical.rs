@@ -616,6 +616,22 @@ pub(crate) enum RegionSpellingKind {
     SerialSum,
     /// A strict tensor contraction over the declared inputs.
     Contraction,
+    /// One read of a source tensor at coordinates a second tensor supplies.
+    ///
+    /// It carries no [`RegionWrite`] for the reason [`Self::Contraction`] does:
+    /// the write role is the cover's, [`gather_region`] resolves it through
+    /// [`RegionWrite::tensor`], and nothing about *which* region of the
+    /// vocabulary this is depends on it.
+    ///
+    /// **Reaching this spelling is evidence about the occurrence, not only
+    /// about the cover.** Every other variant is decided from the member set and
+    /// the recognized partition alone. This one additionally requires the
+    /// occurrence's own resolved lowering to hold a statically proved
+    /// index-bounds obligation, because [`gather_region`] embeds that exact
+    /// proof and no other value would bind — see
+    /// [`RegionVocabularyWall::GatherIndexBoundsUnproved`] for the population
+    /// that does not reach it.
+    Gather,
     /// The fold and its affine prologue realized as one region.
     FusedSerialSum,
     /// An elementwise pass over one staged producer result and, where the
@@ -757,32 +773,44 @@ pub(crate) enum RegionVocabularyWall {
     /// or refusing it as a generic symbolic-extent would mask that capability
     /// gap.
     ParametricBroadcast,
-    /// The region is one recognized gather, and this layer cannot obtain the
-    /// static index-bounds proof a scheduled gather relation must carry.
+    /// The region is one recognized gather whose own lowering did not
+    /// statically discharge its index-bounds obligation.
     ///
     /// **Distinct from every wall above, and the distinction is what it names.**
     /// Those say a cover grouped occurrences this vocabulary has no region for,
     /// or that a recognized relation is one this provider does not implement.
     /// This says the cover is right, the occurrence is recognized, the schedule
-    /// layer *does* define the relation and its paired proof, and the obstacle
-    /// is a missing seam between two layers.
+    /// layer defines the relation and its paired proof, the seam carrying that
+    /// proof into planning exists — and *this* occurrence's evidence is a
+    /// [`tiler_ir::index::GatherIndexValidationRequirement`] rather than the
+    /// [`tiler_ir::index::GatherIndexBoundsProof`] a scheduled gather relation
+    /// must carry.
     ///
-    /// `BoundsProofKind::GatherSource` carries a
-    /// `tiler_ir::index::GatherIndexBoundsProof`, which only the index layer's
-    /// verifier-private deriver mints and which binds a
-    /// `CanonicalIndexRegionIdentity`. Physical planning therefore cannot
-    /// re-derive one — a region built here would carry an identity no lowering
-    /// produced — and the refinement that *does* hold one is not reachable from
-    /// `crate::frontier::ImplementationContext`, whose documented surface is the
-    /// target profile, the numerical realization, the region subject, and the
-    /// host baseline.
+    /// **It replaces `GatherProofUnavailable`, which retired because the
+    /// argument arrived rather than because the check was relaxed.** That wall
+    /// declined *every* gather member set, for want of any route from the
+    /// refinement holding the proof to this layer. [`spell_region`] now receives
+    /// the [`ResolvedLowering`] planning already derived and reads the
+    /// occurrence's own proof out of it, so a statically proved gather resolves
+    /// [`RegionSpellingKind::Gather`] and only the undischarged population is
+    /// declined. The two were indistinguishable above lowering before this
+    /// variant existed; telling them apart is the whole of what it does.
     ///
-    /// Closing it is
-    /// [`carry-the-gather-relation-through-the-compiler-vertical`](../../tickets/carry-the-gather-relation-through-the-compiler-vertical.md)'s
-    /// named remainder: it needs a decision about whether refinement evidence
-    /// may reach a provider at all, and about how the independent verify stage
-    /// re-derives such a proof rather than borrowing planning's copy.
-    GatherProofUnavailable,
+    /// The refusal is deliberately *not* an admission of the invocation-scoped
+    /// receipt: a requirement is not a weaker proof, and
+    /// [`admit-an-invocation-scoped-gather-index-validation-receipt`](../../tickets/admit-an-invocation-scoped-gather-index-validation-receipt.md)
+    /// owns the vocabulary that would discharge one. Naming the refusal is what
+    /// keeps this population visibly refused rather than quietly admitted
+    /// beside the proved one.
+    ///
+    /// It is also the answer when the occurrence resolves no lowering at all, or
+    /// resolves one whose realization is a chain rather than a single region.
+    /// Neither is reachable through the pipeline — `resolve_lowering` refuses
+    /// above physical planning, and a gather's registered law realizes exactly
+    /// one region — but both are reachable from a direct [`spell_region`] call,
+    /// and answering "unproved" for them is the fail-closed direction: an absent
+    /// proof is not a discharged obligation.
+    GatherIndexBoundsUnproved,
 }
 
 impl RegionVocabularyWall {
@@ -796,7 +824,7 @@ impl RegionVocabularyWall {
             Self::FusedPrologueUnspellable => "fused-prologue-unspellable",
             Self::StagedFamilyUnspellable => "region-staged-family-unspellable",
             Self::ParametricBroadcast => "parametric-broadcast",
-            Self::GatherProofUnavailable => "gather-proof-unavailable",
+            Self::GatherIndexBoundsUnproved => "gather-index-bounds-unproved",
         }
     }
 }
@@ -840,10 +868,22 @@ impl RegionVocabularyWall {
 /// [`crate::request::VerifiedTargetRequest::output_at`] resolves the region's
 /// shapes from — which is exactly why the equivalence is asserted rather than
 /// assumed.
+///
+/// **`lowering` is planning's own already-derived value, read rather than
+/// re-derived.** Only the gather arm consults it, and it consults it for one
+/// fact: whether this occurrence's realization discharged its index-bounds
+/// obligation statically. Re-deriving a proof here instead would mint one
+/// binding a `CanonicalIndexRegionIdentity` no lowering produced — the exact
+/// corruption [`RegionVocabularyWall::GatherIndexBoundsUnproved`]'s predecessor
+/// existed to prevent — so the value has to arrive rather than be recomputed.
+/// Nothing about the independent portfolio verifier changes: it derives its own
+/// [`ResolvedLowering`] and hands *that* one down, so the two derivations stay
+/// separate and a tampered plan still fails closed against a fresh proof.
 pub(crate) fn spell_region(
     request: &VerifiedTargetRequest,
     members: &[SemanticStage],
     write: RegionWrite,
+    lowering: &ResolvedLowering,
 ) -> Result<RegionSpelling, RegionVocabularyWall> {
     // Retained across the walk rather than returned immediately, so a region
     // that partially fuses one output's reduction still reports that wall even
@@ -851,7 +891,14 @@ pub(crate) fn spell_region(
     // and the walks are disjoint, so at most one output can set it.
     let mut partial_fused = None;
     for (position, output) in request.normalized().outputs().iter().enumerate() {
-        if let Some(spelling) = spell_output(output, position, members, write, &mut partial_fused) {
+        if let Some(spelling) = spell_output(
+            output,
+            position,
+            members,
+            write,
+            &mut partial_fused,
+            lowering,
+        ) {
             return spelling;
         }
     }
@@ -877,6 +924,7 @@ fn spell_output(
     members: &[SemanticStage],
     write: RegionWrite,
     partial_fused: &mut Option<RegionVocabularyWall>,
+    lowering: &ResolvedLowering,
 ) -> Option<Result<RegionSpelling, RegionVocabularyWall>> {
     match output {
         NormalizedOutput::Pointwise(normalized) => (members == normalized.members).then(|| {
@@ -898,39 +946,49 @@ fn spell_output(
                 RegionSpellingKind::Contraction,
             ))
         }),
-        // **A decided wall, not a spelling, and the wall names a missing route
-        // rather than a missing vocabulary.** Every other part of the gather
-        // vertical is present: the occurrence is recognized, the request subject
-        // binds it, the schedule layer defines `LogicalAccess::GatherSource` and
-        // `BoundsProofKind::GatherSource`, and `verify_region_output_binding`
-        // below checks a gather region whole. What is absent is a way for *this*
-        // layer to obtain the `tiler_ir::index::GatherIndexBoundsProof` that
-        // proof variant carries.
+        // **A decision either way, and which way is a fact about the
+        // occurrence's own lowering rather than about the cover.** Every other
+        // part of the gather vertical is present: the occurrence is recognized,
+        // the request subject binds it, the schedule layer defines
+        // `LogicalAccess::GatherSource` and `BoundsProofKind::GatherSource`,
+        // `GovernedGatherF32` lowers it to a verified index region, and
+        // `verify_region_output_binding` below checks a gather region whole.
+        // What used to be absent was a route from that region's retained
+        // `tiler_ir::index::GatherIndexBoundsProof` to this layer, and `lowering`
+        // is that route.
         //
-        // That proof is minted only by the index layer's verifier-private
-        // deriver and binds a `CanonicalIndexRegionIdentity`, so it cannot be
-        // re-derived here: a throwaway index region built during physical
-        // planning would carry a *different* region identity than the one
-        // lowering produced, and embedding its proof would bind a schedule to a
-        // region nothing lowered. The value already exists — index refinement
-        // runs before physical planning and holds it — but no seam carries it
-        // across, and adding one changes what an installed provider may read.
-        // See the ticket named in this wall's own documentation.
+        // The proof is still never re-derived here. It is read out of the
+        // realization the occurrence's own lowering produced, so the
+        // `CanonicalIndexRegionIdentity` it binds is by construction the one
+        // that realization carries — which is precisely the conjunct
+        // `gather_accesses_match` compares the built region against. A proof
+        // minted during physical planning would bind a region nothing lowered
+        // and is what the predecessor wall existed to keep out.
         //
-        // Declining here is the fail-closed direction and keeps the population
-        // of representable gather schedules empty by *construction* rather than
-        // by absence. It is a decided wall rather than a `None` fall-through
-        // because a member set that is exactly this occurrence's is definitively
-        // this output's; reporting partial coverage for it would name the cover
-        // instead of the real obstacle.
+        // A gather whose obligation the deriver could not close statically
+        // resolves a `GatherIndexValidationRequirement` instead, and there is no
+        // proof to embed. It is declined by name rather than admitted with a
+        // weaker record: a requirement is not a proof, and the receipt that
+        // would discharge one is another ticket's vocabulary.
+        //
+        // It is a decided answer rather than a `None` fall-through because a
+        // member set that is exactly this occurrence's is definitively this
+        // output's; reporting partial coverage for it would name the cover
+        // instead of the region's own answer.
         //
         // A member set that is not this singleton falls through, because it may
         // legitimately be another output's and only the caller has seen them
         // all. An empty set never reaches here: `frontier::govern_spelling`
         // answers `UnspelledSubject::Coverless` before `spell_region` is called.
-        NormalizedOutput::Gather(normalized) => (members
-            == [SemanticStage::first(normalized.member)])
-        .then_some(Err(RegionVocabularyWall::GatherProofUnavailable)),
+        NormalizedOutput::Gather(normalized) => {
+            (members == [SemanticStage::first(normalized.member)]).then(|| {
+                if gather_bounds_proof(lowering, normalized.member).is_some() {
+                    Ok(RegionSpelling::new(position, RegionSpellingKind::Gather))
+                } else {
+                    Err(RegionVocabularyWall::GatherIndexBoundsUnproved)
+                }
+            })
+        }
         NormalizedOutput::SerialSum(normalized) => {
             let recognized = &normalized.members;
             // Asked through the partition rather than by comparing against the
@@ -1023,6 +1081,7 @@ fn spell_output(
                         members,
                         write,
                         partial_fused,
+                        lowering,
                     )
                 })
         }
@@ -1033,7 +1092,14 @@ fn spell_output(
                     RegionSpellingKind::Epilogue(write),
                 )));
             }
-            spell_output(&chain.producer, position, members, write, partial_fused)
+            spell_output(
+                &chain.producer,
+                position,
+                members,
+                write,
+                partial_fused,
+                lowering,
+            )
         }
         // A decision, not a fall-through, for a member set that is one of this
         // occurrence's own stages: returning `None` there would let the scan
@@ -1060,7 +1126,7 @@ fn spell_output(
                 return Some(spell_staged(normalized, position, members, write));
             }
             normalized.producer.as_deref().and_then(|producer| {
-                spell_output(producer, position, members, write, partial_fused)
+                spell_output(producer, position, members, write, partial_fused, lowering)
             })
         }
     }
@@ -2563,6 +2629,155 @@ pub(crate) fn contraction_region(
         },
     };
     (region, normalized.members.clone())
+}
+
+/// Builds the canonical single-region gather for one request.
+///
+/// One invocation per result position, each loading the address its own index
+/// coordinate names and publishing the source element it selects. The
+/// addressing is entirely in the access relation: the scalar program is the
+/// identity on one `f32` leaf, which is what keeps the U32 load out of the
+/// recognized arithmetic and what [`expression_is_the_single_leaf_identity`]
+/// requires of any region claiming this subject.
+///
+/// **The canonical order the accepted surface fixes** is the `f32` source read
+/// at local access 0, the address-only U32 read it owns at access 1, and the
+/// owning write at access 2. `index_access` is retained on the recognized shape
+/// and is that order's ordinal; it is asserted here rather than assumed, because
+/// a relation naming an ordinal this builder does not place at that position
+/// would be a self-locating relation pointing at the wrong read.
+///
+/// **The bounds proof is read, not minted, and that is the whole of why this
+/// function takes a lowering.** `BoundsProofKind::GatherSource` carries a
+/// [`tiler_ir::index::GatherIndexBoundsProof`], which only the index layer's
+/// closed deriver produces and which binds a `CanonicalIndexRegionIdentity`. The
+/// one this region embeds comes from the realization the occurrence's own
+/// lowering emitted, so the identity it names is that realization's — and
+/// [`gather_accesses_match`] re-compares exactly that, which is what makes a
+/// proof transplanted from a shape-compatible sibling region refuse.
+///
+/// The address read's own proof is a linear range over the population its
+/// derived relation bounds, taken per relation rather than as one number that
+/// happens to coincide for all three: `tiler_ir::schedule`'s proof rule requires
+/// the owned output positions for an identity read, one element for a scalar
+/// broadcast, and the operand's own count for a replication.
+///
+/// `None` is the fail-closed answer for an occurrence whose lowering holds no
+/// static proof and for a derived address relation outside the three the proof
+/// rule pairs with a linear range. [`spell_region`] decides the first before any
+/// caller reaches here — which is why [`crate::frontier`] expects a value — and
+/// the second cannot arise while [`tiler_ir::schedule::gather_index_read_map`]
+/// answers only those three.
+pub(crate) fn gather_region(
+    request: &VerifiedTargetRequest,
+    output: &NormalizedOutput,
+    write: RegionWrite,
+    lowering: &ResolvedLowering,
+) -> Option<(ScheduledRegion, Vec<SemanticStage>)> {
+    let normalized = output
+        .gather()
+        .expect("a gather region is built only for a gather output");
+    if normalized.index_access != AccessOrdinal::new(1) {
+        return None;
+    }
+    let proof = gather_bounds_proof(lowering, normalized.member)?.clone();
+    let address = tiler_ir::schedule::gather_index_read_map(
+        &normalized.source_shape,
+        normalized.axis,
+        &normalized.index_shape,
+    )?;
+    let address_elements = match &address {
+        LogicalAccess::LinearIdentity => normalized.result_elements,
+        LogicalAccess::ScalarBroadcast => 1,
+        LogicalAccess::BroadcastReplication { operand_shape, .. } => {
+            tiler_ir::schedule::element_count(operand_shape).ok()?
+        }
+        // Fail closed rather than guess a population for a relation the proof
+        // rule does not pair with a linear range. Unreachable while
+        // `gather_index_read_map`'s three arms are the whole of its answer, and
+        // a fourth arm arrives here as a refusal instead of as a wrong proof.
+        _ => return None,
+    };
+    let write_tensor = write.tensor();
+    let read = |map: LogicalAccess, witness: u32| Access {
+        tensor: TensorRole::Input,
+        component_role: None,
+        mode: AccessMode::Read,
+        map,
+        bounds: BoundsWitnessId::new(witness),
+        ownership: None,
+    };
+    let region = ScheduledRegion {
+        index: IndexRegion {
+            id: RegionId::new(0),
+            iteration_shape: normalized.result_shape.clone(),
+            accesses: vec![
+                read(
+                    LogicalAccess::GatherSource {
+                        source_shape: normalized.source_shape.clone(),
+                        result_shape: normalized.result_shape.clone(),
+                        axis: normalized.axis,
+                        index_access: normalized.index_access,
+                        index_shape: normalized.index_shape.clone(),
+                    },
+                    0,
+                ),
+                read(address, 1),
+                Access {
+                    tensor: write_tensor,
+                    component_role: None,
+                    mode: AccessMode::Write,
+                    map: LogicalAccess::LinearIdentity,
+                    bounds: BoundsWitnessId::new(2),
+                    ownership: Some(OwnershipWitnessId::new(0)),
+                },
+            ],
+            bounds_proofs: vec![
+                BoundsProof {
+                    id: BoundsWitnessId::new(0),
+                    tensor: TensorRole::Input,
+                    component_role: None,
+                    kind: BoundsProofKind::GatherSource {
+                        source_shape: normalized.source_shape.clone(),
+                        result_shape: normalized.result_shape.clone(),
+                        axis: normalized.axis,
+                        index_access: normalized.index_access,
+                        index_shape: normalized.index_shape.clone(),
+                        proof: Box::new(proof),
+                    },
+                },
+                BoundsProof {
+                    id: BoundsWitnessId::new(1),
+                    tensor: TensorRole::Input,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: address_elements,
+                    },
+                },
+                BoundsProof {
+                    id: BoundsWitnessId::new(2),
+                    tensor: write_tensor,
+                    component_role: None,
+                    kind: BoundsProofKind::LinearRange {
+                        element_count: normalized.result_elements,
+                    },
+                },
+            ],
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: write_tensor,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: normalized.result_elements,
+                },
+            },
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(identity_expression()),
+                numerical: request.numerical_contract().realization(),
+            },
+        },
+        schedule: linear_schedule(normalized.result_elements, OwnershipWitnessId::new(0)),
+    };
+    Some((region, vec![SemanticStage::first(normalized.member)]))
 }
 
 /// The region identifier every tiled cooperative contraction carries.
@@ -4945,12 +5160,14 @@ fn expression_is_the_single_leaf_identity(expression: &PointwiseF32Expression) -
 /// here. What it corrupts is identity: `GatherIndexBoundsProof` binds a
 /// `CanonicalIndexRegionIdentity`, that identity is folded into the proof
 /// identity the schedule encodes, and a transplanted proof therefore makes a
-/// schedule name a region nothing lowered — verbatim the corruption
-/// [`RegionVocabularyWall::GatherProofUnavailable`] documents as its reason for
-/// existing. `tiler_ir::schedule`'s rule 8 structurally cannot make this
-/// comparison, because [`IndexRegion`] carries no region identity to compare
-/// against (ADR 0070 keeps semantic correlation out of the schedule), which is
-/// why the check is here and why this function needs the resolved lowering.
+/// schedule name a region nothing lowered — verbatim the corruption the retired
+/// `GatherProofUnavailable` wall gave as its reason for existing, and the reason
+/// [`gather_region`] reads the proof out of the occurrence's own realization
+/// rather than minting one. `tiler_ir::schedule`'s rule 8 structurally cannot
+/// make this comparison, because [`IndexRegion`] carries no region identity to
+/// compare against (ADR 0070 keeps semantic correlation out of the schedule),
+/// which is why the check is here and why this function needs the resolved
+/// lowering.
 ///
 /// The expected identity is [`realized_region_identity`]'s, taken from the
 /// occurrence's own refinement rather than from the proposal, so a provider
@@ -5038,11 +5255,55 @@ fn realized_region_identity(
     lowering: &ResolvedLowering,
     member: SemanticMemberId,
 ) -> Option<&CanonicalIndexRegionIdentity> {
+    Some(realized_single_region(lowering, member)?.canonical_identity())
+}
+
+/// The one index region one occurrence's lowering realized, when it has one.
+///
+/// The single authority both readers of a resolved lowering go through, so
+/// [`gather_region`]'s proof and [`gather_accesses_match`]'s identity cannot come
+/// from different realizations of one occurrence. `None` has the two causes
+/// [`realized_region_identity`] states, and both are refusals at every call site.
+///
+/// [`IndexRefinement::single_region`]: crate::legality::IndexRefinement::single_region
+fn realized_single_region(
+    lowering: &ResolvedLowering,
+    member: SemanticMemberId,
+) -> Option<&tiler_ir::index::VerifiedIndexRegion> {
     match lowering.occurrence(member)?.evidence() {
-        OccurrenceEvidence::Refined(refinement) => {
-            Some(refinement.single_region()?.canonical_identity())
-        }
+        OccurrenceEvidence::Refined(refinement) => refinement.single_region(),
     }
+}
+
+/// The statically proved index-bounds obligation one gather occurrence carries.
+///
+/// **The one place this layer reads a gather's proof**, consulted both by
+/// [`spell_output`]'s gather arm to decide whether a region can be built at all
+/// and by [`gather_region`] to embed the exact value. Two readers asking two ways
+/// is how a spelling and its builder come to disagree, and here that
+/// disagreement would be a `panic!` in [`crate::frontier`]'s expectation.
+///
+/// **Nothing is minted.** The proof is the one the index layer's closed deriver
+/// attached while the resolved provider's region was built, so the
+/// `CanonicalIndexRegionIdentity` it binds is that region's by construction —
+/// which is exactly the conjunct [`gather_accesses_match`] then re-compares the
+/// built schedule against.
+///
+/// `None` means no proof, and it is not one reason but three: the occurrence
+/// resolved no lowering, its realization is a chain rather than a single region,
+/// or that region's gather access holds a
+/// [`tiler_ir::index::GatherIndexValidationRequirement`] instead. Only the third
+/// is reachable through the pipeline, and all three answer the same because an
+/// absent proof is not a discharged obligation.
+fn gather_bounds_proof(
+    lowering: &ResolvedLowering,
+    member: SemanticMemberId,
+) -> Option<&tiler_ir::index::GatherIndexBoundsProof> {
+    realized_single_region(lowering, member)?
+        .accesses()
+        .find_map(|access| access.view().gather_read())?
+        .bounds_resolution()
+        .statically_proved()
 }
 
 fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContraction) -> bool {
@@ -6778,16 +7039,22 @@ mod tests {
             .expect("the fixture has a continuation");
 
         assert_eq!(
-            spell_region(&produced, &continuation.members, RegionWrite::Materialized)
-                .expect("the continuation is a part")
-                .kind(),
+            spell_region(
+                &produced,
+                &continuation.members,
+                RegionWrite::Materialized,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .expect("the continuation is a part")
+            .kind(),
             RegionSpellingKind::Epilogue(RegionWrite::Materialized),
         );
         assert_eq!(
             spell_region(
                 &produced,
                 serial.members.reduction(),
-                RegionWrite::ProgramOutput
+                RegionWrite::ProgramOutput,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             )
             .expect("the fold is a part")
             .kind(),
@@ -6797,9 +7064,14 @@ mod tests {
         // alone — which is what the recursion buys.
         let producer_members = materialized.producer.members();
         assert_eq!(
-            spell_region(&produced, &producer_members, RegionWrite::Materialized)
-                .expect("the producer's fold is a part")
-                .kind(),
+            spell_region(
+                &produced,
+                &producer_members,
+                RegionWrite::Materialized,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .expect("the producer's fold is a part")
+            .kind(),
             RegionSpellingKind::SerialSum,
         );
 
@@ -6850,9 +7122,14 @@ mod tests {
         // region. It is the type, not a member comparison.
         assert_eq!(serial.prologue_members(), None);
         assert_eq!(
-            spell_region(&produced, &continuation.members, RegionWrite::Materialized)
-                .expect("the continuation is a part")
-                .kind(),
+            spell_region(
+                &produced,
+                &continuation.members,
+                RegionWrite::Materialized,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .expect("the continuation is a part")
+            .kind(),
             RegionSpellingKind::Epilogue(RegionWrite::Materialized),
             "a continuation must never resolve to the pointwise prologue spelling",
         );
