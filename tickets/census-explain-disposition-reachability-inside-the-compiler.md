@@ -1,7 +1,7 @@
 ---
 id: census-explain-disposition-reachability-inside-the-compiler
 title: Census explain disposition reachability inside the compiler
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [make-explain-dispositions-assertable-by-a-conformance-suite, decide-the-backend-provider-conformance-harness-public-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [explainability]
-claimed_from: todo
-assignee: worker-explain
-lease_expires_at: 1787457351
 ---
 ## User-visible outcome
 
