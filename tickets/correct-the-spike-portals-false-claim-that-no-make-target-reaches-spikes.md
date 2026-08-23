@@ -1,7 +1,7 @@
 ---
 id: correct-the-spike-portals-false-claim-that-no-make-target-reaches-spikes
 title: Correct the spike portal's false claim that no make target reaches spikes
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [decide-whether-the-citation-checker-should-reach-spike-records, repair-the-staged-combine-spikes-citations-the-join-made-stale]

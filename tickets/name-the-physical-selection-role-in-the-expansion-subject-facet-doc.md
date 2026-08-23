@@ -1,7 +1,7 @@
 ---
 id: name-the-physical-selection-role-in-the-expansion-subject-facet-doc
 title: Name the physical-selection role in the expansion subject facet doc
-status: todo
+status: done
 priority: p3
 dependencies: []
 related: [repair-the-artifact-identity-prose-the-v22-run-falsified]
