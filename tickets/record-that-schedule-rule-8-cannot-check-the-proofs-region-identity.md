@@ -1,7 +1,7 @@
 ---
 id: record-that-schedule-rule-8-cannot-check-the-proofs-region-identity
 title: Record that schedule rule 8 cannot check the proof's region identity
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, gather, layering]
-claimed_from: todo
-assignee: worker-rule8
-lease_expires_at: 1787487859
 ---
 ## User-visible outcome
 
@@ -38,3 +35,13 @@ Any behavioural change; the occupancy check itself, which is [`bind-a-scheduled-
 ## Closes when
 
 The source states where the region-identity comparison lives and why it cannot live at the schedule layer, and no behaviour has changed.
+
+## Coordinator verification — 2026-08-23: the corroboration is real, and one reason is worth carrying over
+
+**The note is comment-only and correctly placed** — the diff carries no non-comment line, and it sits directly after the `Rule 8: proof mismatch` block a reader editing the check would land on.
+
+**The lane's self-flag is accurate and worth keeping.** `CanonicalIndexRegionIdentity` under `crates/tiler-ir/src/schedule/` goes **0 → 1** across this change, because the new comment names the type in prose. That is not a counterpart appearing; the structural Fact is unchanged. Flagging it pre-empts a future re-run reading the count as a contradiction, which is the same class of false signal as a grep count that shrinks across a repair.
+
+**The independent corroboration exists, though not as quoted.** The lane reported `gather_accesses_match`'s doc as already carrying this explanation. It does — `crates/tiler-compiler/src/physical.rs` reads *"rule 8 structurally cannot make this comparison, because `IndexRegion` carries no region identity to compare against … which is why the check is here"*. But the sentence it quoted back greps to **0**, because a `///` wrap falls between `cannot` and `make`; the fragments `rule 8 structurally`, `carries no region identity`, and `which is why the check is here` each return **1**. So the substance is confirmed and the quotation was reconstructed across the wrap — the same anchor hazard, appearing in a report rather than in a committed citation. The lane's committed anchors were each verified individually and are sound.
+
+**One reason the compiler-side doc carries and this note does not:** *"(ADR 0070 keeps semantic correlation out of the schedule)"*. That is the architectural *why* behind the absence — the schedule layer has no identity counterpart by decision, not by omission. A future reader of the new note learns the check is unavailable and where it lives, but not that its absence is deliberate. Recorded rather than ticketed: the note is accurate and achieves the ticket's stated outcome, and adding the ADR reference is a one-line improvement any lane touching this block should make. **Reconsideration trigger:** the next change to rule 8 or to `gather_accesses_match` should carry the ADR 0070 reason into whichever note lacks it.
