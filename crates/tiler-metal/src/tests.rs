@@ -1132,6 +1132,183 @@ pub(crate) fn attention_value_kernel() -> VerifiedKernel {
     lower_scheduled_region(&region).expect("the value contraction lowers")
 }
 
+/// The extents the *batched tiled* attention fixtures use.
+///
+/// Deliberately not [`ATTENTION_QUERIES`] and [`ATTENTION_KEYS`]: a 16-wide
+/// block over a 3-by-5 trailing pair gives one workgroup on each participant
+/// axis, and every workgroup coordinate would then be a division or remainder by
+/// one — a golden in which the decode chain is present but degenerate. At 20 the
+/// trailing pair genuinely tiles two ways each, so the emitted body carries a
+/// real `% 2` and `/ 2` on both participant axes *and* on both batch axes.
+///
+/// The resulting launch is 4,096 threads over 1,600 logical positions, which is
+/// the same cover `a_batched_block_covers_every_output_position_of_both_attention_structures`
+/// proves at the schedule layer.
+const BATCHED_TILED_POSITIONS: u64 = 20;
+
+/// The contracted extent of the batched tiled fixtures.
+///
+/// One 16-wide tile exactly, so the body carries no round loop. The round loop
+/// is already emitted and pinned by `contraction_tiled_cooperative.metal`, and
+/// what these goldens exist to show is the *batch decode* — keeping them single
+/// round is what leaves that visible rather than buried.
+const BATCHED_TILED_CONTRACTED: u64 = 16;
+
+/// Builds the batched `tiled` realization of one attention contraction.
+///
+/// The rank-four output takes a rank-four *block* whose leading extents are one,
+/// so one workgroup covers one `(g, r)` pair and a 16x16 tile of the trailing
+/// pair. The participant space stays rank two, which is the only arrangement
+/// available: `MAX_COOPERATIVE_PARTICIPANT_RANK` is three, so a rank-four
+/// participant space is unrepresentable rather than unimplemented.
+///
+/// Shares [`attention_contraction_region`] with the direct realization and
+/// overrides only the schedule, exactly as [`tiled_contraction_region`] shares
+/// [`contraction_region`] — so the two realizations of one structure cannot
+/// drift apart in their accesses, their program, or their numerical contract.
+fn batched_tiled_attention_region(
+    id: RegionId,
+    left: &Shape,
+    right: &Shape,
+    output: &Shape,
+    contracted: &Shape,
+    left_sources: Vec<ContractionAxisSource>,
+    right_sources: Vec<ContractionAxisSource>,
+) -> VerifiedScheduledRegion {
+    const BLOCK: u64 = 16;
+    let mut region = attention_contraction_region(
+        id,
+        left,
+        right,
+        output,
+        contracted.clone(),
+        left_sources,
+        right_sources,
+    )
+    .region()
+    .clone();
+    let block = Shape::from_dims([1, 1, BLOCK, BLOCK]);
+    let admitted = admit_predicated_cooperative_contraction(
+        output,
+        &block,
+        contracted,
+        &Shape::from_dims([BLOCK]),
+    )
+    .expect("a batched block admits an attention output");
+    let threads = u32::try_from(BLOCK * BLOCK).expect("a 16x16 block is 256 threads");
+    region.schedule = KernelSchedule {
+        binding: admitted.binding,
+        work_items: admitted.work_items,
+        threads_per_workgroup: threads,
+        tail: TailPolicy::Predicated,
+        output_owner: OwnershipWitnessId::new(0),
+        reduction: ReductionTopology::CooperativeContraction {
+            tile: blocked_operand_tile(BLOCK, admitted.rounds)
+                .expect("a 16-wide operand tile is statable"),
+            contracted_shape: contracted.clone(),
+            contracted_tile: admitted.contracted_tile,
+            order: ContributorOrder::OriginalAxisLexicographic,
+            accumulation: ArithmeticType::F32,
+            permits_reassociation: false,
+            permits_permutation: false,
+        },
+        launch: LaunchPlan {
+            grid_threads: admitted.grid_threads,
+            threads_per_workgroup: threads,
+            zero_work_skips_dispatch: true,
+        },
+    };
+    ScheduledRegionBuilder::from_region(region)
+        .build()
+        .expect("the batched tiled attention contraction verifies")
+}
+
+/// The batched tiled score contraction `grtd,gsd->grts`.
+///
+/// The key operand `[g, s, d]` reads the group and **never the repetition**, so
+/// its emitted address carries a `g` term and no `r` term — the sharing that
+/// makes eight key heads readable by sixteen query heads with no
+/// materialization, now through the blocked path rather than the direct one.
+pub(crate) fn batched_tiled_attention_score_kernel() -> VerifiedKernel {
+    let region = batched_tiled_attention_region(
+        RegionId::new(12),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            BATCHED_TILED_POSITIONS,
+            BATCHED_TILED_CONTRACTED,
+        ]),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            BATCHED_TILED_POSITIONS,
+            BATCHED_TILED_CONTRACTED,
+        ]),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            BATCHED_TILED_POSITIONS,
+            BATCHED_TILED_POSITIONS,
+        ]),
+        &Shape::from_dims([BATCHED_TILED_CONTRACTED]),
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Output { position: 1 },
+            ContractionAxisSource::Output { position: 2 },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Output { position: 3 },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+    );
+    lower_scheduled_region(&region).expect("the batched tiled score contraction lowers")
+}
+
+/// The batched tiled value contraction `grts,gsd->grtd`.
+///
+/// **The contracted axis sits in the middle of the value operand `[g, s, d]`**,
+/// where the score structure has it last. The two structures agree on operand 0,
+/// on the output shape, and on the contracted set, and differ only in that
+/// ordering — so a blocked emission that read axis sources positionally rather
+/// than by role would produce one of these kernels for both, and the two goldens
+/// would be identical apart from their entry-point names.
+pub(crate) fn batched_tiled_attention_value_kernel() -> VerifiedKernel {
+    let region = batched_tiled_attention_region(
+        RegionId::new(12),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            BATCHED_TILED_POSITIONS,
+            BATCHED_TILED_CONTRACTED,
+        ]),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            BATCHED_TILED_CONTRACTED,
+            BATCHED_TILED_POSITIONS,
+        ]),
+        &Shape::from_dims([
+            ATTENTION_GROUPS,
+            ATTENTION_REPEATS,
+            BATCHED_TILED_POSITIONS,
+            BATCHED_TILED_POSITIONS,
+        ]),
+        &Shape::from_dims([BATCHED_TILED_CONTRACTED]),
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Output { position: 1 },
+            ContractionAxisSource::Output { position: 2 },
+            ContractionAxisSource::Contracted { position: 0 },
+        ],
+        vec![
+            ContractionAxisSource::Output { position: 0 },
+            ContractionAxisSource::Contracted { position: 0 },
+            ContractionAxisSource::Output { position: 3 },
+        ],
+    );
+    lower_scheduled_region(&region).expect("the batched tiled value contraction lowers")
+}
+
 /// The single-workgroup tree realization of a `[2, 6] -> [2]` strict sum.
 ///
 /// Three participants per workgroup, each folding two contributors into its own
@@ -4583,6 +4760,67 @@ fn an_empty_extrema_domain_is_refused_where_an_empty_sum_commits_its_identity() 
 fn tiled_contraction_unit() -> MetalTranslationUnit {
     let kernel = tiled_contraction_kernel();
     emit_translation_unit(&[&kernel], &target()).expect("the tiled contraction fixture emits")
+}
+
+/// The batched score contraction's emitted source, pinned.
+///
+/// **The batch decode is the content.** `v10 / v4` is the workgroup index above
+/// the column axis and is *not* the row workgroup — one more remainder recovers
+/// that — and two further steps recover the repetition and the group. A rank-two
+/// reading of that first quotient would carry every batch coordinate into the
+/// row, and because a batch coordinate is a bijection of the operand's own index
+/// space the result would stay in bounds at every load.
+///
+/// The key operand's address carries a group term and **no repetition term**,
+/// which is the grouped-query sharing made visible in the emitted body rather
+/// than asserted about it.
+#[test]
+fn batched_tiled_attention_score_matches_its_golden_source() {
+    assert_golden(
+        "contraction_batched_tiled_score.metal",
+        include_str!("../goldens/contraction_batched_tiled_score.metal"),
+        &emit_one(&batched_tiled_attention_score_kernel()),
+    );
+}
+
+/// The batched value contraction's emitted source, pinned.
+///
+/// The sibling that separates the two structures. Its value operand `[g, s, d]`
+/// contracts over the *middle* axis, so the contracted coordinate is scaled by a
+/// non-unit stride where the score structure's is not — an emission that read
+/// axis sources positionally rather than by role would emit the score's body
+/// here and this golden would be the score's text under another name.
+#[test]
+fn batched_tiled_attention_value_matches_its_golden_source() {
+    assert_golden(
+        "contraction_batched_tiled_value.metal",
+        include_str!("../goldens/contraction_batched_tiled_value.metal"),
+        &emit_one(&batched_tiled_attention_value_kernel()),
+    );
+}
+
+/// The two batched structures emit two different bodies.
+///
+/// The control for the pair above: without it, "both goldens are pinned" would
+/// be consistent with both pinning the same arithmetic. Compared on the body
+/// text with the entry-point name removed, because the name is a digest of the
+/// region and would differ even if every instruction agreed.
+#[test]
+fn the_two_batched_structures_emit_distinct_bodies() {
+    let score = emit_one(&batched_tiled_attention_score_kernel());
+    let value = emit_one(&batched_tiled_attention_value_kernel());
+    let body = |source: &str| {
+        source
+            .lines()
+            .filter(|line| !line.contains("tiler_kernel_"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert_ne!(
+        body(&score),
+        body(&value),
+        "the middle-contracted value operand must emit different address arithmetic",
+    );
 }
 
 #[test]
