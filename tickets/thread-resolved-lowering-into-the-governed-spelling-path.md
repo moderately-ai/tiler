@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, gather, frontier]
-claimed_from: todo
-assignee: worker-thread
-lease_expires_at: 1787467109
 ---
 ## User-visible outcome
 
