@@ -4381,8 +4381,13 @@ fn verify_region_output_binding(
     // whose recognizer and `partitioned-copy-f32.v1` request arm are the plan
     // ticket's. Refusing under the shared request-binding rule keeps the
     // reachable copy population empty by construction rather than by absence.
-    let RegionProgram::Numerical { scalar, .. } = &region.index.program else {
-        return intrinsic("request-binding", region.index.id);
+    //
+    // Written as a total map over `RegionProgram` rather than a refutable
+    // binding, so a third computation class fails this build instead of
+    // silently taking the copy arm's refusal.
+    let scalar = match &region.index.program {
+        RegionProgram::Numerical { scalar, .. } => scalar,
+        RegionProgram::PartitionedCopy(_) => return intrinsic("request-binding", region.index.id),
     };
     let expected = match (normalized, scalar) {
         (NormalizedOutputSubject::Pointwise(normalized), scalar) => {
@@ -4663,14 +4668,34 @@ fn verify_region_output_binding(
         // and never re-offered to the producer, so a forged epilogue cannot fall
         // through and bind as something else.
         (NormalizedOutputSubject::Epilogue(normalized), scalar) => {
-            let ScalarProgram::PointwiseF32(expression) = scalar else {
-                return verify_region_output_binding(
-                    region,
-                    semantic_members,
-                    normalized.producer(),
-                    subject,
-                    lowering,
-                );
+            // Only a `PointwiseF32` chain can carry an epilogue's recognized
+            // expression at all, so every other program — named rather than
+            // reached through a wildcard, so a program added later is routed
+            // here deliberately rather than by falling through — cannot be
+            // this region's epilogue and is offered to the producer's own
+            // subject instead. That recursive call is not a bypass: it lands
+            // back in this function's own top-level match on `(normalized,
+            // scalar)`, which is itself exhaustive over every `ScalarProgram`
+            // variant per arm, so a forged pairing is still refused, just by
+            // whichever arm the producer's subject variant selects.
+            let expression = match scalar {
+                ScalarProgram::PointwiseF32(expression) => expression,
+                ScalarProgram::PointwiseBf16(_)
+                | ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::StrictSerialSum { .. }
+                | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                | ScalarProgram::StrictTensorContraction { .. }
+                | ScalarProgram::StrictSerialMaximum { .. } => {
+                    return verify_region_output_binding(
+                        region,
+                        semantic_members,
+                        normalized.producer(),
+                        subject,
+                        lowering,
+                    );
+                }
             };
             if semantic_members != normalized.members() {
                 return verify_region_output_binding(
@@ -4707,8 +4732,23 @@ fn verify_region_output_binding(
                     .continuation()
                     .filter(|continuation| semantic_members == continuation.members)
                 {
-                    let ScalarProgram::PointwiseF32(expression) = scalar else {
-                        return intrinsic("request-binding", region.index.id);
+                    // Only a `PointwiseF32` chain can carry a continuation's
+                    // recognized expression; every other program is refused
+                    // here rather than left to an implicit arm, so a program
+                    // added later fails this build instead of silently
+                    // reaching the fail-closed answer by luck.
+                    let expression = match scalar {
+                        ScalarProgram::PointwiseF32(expression) => expression,
+                        ScalarProgram::PointwiseBf16(_)
+                        | ScalarProgram::StrictAffineU4Dequantize { .. }
+                        | ScalarProgram::StrictSerialSum { .. }
+                        | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                        | ScalarProgram::SquaredSerialSum { .. }
+                        | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                        | ScalarProgram::StrictTensorContraction { .. }
+                        | ScalarProgram::StrictSerialMaximum { .. } => {
+                            return intrinsic("request-binding", region.index.id);
+                        }
                     };
                     let bound = element_count(normalized.input_shape(), region.index.id)?
                         == normalized.input_elements()
@@ -6627,8 +6667,13 @@ mod tests {
         );
 
         let mut invalid_numerics = regions[0].region().clone();
-        let RegionProgram::Numerical { numerical, .. } = &mut invalid_numerics.index.program else {
-            panic!("the fixture region is arithmetic");
+        // Total over `RegionProgram` rather than a refutable binding, so a
+        // third computation class fails this build instead of leaving the
+        // fixture's precondition to a runtime panic a new-variant test run
+        // might never reach.
+        let numerical = match &mut invalid_numerics.index.program {
+            RegionProgram::Numerical { numerical, .. } => numerical,
+            RegionProgram::PartitionedCopy(_) => panic!("the fixture region is arithmetic"),
         };
         numerical.canonical_arithmetic_nan_bits ^= 1;
         assert_eq!(
@@ -6651,8 +6696,11 @@ mod tests {
         let (scale, bias) =
             fused_prologue_constants(request.sole_output()).expect("the fixture is affine");
         let mut wrong_expression = regions[0].region().clone();
-        let RegionProgram::Numerical { scalar, .. } = &mut wrong_expression.index.program else {
-            panic!("the fixture region is arithmetic");
+        // Total over `RegionProgram` for the reason the numerics mutation
+        // above states.
+        let scalar = match &mut wrong_expression.index.program {
+            RegionProgram::Numerical { scalar, .. } => scalar,
+            RegionProgram::PartitionedCopy(_) => panic!("the fixture region is arithmetic"),
         };
         *scalar = ScalarProgram::PointwiseF32(test_affine_expression(bias, scale));
         assert_eq!(
@@ -6690,8 +6738,13 @@ mod tests {
         assert_eq!(region.semantic_members(), expected);
 
         let mut wrong_expression = region.region().clone();
-        let RegionProgram::Numerical { scalar, .. } = &mut wrong_expression.index.program else {
-            panic!("the fixture region is arithmetic");
+        // Total over `RegionProgram` rather than a refutable binding, so a
+        // third computation class fails this build instead of leaving the
+        // fixture's precondition to a runtime panic a new-variant test run
+        // might never reach.
+        let scalar = match &mut wrong_expression.index.program {
+            RegionProgram::Numerical { scalar, .. } => scalar,
+            RegionProgram::PartitionedCopy(_) => panic!("the fixture region is arithmetic"),
         };
         *scalar = ScalarProgram::PointwiseF32(test_affine_expression(
             2.0_f32.to_bits(),
@@ -7029,12 +7082,25 @@ mod tests {
         )
         .unwrap();
         let mut invalid_schedule = scheduled.region().clone();
-        let RegionProgram::Numerical {
-            scalar: ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. },
-            ..
-        } = &mut invalid_schedule.index.program
-        else {
-            panic!("expected fused scalar program")
+        // Total over both `RegionProgram` and `ScalarProgram` rather than a
+        // refutable binding, so a variant added to either enum fails this
+        // build instead of leaving the fixture's precondition to a runtime
+        // panic a new-variant test run might never reach.
+        let contraction = match &mut invalid_schedule.index.program {
+            RegionProgram::Numerical { scalar, .. } => match scalar {
+                ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. } => contraction,
+                ScalarProgram::PointwiseF32(_)
+                | ScalarProgram::PointwiseBf16(_)
+                | ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::StrictSerialSum { .. }
+                | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                | ScalarProgram::StrictTensorContraction { .. }
+                | ScalarProgram::StrictSerialMaximum { .. } => {
+                    panic!("expected fused scalar program")
+                }
+            },
+            RegionProgram::PartitionedCopy(_) => panic!("expected fused scalar program"),
         };
         *contraction = true;
         assert_eq!(
@@ -7078,15 +7144,25 @@ mod tests {
 
         for axes in [vec![Axis::new(1), Axis::new(1)], vec![Axis::new(99)]] {
             let mut malformed = scheduled.region().clone();
-            if let RegionProgram::Numerical {
-                scalar:
+            // Total over both `RegionProgram` and `ScalarProgram` rather than
+            // an `if let` with no `else`, so a variant added to either enum
+            // fails this build instead of silently leaving the fixture's
+            // axes unmutated on an untested program.
+            match &mut malformed.index.program {
+                RegionProgram::Numerical { scalar, .. } => match scalar {
                     ScalarProgram::FusedMultiplyAddSerialSum {
                         axes: scalar_axes, ..
-                    },
-                ..
-            } = &mut malformed.index.program
-            {
-                *scalar_axes = axes.clone();
+                    } => *scalar_axes = axes.clone(),
+                    ScalarProgram::PointwiseF32(_)
+                    | ScalarProgram::PointwiseBf16(_)
+                    | ScalarProgram::StrictAffineU4Dequantize { .. }
+                    | ScalarProgram::StrictSerialSum { .. }
+                    | ScalarProgram::SquaredSerialSum { .. }
+                    | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                    | ScalarProgram::StrictTensorContraction { .. }
+                    | ScalarProgram::StrictSerialMaximum { .. } => {}
+                },
+                RegionProgram::PartitionedCopy(_) => {}
             }
             if let ReductionTopology::Serial {
                 axes: schedule_axes,
