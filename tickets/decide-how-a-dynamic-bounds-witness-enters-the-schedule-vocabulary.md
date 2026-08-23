@@ -1,7 +1,7 @@
 ---
 id: decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary
 title: Decide how a dynamic bounds witness enters the schedule vocabulary
-status: in-progress
+status: todo
 priority: p2
 dependencies: [package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
 related: [replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges, carry-live-extent-operands-through-the-artifact-envelope, admit-an-invocation-scoped-gather-index-validation-receipt, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, prove-the-symbolic-accessible-range-agreement-at-program-assembly]
@@ -166,3 +166,17 @@ Finding 1 assigned the fresh bounds-proof tag `0x13` on a nibble-partition argum
 ## Closes when
 
 Tom accepts one of the two frontier spellings with its identity consequence, or records that the zero convention stands — and the p0 carrier's dependency on this ticket resolves either way.
+
+## Coordinator disposition — 2026-08-23: this is NOT Tom's, and option B dominates, so it is dispatchable work
+
+`worker-witness` found the ticket's authority claim false, and I verified it at `cda242ee`.
+
+**`BoundsProofKind` is `#[non_exhaustive]`** — the attribute sits at `crates/tiler-ir/src/schedule/model.rs:519`, directly above `pub enum BoundsProofKind`. And **ADR 0075's no-approval list contains, verbatim:** *"Additive growth of a type already marked `#[non_exhaustive]`, which is the growth that attribute exists to make additive."* The lane also established the attribute predates all three cited bases, so the claim was false when written, not merely stale. **Adding a variant here has never required Tom's approval**, and this ticket carried `needs-tom` on a premise its own governing ADR contradicts.
+
+**Option B dominates rather than trading off, so the readiness gate says take it, not present it.** AGENTS.md: *"A cheaper path that can silently return wrong results is a defect, not a trade-off"*, and *"When one option dominates, recommend or take that option rather than manufacturing a choice."* Option A keeps spelling a live extent's obligation as `LinearRange { element_count: 0 }` — a proof that **states something false**, and whose live arm is satisfiable by an *accidental* zero. That is a correctness defect, not a cheaper design. B's only cost is identity **values** moving, with **no domain step anywhere**.
+
+**Tag `0x14` confirmed free at this base.** `TAG_LINEAR_RANGE = 0x11`, `TAG_REDUCTION_DOMAIN = 0x12`, `TAG_GATHER_INDEX_BOUNDS = 0x13` — so the ticket's original `0x13` is stale drift, as the lane found, and `0x14` is the fresh tag.
+
+**Status returned to `todo` and re-dispatched as implementation.** The packet's analysis stands as the design record; what it does not need is a Tom question. Two things bind the implementing lane: identity **values** move for every live region and everything nesting one, so pins must be recomputed **on the merged tree**; and exactly **two** byte-preimage goldens move, `LIVE_ROW_MAJOR_SCHEDULE_IDENTITY_HEX` and `LIVE_ROW_MAJOR_KERNEL_IDENTITY_HEX`, both in one file — a census the packet derived with a stated method rather than a guess.
+
+**One caveat carried forward, not resolved.** The packet's no-domain-step argument was derived by one reader against the encoder and **not independently re-derived**, which it flagged itself as the weak point for a claim that could silently merge two identities. The implementing lane must re-derive it rather than inherit it, and stop and report if a domain does step.
