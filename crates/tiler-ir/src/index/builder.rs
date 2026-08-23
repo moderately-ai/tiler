@@ -1856,10 +1856,23 @@ impl IndexRegionBuilder {
         coordinates: &[IndexExprId],
     ) -> Result<(AccessData, usize), IndexBuildError> {
         let tensor_data = self.resolve_tensor(tensor)?.clone();
+        // Exhaustive over both enums rather than a wildcard fallthrough: `_`
+        // would silently admit a `TensorRole` or `AccessMode` variant nobody
+        // has decided policy for. Naming both permitted pairs turns that
+        // silent admission into a build error at this exact match the day
+        // either vocabulary grows, forcing whoever adds the variant to decide
+        // what it means here rather than inheriting today's default by
+        // accident. Verified as a negative control against `_ => {}`: adding
+        // a third `TensorRole` variant broke the identity/compact encoders
+        // (`compact.rs`, `identity.rs`) but left this match compiling clean,
+        // so the encoders alone do not force a reader to this policy.
         match (mode, tensor_data.role) {
             (AccessMode::Read, TensorRole::Output) => return Err(IndexBuildError::ReadFromOutput),
             (AccessMode::Write, TensorRole::Input) => return Err(IndexBuildError::WriteToInput),
-            _ => {}
+            // A caller-provided input may be read, and a region-produced
+            // output may be written: these are the two legal pairs, not a
+            // default for anything unnamed.
+            (AccessMode::Read, TensorRole::Input) | (AccessMode::Write, TensorRole::Output) => {}
         }
         if coordinates.len() != tensor_data.shape.rank() {
             return Err(IndexBuildError::AccessRank {
