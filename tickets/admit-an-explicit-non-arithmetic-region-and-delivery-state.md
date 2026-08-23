@@ -1,7 +1,7 @@
 ---
 id: admit-an-explicit-non-arithmetic-region-and-delivery-state
 title: Admit an explicit non-arithmetic region and delivery state
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [admit-the-partitioned-copy-scheduled-region]
 related: [admit-the-partitioned-copy-scheduled-region, derive-target-numerical-feasibility-from-reached-arithmetic-only]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/build, imple
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, public-boundary, numerics, artifacts, identity, strict, decision, needs-tom]
-claimed_from: todo
-assignee: worker-nonarith
-lease_expires_at: 1787459513
 ---
 ## Outcome
 
@@ -233,3 +230,18 @@ This re-derivation changes what the ticket is for, so it is put rather than acte
 **The one question.** The downstream projection this ticket was accepted to carry has no producer at any layer, and both remaining ways to deliver it step no identity domain. Do you want option **3** — the typed sums landed now as a public boundary, `KernelData`'s realization and the artifact's per-entry numerics, with every encoder still refusing the copy arm, so that [`lower-the-partitioned-copy-region-through-kernel-ir`](lower-the-partitioned-copy-region-through-kernel-ir.md) inherits a total type and only has to open the encoder — or option **2**, this ticket narrowed to its decision record with each arm landing in the ticket that first produces one, which removes the ticket's remaining code content and makes the current dependency edge from that lowering ticket vacuous?
 
 Accepting either authorizes the graph repair it implies and nothing else. Neither authorizes an identity or schema step; under both, the `v23` question returns with the first producer that can write a copy record, gated on the encoding spike named above.
+
+## Coordinator verification of the re-derived packet — 2026-08-23 at `e10f64a0`
+
+Reviewed from the full diff rather than from a report: this lane's completion notification never arrived, because it spawned an `Explore` child that outlived it and the harness defers the notification until no live children remain. I stopped the orphaned child and read the five commits directly.
+
+**Verified independently, each command run by the coordinator.**
+
+- **Fact 1's original anchor really does fail in the dangerous direction.** `grep -cF 'The numerical realization is carried forward whole' crates/tiler-ir/src/schedule/model.rs` returns **0**; the clause `realization is carried forward whole` returns **1**. Same shape as three anchor failures the coordinator committed on 2026-08-22.
+- **The module split is real.** `crates/tiler-ir/src/schedule/builder.rs` is absent and `crates/tiler-ir/src/schedule/builder/` holds 14 entries.
+- **The reachable copy population is empty, as claimed.** `RegionProgram::PartitionedCopy` is constructed nowhere outside `crates/tiler-ir/src/schedule/`; every other occurrence is a match arm, including both sites in `crates/tiler-compiler`. `tiler::concatenate-f32@1` is still listed in `UNPLANNED_OPERATIONS` in `crates/tiler-compiler/src/policy.rs`.
+- **The double-claimed KIR carrier is a real graph defect.** Three sites in `crates/` — `kernel/error.rs`, `kernel/model.rs`, `kernel/lower.rs` — name [`lower-the-partitioned-copy-region-through-kernel-ir`](lower-the-partitioned-copy-region-through-kernel-ir.md) as the accepted owner, and that ticket's frontmatter lists `admit-an-explicit-non-arithmetic-region-and-delivery-state` among its dependencies. The carrier is claimed on both sides of a dependency edge.
+
+**One count in the packet is wrong, and it is the packet's own scale claim.** The re-audit states that **71 open tickets** still name the retired `schedule/builder.rs` path. Retired wording preserved. Counted at this base: **4** open tickets name it, against **69** ticket files in total once `done` and `closed` are included. The 69 is almost certainly what was measured and then labelled *open* — the sibling figure of **74 live documents** reproduces exactly, which is what makes the conflation visible rather than a general miscount.
+
+**The warning the number was offered to support is unaffected and stands.** Any grep against `schedule/builder.rs` is evidence of a module split rather than of a removal, and 74 live documents plus 4 open tickets is still ample reason to say so. But the packet reaches Tom, so the figure is corrected here rather than carried: a reviewer who re-ran that count would find 4 and reasonably distrust the rest, which is exactly what happened to the conformance packet's `829bd1f0` evidence line on 2026-08-22.
