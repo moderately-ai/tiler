@@ -1,7 +1,7 @@
 ---
 id: repair-the-stale-row-4-and-row-8-cells-in-the-backend-composition-matrix
 title: Repair the stale row 4 and row 8 cells in the backend composition matrix
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [decide-the-backend-provider-conformance-harness-public-surface]
@@ -9,9 +9,6 @@ scopes: [research/extensions]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, backend-providers]
-claimed_from: todo
-assignee: worker-matrix
-lease_expires_at: 1787457351
 ---
 ## User-visible outcome
 
