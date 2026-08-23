@@ -776,8 +776,8 @@ impl IndexRegionBuilder {
             );
             for result in &operation.results {
                 let ScalarValueDefinition::OperationResult {
+                    operation: _,
                     result: result_index,
-                    ..
                 } = self.values[*result as usize].definition
                 else {
                     unreachable!("operation results have operation definitions")
@@ -794,13 +794,21 @@ impl IndexRegionBuilder {
     pub(super) fn alpha_access_key(&self, access: u32, dimensions: &BTreeMap<u32, u32>) -> Vec<u8> {
         let data = &self.accesses[access as usize];
         let mut key = b"tiler.index.access-read.alpha.v1\0".to_vec();
+        // Destructured with no rest pattern for the reason `identity.rs` gives
+        // at `access_read_key`: a field added to one of these records must be a
+        // build error at the key encoders that frame it, not a silently
+        // narrower alpha key that still interns.
         let push_boundary = |key: &mut Vec<u8>, ordinal: u32| {
-            let tensor = &self.tensors[ordinal as usize];
+            let TensorData {
+                role,
+                value_type: _,
+                shape: _,
+            } = &self.tensors[ordinal as usize];
             let role_ordinal = self.tensors[..ordinal as usize]
                 .iter()
-                .filter(|candidate| candidate.role == tensor.role)
+                .filter(|candidate| candidate.role == *role)
                 .count();
-            key.push(match tensor.role {
+            key.push(match role {
                 TensorRole::Input => 1,
                 TensorRole::Output => 2,
             });
@@ -812,38 +820,50 @@ impl IndexRegionBuilder {
         // the earlier vocabulary could not write, so the two families cannot
         // collide even though neither is length-prefixed as a whole.
         match data {
-            AccessData::Direct(direct) => {
-                push_boundary(&mut key, direct.tensor);
-                let mut domain: Vec<_> = direct
-                    .domain
+            AccessData::Direct(DirectAccessData {
+                tensor,
+                // Only an `AccessRead` value reaches this key, so the mode is
+                // fixed by the caller rather than written here.
+                mode: _,
+                domain: access_domain,
+                coordinates,
+            }) => {
+                push_boundary(&mut key, *tensor);
+                let mut domain: Vec<_> = access_domain
                     .iter()
                     .map(|dimension| dimensions[dimension])
                     .collect();
                 domain.sort_unstable();
                 encode_u32s(&mut key, &domain);
-                push_len(&mut key, direct.coordinates.len());
-                for coordinate in &direct.coordinates {
+                push_len(&mut key, coordinates.len());
+                for coordinate in coordinates {
                     push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
                 }
             }
-            AccessData::GatherRead(gather) => {
+            AccessData::GatherRead(GatherReadAccessData {
+                source,
+                index,
+                axis,
+                domain: access_domain,
+                source_coordinates,
+                index_coordinates,
+            }) => {
                 key.extend_from_slice(b"tiler.index.access-gather-read.alpha.v1\0");
-                push_boundary(&mut key, gather.source);
-                push_boundary(&mut key, gather.index);
-                key.extend_from_slice(&gather.axis.to_be_bytes());
-                let mut domain: Vec<_> = gather
-                    .domain
+                push_boundary(&mut key, *source);
+                push_boundary(&mut key, *index);
+                key.extend_from_slice(&axis.to_be_bytes());
+                let mut domain: Vec<_> = access_domain
                     .iter()
                     .map(|dimension| dimensions[dimension])
                     .collect();
                 domain.sort_unstable();
                 encode_u32s(&mut key, &domain);
-                push_len(&mut key, gather.source_coordinates.len());
-                for coordinate in &gather.source_coordinates {
+                push_len(&mut key, source_coordinates.len());
+                for coordinate in source_coordinates {
                     push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
                 }
-                push_len(&mut key, gather.index_coordinates.len());
-                for coordinate in &gather.index_coordinates {
+                push_len(&mut key, index_coordinates.len());
+                for coordinate in index_coordinates {
                     push_slice(&mut key, &self.alpha_expr_key(*coordinate, dimensions));
                 }
             }

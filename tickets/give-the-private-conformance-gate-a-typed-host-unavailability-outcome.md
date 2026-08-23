@@ -1,7 +1,7 @@
 ---
 id: give-the-private-conformance-gate-a-typed-host-unavailability-outcome
 title: Give the private conformance gate a typed host-unavailability outcome
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [decide-the-backend-provider-conformance-harness-public-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/conformance]
 shared_scopes: [project/tickets]
 paths: []
 tags: [conformance]
-claimed_from: todo
-assignee: worker-unavail
-lease_expires_at: 1787457351
 ---
 ## User-visible outcome
 

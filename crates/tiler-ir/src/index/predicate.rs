@@ -319,9 +319,17 @@ impl UnknownIndexDomainPredicate {
     /// Returns a canonical region-local key over the exact predicate and reason.
     #[must_use]
     pub fn canonical_local_key(self) -> CanonicalIndexDomainObligationKey {
+        // Destructured with no rest pattern, for the reason `identity.rs`
+        // records at its own encoders: a field added to this record must be a
+        // build error here rather than a silently narrower obligation key.
+        let Self {
+            subject,
+            predicate,
+            reason,
+        } = self;
         let mut output = INDEX_DOMAIN_OBLIGATION_KEY_DOMAIN.to_vec();
-        encode_index_domain_subject_predicate(&mut output, self.subject, self.predicate);
-        encode_index_domain_unknown_reason(&mut output, self.reason);
+        encode_index_domain_subject_predicate(&mut output, subject, predicate);
+        encode_index_domain_unknown_reason(&mut output, reason);
         CanonicalIndexDomainObligationKey(output)
     }
 
