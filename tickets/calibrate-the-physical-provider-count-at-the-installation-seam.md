@@ -16,6 +16,8 @@ lease_expires_at: 1787493486
 
 The physical provider-count limit has an accepted value enforced at the authority that can actually refuse it, instead of inheriting a number from a superseded single-target table that never passed a decision gate.
 
+**Resolved 2026-08-23 on the second branch of `## Closes when`, which this outcome predates.** There is no authority that can actually refuse a provider count at the installation seam, so no value is accepted and none is encoded; the axis is eliminated there. The reasoning and the reconsideration trigger are recorded below. A reader arriving at the sentence above should read it as the question this ticket asked, not as a description of what landed.
+
 ## Why this exists
 
 Split out 2026-08-22 by the coordinator when `calibrate-the-physical-frontier-provider-and-outcome-budgets` **fired its own stop condition**: *"provider count belongs to a different preflight authority than the complete budget policy."* The worker stopped rather than pushing through, which was correct. That ticket now owns the raw-outcome axis only.
