@@ -107,7 +107,6 @@ Status moved to `blocked` by the coordinator, which the worker correctly left to
 
 **The identity consequence is discharged, not pending.** The request-subject domain stepped for every program; exactly one pin in the workspace named it and it was recomputed on the merged tree. Adding no capability row, this ticket steps nothing further — but rederive rather than trusting that.
 
-<<<<<<< HEAD
 ## Coordinator note — 2026-08-23: one contract document expires when this lane lands
 
 `correct-the-optimizer-contract-capability-count-and-gather-standing` landed as `27fa3043` and repaired `docs/compiler/optimizer.md` to the current standing: a gather now resolves the `GovernedGatherF32` row and refines to a verified region with a statically proved `GatherIndexBoundsProof`, **and is still not schedulable** because `RegionVocabularyWall::GatherProofUnavailable` declines every gather member set, so a widened request refuses at `("planning", "region-vocabulary")`.
@@ -115,7 +114,6 @@ Status moved to `blocked` by the coordinator, which the worker correctly left to
 That sentence is true at `0129ed1a` and **this lane is what falsifies it.** The lane that wrote it flagged the expiry itself rather than writing a sentence with a hidden shelf life, which is the right call — but it means the obligation is now the integrator's.
 
 **When this ticket lands, `docs/compiler/optimizer.md` needs a further dated correction**, following the convention that paragraph already carries: preserve the retired wording so its grep count cannot shrink, and state what replaces it. The scope is `contracts/optimizer`, which this ticket does **not** hold — so this is a follow-up ticket to file at merge, not something to reach for from this lane. The pin to update alongside it is `a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary`, whose widened half currently asserts the very refusal being retired.
-=======
 ## Exact-base Fact audit and landing — 2026-08-23, `e23f3e6896e4b69c19fbba7f5ce8006f6da8cda9`, `worker-thread2`
 
 Read in full at this base before any edit: this ticket including both corrections above; root `AGENTS.md`; `crates/tiler-compiler/src/physical.rs`'s wall, spelling path, region builders, and gather binding; `crates/tiler-compiler/src/pipeline/verify.rs`; `crates/tiler-compiler/src/pipeline/planning.rs`'s plan-enumeration and alternative construction; `crates/tiler-compiler/src/frontier.rs`'s `ImplementationContext`, `enumerate_frontier`, and `govern_spelling`; `crates/tiler-compiler/src/lowering.rs`; the landed gather tests in `crates/tiler-compiler/src/request/tests.rs`; and `crates/tiler-ir/src/kernel/lower.rs`'s read addressing.
@@ -151,4 +149,13 @@ Read in full at this base before any edit: this ticket including both correction
 ### Identity
 
 **No identity domain steps.** No capability row is added, so `CanonicalLoweringRegistryIdentity` and the request subject `request/subject.rs` writes are byte-identical — the prerequisite lane already stepped that domain for every program and recomputed the single workspace pin. `RegionSpellingKind` and `RegionVocabularyWall` are matched on and never encoded (`grep -rn "RegionSpellingKind" crates/` shows only matches and doc links; no encoder). The new reason strings `gather-index-bounds-unproved` and `gather-kernel-body` reach explain traces, which are not identity. No scheduled region, kernel program, or artifact identity changes, because no gather reaches those layers. Derived on the merged tree: the one pinned request-subject value `tiler-explain-v10 request=e1ce290f22c582a1` in `crates/tiler-compiler/src/explain.rs` is unchanged and `make full` is green.
->>>>>>> 0326745a
+
+## Coordinator close — 2026-08-23 at `589a2b18`
+
+**The expiry recorded above has now fired, and is ticketed.** My note two sections up states the gather is "still not schedulable because `RegionVocabularyWall::GatherProofUnavailable` declines every gather member set". That was true when written and **this landing is what falsified it** — exactly as that note predicted. The follow-up is [`restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired`](restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired.md), scoped to `contracts/optimizer`, which this ticket does not hold.
+
+**Verified by the coordinator at `41c0d55f`, from the diff rather than the report.** `GatherProofUnavailable` fell from 4 mentions to 2 in `crates/tiler-compiler/src/physical.rs`, and both survivors are doc prose recording the retirement — the variant is gone from the enum, which now ends at `GatherIndexBoundsUnproved,`. That replacement carries 5 mentions and refuses only the undischarged population, so the wall retired *because the argument arrived*, which is the distinction this ticket existed to preserve.
+
+**Identity confirmed unchanged.** The lane added no capability row, `explain.rs` is absent from its diff, and the single workspace pin still reads `tiler-explain-v10 request=e1ce290f22c582a1`.
+
+**The discovery below it is now owned.** `crates/tiler-ir/src/kernel/lower.rs` answers `LogicalAccess::GatherSource { .. } => Err(KernelDiagnostic::BodyRefinement)`, so a **proved** gather now reaches a refusal that surfaced as `InvalidCompilerOutput` — a false claim about a region the schedule layer admits — and it is reachable cheaply through a vacuously discharged obligation rather than a `2^32` extent. [`lower-the-indirect-gather-read-through-the-structured-kernel-body`](lower-the-indirect-gather-read-through-the-structured-kernel-body.md) owns it, and the coordinator added the missing `depends_on` edge from [`emit-the-indirect-gather-on-metal`](emit-the-indirect-gather-on-metal.md), which declares `implementation/metal` and `implementation/compiler` and therefore could not have landed an `implementation/ir` body itself.
