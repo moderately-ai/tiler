@@ -220,11 +220,31 @@ fn node_reads_environment(
 /// swapping the source and index bindings, dropping the axis, or shortening the
 /// domain each changes the bytes.
 fn encode_gather_bounds_identity(
-    domain: &[u8],
+    domain_tag: &[u8],
     evidence: Option<(GatherIndexBoundsProofKind, IndexDomainFactSource)>,
     subject: &GatherIndexBoundsSubject,
 ) -> Vec<u8> {
-    let mut out = domain.to_vec();
+    // Destructured with no rest pattern, so a field added to the subject is a
+    // build error *here* rather than a binding the proof retains and exposes
+    // while the identity bytes silently stay narrower. The `match kind` below
+    // gives the enum half the same property by being wildcard-free; the struct
+    // half has no equivalent short of this pattern.
+    let GatherIndexBoundsSubject {
+        region,
+        access,
+        source,
+        index,
+        source_type,
+        index_type,
+        source_shape,
+        index_shape,
+        result_shape,
+        axis,
+        source_extent,
+        domain,
+    } = subject;
+
+    let mut out = domain_tag.to_vec();
     if let Some((kind, facts)) = evidence {
         out.push(match kind {
             GatherIndexBoundsProofKind::VacuousEmptyResultDomain => 0x01,
@@ -232,22 +252,19 @@ fn encode_gather_bounds_identity(
         });
         out.push(facts.tag());
     }
-    push_slice(&mut out, subject.region.as_bytes());
-    out.extend_from_slice(&bounded_index(subject.access.as_usize()).to_be_bytes());
-    out.extend_from_slice(&bounded_index(subject.source.as_usize()).to_be_bytes());
-    out.extend_from_slice(&bounded_index(subject.index.as_usize()).to_be_bytes());
-    push_slice(
-        &mut out,
-        subject.source_type.canonical_encoding().as_bytes(),
-    );
-    push_slice(&mut out, subject.index_type.canonical_encoding().as_bytes());
-    push_shape(&mut out, &subject.source_shape);
-    push_shape(&mut out, &subject.index_shape);
-    push_shape(&mut out, &subject.result_shape);
-    out.extend_from_slice(&subject.axis.get().to_be_bytes());
-    out.extend_from_slice(&subject.source_extent.get().to_be_bytes());
-    push_len(&mut out, subject.domain.len());
-    for dimension in &subject.domain {
+    push_slice(&mut out, region.as_bytes());
+    out.extend_from_slice(&bounded_index(access.as_usize()).to_be_bytes());
+    out.extend_from_slice(&bounded_index(source.as_usize()).to_be_bytes());
+    out.extend_from_slice(&bounded_index(index.as_usize()).to_be_bytes());
+    push_slice(&mut out, source_type.canonical_encoding().as_bytes());
+    push_slice(&mut out, index_type.canonical_encoding().as_bytes());
+    push_shape(&mut out, source_shape);
+    push_shape(&mut out, index_shape);
+    push_shape(&mut out, result_shape);
+    out.extend_from_slice(&axis.get().to_be_bytes());
+    out.extend_from_slice(&source_extent.get().to_be_bytes());
+    push_len(&mut out, domain.len());
+    for dimension in domain {
         out.extend_from_slice(&bounded_index(dimension.as_usize()).to_be_bytes());
     }
     out
