@@ -24,5 +24,4 @@ Run from the repository root:
 cargo test --manifest-path spikes/indexing/index-access-model/Cargo.toml
 ```
 
-The nested README documents the individual positive and negative cases. The
-model does not implement a production symbolic solver or target backend.
+The [nested README](index-access-model/README.md) documents the individual positive and negative cases. The model does not implement a production symbolic solver or target backend.

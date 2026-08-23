@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.spike.extensions.forkless-physical-provider"
+kind: "experiment"
+title: "Forkless custom Metal physical provider"
+topics: ["extensions", "backends", "pluggability", "metal"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["executable-model", "bounded-measurement"]
+supports: ["tiler.research.extensions.backend-provider-composition"]
+entrypoints: ["spikes/extensions/forkless-physical-provider/Cargo.toml"]
+last_verified: "2026-08-14"
+ticket: "prototype-a-forkless-custom-metal-physical-provider"
+---
+
 # Forkless custom Metal physical provider
 
 **Question.** Can a separately authored, statically linked crate outside this workspace contribute one specialized Metal physical implementation alongside Tiler's governed provider, without forking `tiler-compiler` and without replacing `tiler-metal`?

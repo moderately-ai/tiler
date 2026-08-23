@@ -28,3 +28,5 @@ uv run python -O spikes/reference/reference_evaluator.py
 Both modes produce the same output; verdicts use explicit checks that optimized
 Python cannot remove. It is a deliberately small semantic oracle, not a
 complete dtype or operation implementation.
+
+A second, unrelated probe shares this directory: the [staged intra-workgroup combine structure derivability probe](staged-combine-derivability/README.md) answers a program-scope-versus-schedule-scope question for the composed-reference decision packet rather than anything about this reference evaluator.

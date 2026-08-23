@@ -1,3 +1,18 @@
+---
+schema: "tiler-doc/v1"
+id: "tiler.spike.apple-targets.code-domain-integer-decode"
+kind: "experiment"
+title: "Code-domain integer decode probe"
+topics: ["apple-targets", "metal", "numerics", "quantization", "integer-arithmetic"]
+experiment_status: "reproducible"
+implementation_status: "spike-only"
+evidence_classes: ["exhaustive-finite", "bounded-measurement"]
+supports: ["tiler.research.apple-targets.numerical-behaviour", "tiler.research.numerics.first-quantized-lm-profile"]
+entrypoints: ["spikes/apple-targets/code-domain-integer-decode/decode_probe.py", "spikes/apple-targets/code-domain-integer-decode/decode_probe_host.m", "spikes/apple-targets/code-domain-integer-decode/validate_decode_record.py", "spikes/apple-targets/code-domain-integer-decode/test_decode_probe.py"]
+last_verified: "2026-07-31"
+ticket: "measure-code-domain-integer-arithmetic-on-the-qualified-apple-row"
+---
+
 # Code-domain integer decode probe
 
 This bounded experiment asks whether the emitted MSL for the registered strict-affine `u8` decode — a `uchar` code read, a widening to `int`, an `int` subtraction, an `int`-to-`float` conversion, and a multiply by an `f32` scale — computes what the contract says, over the complete 256 × 256 code and zero-point grid, on the `apple9-f32-unified-msl4-macos26` row. Before it ran, no integer arithmetic of any kind had ever been measured on an Apple GPU in this repository.
