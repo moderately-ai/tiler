@@ -22,6 +22,7 @@ mod byte_corruption;
 mod canonical_order;
 mod carried_payloads;
 mod carriers;
+mod copy_resources;
 mod expression_arena;
 mod extent_operands;
 mod forged_models;

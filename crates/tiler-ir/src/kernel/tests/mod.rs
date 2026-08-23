@@ -27,6 +27,7 @@ mod cooperative_execution;
 mod cooperative_staging_rules;
 mod cooperative_synchronization;
 mod cooperative_tiles;
+mod copy_refusal;
 mod extent_operands;
 mod extrema_reduction;
 mod gather;
