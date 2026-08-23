@@ -1,7 +1,7 @@
 ---
 id: decide-whether-the-refinement-subject-identity-should-carry-its-environment
 title: Decide whether the refinement subject identity should carry its environment
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, indexing, decision]
-claimed_from: todo
-assignee: worker-envid
-lease_expires_at: 1787467109
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: thread-resolved-lowering-into-the-governed-spelling-path
 title: Thread resolved lowering into the governed spelling path
-status: in-progress
+status: blocked
 priority: p1
 dependencies: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence, lower-a-recognized-gather-through-a-governed-capability]
 related: [decide-whether-refinement-evidence-may-reach-a-physical-provider, emit-the-indirect-gather-on-metal]
@@ -81,3 +81,18 @@ Read in full at this base before any edit: this ticket; root `AGENTS.md`; `crate
 [`lower-a-recognized-gather-through-a-governed-capability`](lower-a-recognized-gather-through-a-governed-capability.md) owns the facade method, the `GovernedGatherF32` provider, the capability row 21 to 22, and the refinement evidence, and is now a hard dependency of this ticket. It carries one consequence this ticket does not, which is why it is a lane of its own: `CanonicalLoweringRegistryIdentity` folds the capability list and `crates/tiler-compiler/src/request/subject.rs` writes it into every request subject (`push_slice(&mut bytes, self.lowering_registry.as_bytes());`), so adding a row **steps the request-subject identity domain for every program in the repository**, not only for gathers.
 
 This ticket's own Facts, its Outcome, and its Closes-when survive unchanged once that lands. The coordinator owns whether to move this ticket to `blocked` and whether to re-dispatch it behind the new one.
+
+## Coordinator verification of the blocking discovery — 2026-08-23 at `9b61b563`
+
+`worker-thread` refused to land this ticket's stated work and repaired the premise instead. **That was the correct call**, and every element of its blocker reproduces:
+
+- `grep -c "gather_read" crates/tiler-compiler/src/capability.rs` returns **0**. `IndexAccessLoweringContext` — the only emission vocabulary any lowering provider gets — exposes no gather.
+- `git log -S "gather_read" -- crates/tiler-compiler/src/capability.rs` is **empty**. The facade was drafted and withdrawn inside the parent lane and never landed, so this is not drift; it was never there.
+- `GOVERNED_INDEX_ACCESS_CAPABILITIES` is **21** at `crates/tiler-compiler/src/governed.rs`, with no gather row.
+- `enumerate_complete_plans` states the ordering in its own words at the anchor `Lowering-capability resolution precedes every cover`, and returns on the `resolve_lowering` error arm above `enumerate_covers`.
+
+**So the argument this ticket exists to deliver can never arrive.** Threading it would pass a value no reachable path reads; `physical::gather_region` would have zero callers and need `#[allow(dead_code)]`, which is verbatim the state the parent lane withdrew the facade to avoid; and the required occupancy-refusal control would have a reachable negative case and **no** reachable positive one. Landing that is "the check was relaxed" wearing the costume of "the argument arrived" — the exact substitution this ticket's own outcome forbids.
+
+**The provenance matters more than the error.** The claim entered at `carry-the-gather-relation-through-the-compiler-vertical`'s blocking discovery, was carried into an option row, and reached the coordinator's brief third-hand. It was **true of the scope and false of the population**: the value really does exist in `plan_target`, and no gather ever reaches the scope that would read it. Two prior lanes both listed the capability row as remainder and called it independent, and **neither filed it as a ticket or an edge** — so it was invisible to dispatch and this ticket was scheduled ahead of its own prerequisite. The repair is [`lower-a-recognized-gather-through-a-governed-capability`](lower-a-recognized-gather-through-a-governed-capability.md), now filed with a hard dependency edge, and it carries an identity consequence this ticket does not: the lowering registry list is folded into `CanonicalLoweringRegistryIdentity` and written by `request/subject.rs`, so adding one row steps the request-subject domain for **every program in the repository**.
+
+Status moved to `blocked` by the coordinator, which the worker correctly left to me.
