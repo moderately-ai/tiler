@@ -1,7 +1,7 @@
 ---
 id: make-the-index-layer-traversals-exhaustive-over-the-records-they-walk
 title: Make the index-layer traversals exhaustive over the records they walk
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing]
-claimed_from: todo
-assignee: worker-traversal
-lease_expires_at: 1787468243
 ---
 ## User-visible outcome
 
