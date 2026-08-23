@@ -1,7 +1,7 @@
 ---
 id: repair-the-compiler-pipeline-grouping-oracles-conditional-provenance
 title: Repair the compiler pipeline grouping oracle's conditional provenance
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [accept-the-exact-composed-reference-session-and-event-surface]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, conformance, numerics, tests]
-claimed_from: todo
-assignee: worker-oracle
-lease_expires_at: 1787452689
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: repair-the-flash-class-records-falsified-supplied-greps
 title: Repair the flash-class record's falsified supplied greps
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [reconcile-the-l4-records-self-contradicting-softmax-elimination-row, re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree]
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, falsified-evidence]
-claimed_from: todo
-assignee: worker-flash
-lease_expires_at: 1787452688
 ---
 ## User-visible outcome
 
@@ -59,3 +56,11 @@ Every command below was run by the coordinator at this base before dispatch, not
 **Two pins the ticket does not name, and they fail in the dangerous direction.** Line 229 of the record cites `declare_local_memory_bytes` and `declare_measured_local_memory_bytes` at `crates/tiler-compiler/src/target.rs:1937`, `:1950`. Both functions now live in `crates/tiler-compiler/src/target/builder.rs:634` and `:647`. **The named file still exists** — 3,818 lines — and line 1937 lands inside an unrelated test assertion, `Err(TargetProfileBuildError::DuplicateSynchronizationRealization)`. So a reader following the pin does not get an obvious miss; they land in plausible, compiling, entirely unrelated code. This is the module-split false-absence hazard AGENTS.md records under the anchor `the named file usually still exists`. Audit the record for **every** citation of this shape, not only the seven now named — the sibling scan the Required work asks for should treat a stale path as a distinct failure class from a stale line.
 
 **Carried from `retire-the-l4-zero-synchronization-ground-where-other-records-restate-it`, landed as `624b863c`.** That lane verified that no production target profile declares a subgroup width — the sole declaration is the `pub(crate)` fixture `BoundMetalSubgroupDeclaration` in `crates/tiler-build/src/metal_subgroup_declaration.rs`, not re-exported from its crate root. Its finding **does not** contradict this record's surviving conclusion; it supports it, and is a better-shaped reproduction than the emptiness grep this ticket exists to retire. That lane also withdrew the L4 zero-synchronization ground wherever other records restated it. If this record restates that ground too, **it is in scope here only where it is one of the supplied-command repairs**; the retirement itself is that ticket's and it is done.
+
+## Coordinator correction, 2026-08-22 — one claim in my own re-audit above was false, and the worker was right to refuse it
+
+My re-audit section states, of the `feasibility.rs:211` pin: *"confirmed drifted, and the visibility mis-statement is real"*. The retired wording is quoted so the count of it cannot shrink. **There is no visibility mis-statement.** `worker-flash` checked both the working tree and the base with `git show`, found no `pub` claim anywhere near `CapabilityAxis`, and declined to invent a correction for it; the coordinator has since confirmed the same at `2c312826` — a grep for a `pub` claim adjacent to `CapabilityAxis` in that record returns **0**. The record only ever said "seven variants" and made no visibility claim at all.
+
+**How the error was made, because the shape matters more than the instance.** The original ticket Fact read *"the item is `pub(crate)` rather than the `pub` the record states"*. I verified the first half — `CapabilityAxis` genuinely is `pub(crate)` — and carried the second half through into a re-audit as though verifying one half had verified both. That is precisely what AGENTS.md means by replacing a false Fact with a different false claim in new words, committed by the coordinator in the document whose purpose is to stop workers doing it. The worker contradicted the brief with evidence and was right, which is now the standing pattern rather than the exception.
+
+The `pub(crate)` annotation the lane added anyway is free precision and correct; it is not a repair of a mis-statement, because there was none.
