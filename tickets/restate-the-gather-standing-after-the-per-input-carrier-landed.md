@@ -1,7 +1,7 @@
 ---
 id: restate-the-gather-standing-after-the-per-input-carrier-landed
 title: Restate the gather standing after the per-input carrier landed
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type, restate-the-gather-standing-after-the-kernel-body-and-classifier-landed, emit-the-indirect-gather-on-metal]
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, gather, contract, roadmap]
+claimed_from: todo
+assignee: worker-optrestate3
+lease_expires_at: 1787484981
 ---
 ## User-visible outcome
 
