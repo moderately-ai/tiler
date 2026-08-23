@@ -2370,8 +2370,13 @@ fn lower_source_bearing_slice(
 /// index layer's closed deriver mints either a
 /// `tiler_ir::index::GatherIndexBoundsProof` or a validation requirement for
 /// it. A gather this build cannot prove statically therefore still lowers, and
-/// is stopped above by `crate::physical::RegionVocabularyWall`, which is where
-/// the missing invocation-scoped receipt is owed.
+/// is stopped above by
+/// `crate::physical::RegionVocabularyWall::GatherIndexBoundsUnproved`, which is
+/// where the missing invocation-scoped receipt is owed. One this build *can*
+/// prove is spelled by `crate::physical::gather_region`, which embeds the proof
+/// minted here rather than re-deriving one — so which of the two records this
+/// emission produces is what decides whether the occurrence acquires a
+/// schedule.
 struct GovernedGatherF32;
 
 impl IndexAccessLoweringProvider for GovernedGatherF32 {

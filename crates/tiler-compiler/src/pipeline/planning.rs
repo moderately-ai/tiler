@@ -1051,12 +1051,11 @@ pub(super) fn build_alternative_for_origin(
     let scheduled = assembly.regions().to_vec();
     let kernels = scheduled
         .iter()
-        .map(lower_structured_kernel)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| {
-            let stage = physical_error_stage(&error);
-            failure_at_source(error.into(), stage, cause.copied())
-        })?;
+        .map(|region| {
+            lower_structured_kernel(region)
+                .map_err(|error| kernel_lowering_failure(region, error, cause.copied()))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let program = build_plan_program(semantic, verified, &assembly, lowering).map_err(|error| {
         failure_at_source(error, ExplainStage::ProgramVerification, cause.copied())
     })?;
@@ -1124,6 +1123,75 @@ pub(super) fn build_alternative_for_origin(
         structural_cost: plan.cost(),
         equivalence,
     })
+}
+
+/// Stable rule naming the read relation this build spells but cannot emit.
+///
+/// Named here rather than in `crate::physical` because it is not a fact about
+/// the region vocabulary: `spell_region` builds this region, the schedule layer
+/// verifies it, and the request-subject binding admits it. What has no
+/// realization is one layer further down, in the structured kernel.
+const GATHER_KERNEL_BODY_RULE: &str = "gather-kernel-body";
+
+/// Classifies one structured-kernel lowering refusal of an already-verified region.
+///
+/// **This classifies a refusal already taken; it never takes one.** The decision
+/// is `tiler_ir::kernel`'s alone and stays there, so there is no second copy of
+/// its unsupported set to keep in agreement — the only question asked here is
+/// what *class* of failure the compiler should report for a refusal that has
+/// already happened. If that layer gains a body for the relation below, the
+/// refusal stops occurring and this classification stops being reached, rather
+/// than becoming a stale gate.
+///
+/// **Why the gather case is not invalid compiler output.** Every region reaching
+/// here passed intrinsic schedule verification, the request-subject binding, and
+/// hard feasibility; a `GatherSource` read then refuses because emitting one
+/// needs an address *load* inside the kernel body and no `ReadAddressing` form
+/// has one. That is `tiler_ir::kernel::KernelDiagnostic`'s own "representable,
+/// not lowered" separation — the one `UnloweredRegionProgram` and
+/// `UnloweredExecutionBinding` state positively — and reporting it as malformed
+/// compiler output would claim the governed builder emitted a broken region when
+/// it emitted exactly the region the schedule layer admits.
+///
+/// The population is reachable and cheap rather than exotic: a gather over a
+/// source with a zero-extent axis has an empty result domain, so its bounds
+/// obligation is discharged vacuously, it is spelled, it is admitted, and it
+/// arrives here. [`emit-the-indirect-gather-on-metal`](../../../tickets/emit-the-indirect-gather-on-metal.md)
+/// owns the backend half of closing it; the kernel body is upstream of that and
+/// is `crates/tiler-ir`'s.
+///
+/// Every other refusal keeps the invalid-compiler-output class it had. That is
+/// not a hedge: no other region this build spells is unlowerable, so a refusal
+/// for one really would mean the compiler emitted something malformed, and
+/// widening the missing-capability class to cover it would retire a defect
+/// signal on no evidence.
+fn kernel_lowering_failure(
+    region: &VerifiedScheduledRegion,
+    error: PhysicalError,
+    cause: Option<TerminalCause>,
+) -> TargetFailure {
+    if matches!(error, PhysicalError::Refinement { .. })
+        && region.region().index.accesses.iter().any(|access| {
+            matches!(
+                access.map,
+                crate::physical::LogicalAccess::GatherSource { .. }
+            )
+        })
+    {
+        return target_failure(
+            CompileError::UnsupportedCapability(RequestError::UnsupportedCapability {
+                phase: "kernel-lowering",
+                rule: GATHER_KERNEL_BODY_RULE,
+            }),
+            ExplainStage::KernelRefinement,
+            format!("unsupported-kernel-lowering-{GATHER_KERNEL_BODY_RULE}"),
+            SubjectKind::Region,
+            format!("failed-region:{}", region.region().index.id.get()),
+            cause,
+        );
+    }
+    let stage = physical_error_stage(&error);
+    failure_at_source(error.into(), stage, cause)
 }
 
 /// Reports one assembly refusal at its own failure class, naming the region.

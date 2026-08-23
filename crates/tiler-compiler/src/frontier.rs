@@ -1178,6 +1178,21 @@ impl ImplementationProposal {
 pub struct ImplementationContext<'a> {
     request: &'a VerifiedTargetRequest,
     subject: &'a FrontierRegionSubject,
+    /// The resolved lowering the caller of [`enumerate_frontier`] already derived
+    /// for this program.
+    ///
+    /// **Private, with a crate-private accessor and no public one, and the
+    /// asymmetry is the point.** An installed provider's documented surface is
+    /// still the target profile, the resolved numerical realization, the region
+    /// subject, and this host's baseline spelling; whether refinement evidence
+    /// may reach a provider at all is
+    /// [`decide-whether-refinement-evidence-may-reach-a-physical-provider`](../../tickets/decide-whether-refinement-evidence-may-reach-a-physical-provider.md)'s
+    /// undecided question and nothing here answers it. What this field carries
+    /// is the *host's* own access to the value, so [`govern_spelling`] can read a
+    /// gather occurrence's retained bounds proof out of the realization its
+    /// lowering produced instead of minting one that would bind a region nothing
+    /// lowered.
+    lowering: &'a ResolvedLowering,
     /// This host's own single-dispatch spelling of `subject`, derived on first
     /// request and shared by every provider asked about it.
     ///
@@ -1227,6 +1242,15 @@ impl ImplementationContext<'_> {
     #[must_use]
     pub const fn subject(&self) -> &FrontierRegionSubject {
         self.subject
+    }
+
+    /// Returns the resolved lowering this enumeration was called with.
+    ///
+    /// Crate-private, for the reason the field it reads is: this is the host's
+    /// own access to planning's already-derived evidence, not a widening of what
+    /// an installed provider may read.
+    pub(crate) const fn lowering(&self) -> &ResolvedLowering {
+        self.lowering
     }
 
     /// Returns the key of the target profile this frontier assesses.
@@ -1290,7 +1314,7 @@ impl ImplementationContext<'_> {
                 if self.subject.write().publishes_a_copy() {
                     return None;
                 }
-                govern_spelling(self.request, self.subject)
+                govern_spelling(self.request, self.subject, self.lowering)
                     .ok()
                     .map(|spelling| BaselineImplementation {
                         region: spelling.region,
@@ -2404,6 +2428,7 @@ pub(crate) fn enumerate_frontier(
     let context = ImplementationContext {
         request,
         subject,
+        lowering,
         baseline: std::cell::OnceCell::new(),
     };
     for provider in providers {
@@ -3614,6 +3639,7 @@ enum UnspelledSubject {
 fn govern_spelling(
     request: &VerifiedTargetRequest,
     subject: &FrontierRegionSubject,
+    lowering: &ResolvedLowering,
 ) -> Result<GovernedSpelling, UnspelledSubject> {
     let members = subject.semantic_members();
     // Structural cost inputs, taken over every recognized output rather than
@@ -3636,18 +3662,19 @@ fn govern_spelling(
         return Err(UnspelledSubject::Coverless);
     }
     {
-        let spelling = match crate::physical::spell_region(request, members, subject.write()) {
-            Ok(spelling) => spelling,
-            Err(wall) => {
-                return Err(UnspelledSubject::Declined(DeclinedStrategy::new(
-                    crate::physical::SERIAL_BASELINE_STRATEGY,
-                    StrategyDeclineCause::UnspellableRegion {
-                        rule: wall.reason(),
-                        covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
-                    },
-                )));
-            }
-        };
+        let spelling =
+            match crate::physical::spell_region(request, members, subject.write(), lowering) {
+                Ok(spelling) => spelling,
+                Err(wall) => {
+                    return Err(UnspelledSubject::Declined(DeclinedStrategy::new(
+                        crate::physical::SERIAL_BASELINE_STRATEGY,
+                        StrategyDeclineCause::UnspellableRegion {
+                            rule: wall.reason(),
+                            covered: u32::try_from(members.len()).unwrap_or(u32::MAX),
+                        },
+                    )));
+                }
+            };
         let mut split = None;
         let mut tree = None;
         // The contraction alternatives the L3 elimination measured. Three
@@ -3749,6 +3776,25 @@ fn govern_spelling(
                     PhysicalCostEstimate::structural(1, output_elements, 0),
                 )
             }
+            // One indirect read, offered alone. No split, no tile, and no
+            // alternative to decline by name: a gather folds nothing and
+            // contracts nothing, so none of the strategies the reduction and the
+            // contraction consider is even a candidate for it, and a decline
+            // stating otherwise would name a freedom this subject never asks for.
+            //
+            // The region is built from the same resolved lowering the spelling
+            // was decided against, so the proof it embeds and the proof
+            // `spell_region` found are the one the occurrence's own realization
+            // carries. Both go through `physical`'s single reader, which is what
+            // makes the expectation below a statement about ordering rather than
+            // a hope: a `None` here would mean the spelling and the builder had
+            // disagreed about the same occurrence's evidence.
+            crate::physical::RegionSpellingKind::Gather => (
+                crate::physical::gather_region(request, producer, subject.write(), lowering)
+                    .expect("a gather spelling is decided before the region is built")
+                    .0,
+                PhysicalCostEstimate::structural(1, output_elements, 0),
+            ),
             // Whether the whole-program region may be *fused* belongs to the
             // numerical-legality authority and whether it *fits* belongs to this
             // target; neither is a capability question. Every occurrence the
@@ -3866,7 +3912,7 @@ impl PhysicalImplementationProvider for GovernedPhysicalProvider {
             cost,
             applicability,
             parallel,
-        } = match govern_spelling(request, subject) {
+        } = match govern_spelling(request, subject, context.lowering()) {
             Ok(spelling) => spelling,
             Err(UnspelledSubject::Coverless) => return ProviderOffer::default(),
             Err(UnspelledSubject::Declined(declined)) => {

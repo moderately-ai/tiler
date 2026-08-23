@@ -1149,13 +1149,16 @@ mod tests {
     /// filled in as well: `tiler_ir::schedule` defines the `GatherSource`
     /// access relation, `IndexRealizationLaw::gather_f32` is a registered
     /// realization law row, and `crate::governed`'s `GovernedGatherF32`
-    /// capability lowers a recognized occurrence to a verified region. What is
-    /// still absent is the one step above those: no scheduled region spells a
-    /// gather, because `crate::physical::RegionVocabularyWall::GatherProofUnavailable`
-    /// declines every gather member set for want of a seam carrying the
-    /// realized region's `GatherIndexBoundsProof` into physical planning. So
-    /// the entry here is "lowered, and not yet schedulable", and the remaining
-    /// step is its own admission.
+    /// capability lowers a recognized occurrence to a verified region. The step
+    /// above those has since filled in too: `crate::physical::gather_region`
+    /// spells the scheduled region, built from the `GatherIndexBoundsProof` the
+    /// occurrence's own realization retained. So the entry here is now "lowered
+    /// and schedulable where its index bounds are statically proved"; a gather
+    /// whose obligation the deriver could not close is declined by name at
+    /// `crate::physical::RegionVocabularyWall::GatherIndexBoundsUnproved`, and
+    /// the invocation-scoped receipt that would discharge one is its own
+    /// admission. Neither state asks a target for a numerical freedom, which is
+    /// why the row's absence here is unaffected either way.
     ///
     /// It correspondingly holds **no** fusion role in `crate::fusion_legality`,
     /// which is where it parts company with the concatenate and the selection.

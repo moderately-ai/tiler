@@ -867,13 +867,10 @@ impl NormalizedOutput {
     /// shapes, ordinals, and axis should name the family it is asking about
     /// rather than destructure the enum at each site.
     ///
-    /// **Test-visible only at this base, and deliberately not wider.** Its
-    /// production consumers are the region builder and frontier offer this lane
-    /// stopped short of, so exposing it crate-wide now would publish an accessor
-    /// with no caller — and a `pub(crate)` item nothing calls is dead code the
-    /// warning-denied gate refuses. The lane that adds those consumers widens
-    /// this back to `pub(crate)` in the same change.
-    #[cfg(test)]
+    /// Crate-visible since the region builder arrived. It was `#[cfg(test)]`
+    /// while its only production consumer was a lane that had not landed, because
+    /// a `pub(crate)` item nothing calls is dead code the warning-denied gate
+    /// refuses; [`crate::physical::gather_region`] is that consumer.
     pub(crate) const fn gather(&self) -> Option<&NormalizedGather> {
         match self {
             Self::SerialSum(_)

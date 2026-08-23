@@ -1274,23 +1274,25 @@ fn laws_of(program: &SemanticProgram) -> FrozenIndexRealizationLawRegistry {
 /// request boundary's ordered diagnostic layers without granting Gather a
 /// production target claim or a planning route.
 ///
-/// **The second expectation moved from `("lowering", "missing-capability")` to
-/// `("planning", "region-vocabulary")`, and the move is this lane's landing.**
-/// The governed profile now carries a `tiler::gather-f32@1` index-access
-/// capability row, so `resolve_lowering` answers `Ok` for this program and the
-/// compile advances past the lowering stage entirely. The next authority with
-/// nothing to say about a gather is the scheduled-region vocabulary: every
-/// cover of this program declines under
-/// `RegionVocabularyWall::GatherProofUnavailable`, which `pipeline` reports as
-/// the `region-vocabulary` capability class and the trace names in full.
+/// **The second expectation is `("planning", "region-vocabulary")`, and what
+/// keeps it there has changed.** The governed profile carries a
+/// `tiler::gather-f32@1` index-access capability row, so `resolve_lowering`
+/// answers `Ok` for this program and the compile advances past the lowering
+/// stage entirely. The scheduled-region vocabulary used to decline *every*
+/// gather member set for want of a route to the retained proof; that route now
+/// exists, so what declines this program is narrower and is a fact about this
+/// fixture: its `[4, 2]` source over an inhabited result reaches neither closed
+/// bounds argument, so its own realization holds a
+/// `GatherIndexValidationRequirement` and it is refused by name under
+/// `RegionVocabularyWall::GatherIndexBoundsUnproved`.
 ///
-/// That is still fail-closed, and deliberately so: no gather acquires a
-/// schedule, kernel, artifact, cache, or dispatch route from this lane. One
-/// named authority now stands between this refusal and one that could — the
-/// wall itself, which needs the `GatherIndexBoundsProof` that
-/// `a_gather_occurrence_resolves_a_governed_lowering_and_refines` shows the
-/// resolved lowering already holds, carried across a seam that does not exist
-/// yet.
+/// **So this test now discriminates rather than merely refusing.** Its sibling
+/// `a_gathers_spelling_follows_its_own_occurrences_bounds_evidence` runs the
+/// same call over a statically proved gather and receives a spelling, which is
+/// what makes the refusal here evidence about this program instead of about
+/// every gather. Nothing about it is weaker: this fixture acquires no schedule,
+/// kernel, artifact, cache, or dispatch route, and the receipt that would
+/// discharge its outstanding obligation is another ticket's vocabulary.
 ///
 /// Watched failing under a deliberate subject perturbation: removing the
 /// U32 row from `governed_with_gather_index_dispatch_for_test` makes the
@@ -1342,7 +1344,7 @@ scheduled-region vocabulary",
     assert!(
         explain
             .render()
-            .contains(crate::physical::RegionVocabularyWall::GatherProofUnavailable.reason()),
+            .contains(crate::physical::RegionVocabularyWall::GatherIndexBoundsUnproved.reason()),
         "the trace must name the gather wall as the cause: {}",
         explain.render(),
     );
@@ -5684,72 +5686,259 @@ fn a_gather_output_subject_takes_its_own_sub_tag() {
     }
 }
 
-/// A recognized gather has no governed region spelling, and the wall says why.
+/// A gather's spelling follows its own occurrence's bounds evidence.
 ///
-/// **This is the lane's stopping point, stated as a typed answer rather than as
-/// an absence.** The occurrence is recognized, the request subject binds it, and
-/// the schedule layer defines both `LogicalAccess::GatherSource` and its paired
-/// `BoundsProofKind::GatherSource`. What physical planning cannot do is obtain
-/// the `GatherIndexBoundsProof` that proof variant carries: it is minted only by
-/// the index layer's verifier-private deriver, it binds a
-/// `CanonicalIndexRegionIdentity`, and the refinement that holds one is not
-/// reachable from a provider's `ImplementationContext`.
+/// **The two halves are the same call over the same code path, separated only by
+/// which record the occurrence's own lowering minted.** That is what makes this a
+/// discrimination rather than a pair of unrelated assertions: before
+/// `RegionVocabularyWall::GatherIndexBoundsUnproved` existed, the wall declined
+/// every gather member set unconditionally, so a statically proved gather and one
+/// owing invocation validation were indistinguishable above lowering. Each half
+/// is now reachable, and neither would be if the seam carrying the proof into
+/// `spell_region` were absent — the whole population would collapse back onto the
+/// refusal, which is exactly the state a relaxation-shaped repair would leave.
 ///
-/// **What it would take for this to say something else.** The wall is reached
-/// only for a member set that is exactly the gather occurrence's, so the two
-/// ways it stops answering are a recognizer that stops producing
-/// `NormalizedOutput::Gather` and a `spell_output` arm that returns a spelling
-/// instead. The second is the intended future change, and this assertion is what
-/// will require the lane that makes it to state the new answer here.
+/// - `TRANSPLANT_SOURCE_EXTENT` reaches `2^32`, so the closed deriver discharges
+///   the obligation with `U32RangeContainedBySourceExtent` and the region is
+///   spelled.
+/// - `gather_program`'s `[4, 2]` source reaches neither closed argument over an
+///   inhabited result domain, so the deriver mints a
+///   `GatherIndexValidationRequirement` and the occurrence is declined **by
+///   name**. It is refused rather than admitted with a weaker record: the receipt
+///   that would discharge one is
+///   [`admit-an-invocation-scoped-gather-index-validation-receipt`](../../tickets/admit-an-invocation-scoped-gather-index-validation-receipt.md)'s
+///   vocabulary, and admitting it here would open a fail-closed boundary.
 ///
-/// Watched failing under a deliberate subject perturbation: returning
-/// `RegionVocabularyWall::PartialCoverage` from the gather arm reddens this with
-/// `left: PartialCoverage  right: GatherProofUnavailable`, and passing a member
-/// set that is not the occurrence's falls through to `PartialCoverage` instead —
-/// which is what shows the wall is decided for this occurrence rather than
-/// reported for every unspellable cover.
+/// **What it would take for either half to say something else, and whether that
+/// case is reachable.** The proved half stops holding if the lowering resolves no
+/// single realized region, if that region's gather access stops carrying a static
+/// proof, or if the arm stops consulting the lowering at all — all three
+/// reachable, and the third is the relaxation this ticket forbids. The unproved
+/// half stops holding if the arm admits a requirement as though it were a proof,
+/// which is the same relaxation seen from the other side. The `unresolved_for_test`
+/// case below is the third reachable cause: a caller that never resolved a
+/// lowering cannot obtain the spelling by omission.
+///
+/// Watched failing under a deliberate subject perturbation: replacing
+/// `gather_bounds_proof(lowering, normalized.member).is_some()` with `true` —
+/// which is precisely "the check was relaxed" wearing the costume of "the
+/// argument arrived" — leaves the proved half green and reddens the unresolved
+/// assertion, which is the first of the two the relaxation reaches, with
+/// `left: Ok(RegionSpelling { output: 0, kind: Gather })  right: Err(GatherIndexBoundsUnproved)`.
+/// The unproved assertion below it carries the identical text. The same
+/// perturbation additionally reddens
+/// `a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary` at
+/// `crates/tiler-compiler/src/frontier.rs`'s `a gather spelling is decided before
+/// the region is built`, because `gather_region` then has no proof to embed —
+/// which is what makes that expectation a statement about ordering rather than a
+/// hope.
 #[test]
-fn a_recognized_gather_has_no_governed_region_spelling() {
-    let program = gather_program();
-    let mut request = CompilationRequest::governed(&program);
-    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
-    let planned = verify_planned_request(request).expect("the fixture admits a planned request");
-    let target = planned
-        .for_target(0)
-        .expect("the U32-capable profile admits the fixture");
-    let [output] = target.normalized().outputs() else {
+fn a_gathers_spelling_follows_its_own_occurrences_bounds_evidence() {
+    let spell = |program: &SemanticProgram,
+                 target: &VerifiedTargetRequest,
+                 members: &[crate::region::SemanticStage]| {
+        let lowering = crate::lowering::resolve_lowering(program, target)
+            .expect("the governed gather capability lowers a recognized gather");
+        crate::physical::spell_region(
+            target,
+            members,
+            crate::physical::RegionWrite::ProgramOutput,
+            &lowering,
+        )
+    };
+
+    // The proved population: a gathered extent containing every U32 value.
+    let (proved_program, proved_target) = transplant_gather_target();
+    let [proved_output] = proved_target.normalized().outputs() else {
         panic!("the fixture declares one output");
     };
-    let members = output.members();
-    assert_eq!(members.len(), 1, "a gather claims exactly one occurrence");
+    let proved_members = proved_output.members();
+    assert_eq!(
+        proved_members.len(),
+        1,
+        "a gather claims exactly one occurrence"
+    );
+    let spelling = spell(&proved_program, &proved_target, &proved_members)
+        .expect("a statically proved gather is spelled by the governed vocabulary");
+    assert_eq!(spelling.kind(), crate::physical::RegionSpellingKind::Gather);
+    assert_eq!(
+        spelling.output(),
+        0,
+        "the spelling resolves the declared output whose partition it belongs to",
+    );
 
+    // An unresolved lowering resolves no member, so the same proved occurrence
+    // is refused: the spelling is evidence read out of a lowering, never an
+    // answer derived from the member set alone.
     assert_eq!(
         crate::physical::spell_region(
-            &target,
-            &members,
+            &proved_target,
+            &proved_members,
             crate::physical::RegionWrite::ProgramOutput,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         ),
-        Err(crate::physical::RegionVocabularyWall::GatherProofUnavailable),
-        "a gather's own member set is declined by name, not reported as partial coverage",
+        Err(crate::physical::RegionVocabularyWall::GatherIndexBoundsUnproved),
+    );
+
+    // The unproved population: an inhabited result over a source extent neither
+    // closed argument covers.
+    let unproved_program = gather_program();
+    let mut request = CompilationRequest::governed(&unproved_program);
+    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    let planned = verify_planned_request(request).expect("the fixture admits a planned request");
+    let unproved_target = planned
+        .for_target(0)
+        .expect("the U32-capable profile admits the fixture");
+    let [unproved_output] = unproved_target.normalized().outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let unproved_members = unproved_output.members();
+    assert_eq!(
+        spell(&unproved_program, &unproved_target, &unproved_members),
+        Err(crate::physical::RegionVocabularyWall::GatherIndexBoundsUnproved),
+        "a gather owing invocation validation is declined by name, not admitted \
+beside the proved one",
     );
     assert_eq!(
-        crate::physical::RegionVocabularyWall::GatherProofUnavailable.reason(),
-        "gather-proof-unavailable",
+        crate::physical::RegionVocabularyWall::GatherIndexBoundsUnproved.reason(),
+        "gather-index-bounds-unproved",
+    );
+    // And the refusal really is this occurrence's own evidence rather than a
+    // missing lowering: the same program resolves one.
+    let unproved_lowering = crate::lowering::resolve_lowering(&unproved_program, &unproved_target)
+        .expect("a gather this build cannot prove statically still lowers");
+    let [occurrence] = unproved_lowering.occurrences() else {
+        panic!("the fixture declares one gather occurrence");
+    };
+    let crate::lowering::OccurrenceEvidence::Refined(refinement) = occurrence.evidence();
+    assert!(
+        refinement
+            .single_region()
+            .expect("a gather is realized by one region, not a chain")
+            .accesses()
+            .find_map(|access| match access.view() {
+                tiler_ir::index::TensorAccessView::GatherRead(gather) =>
+                    Some(gather.bounds_resolution()),
+                tiler_ir::index::TensorAccessView::Direct(_) => None,
+            })
+            .expect("the realized region carries the gather access")
+            .invocation_validation_required()
+            .is_some(),
+        "the declined half must owe invocation validation, or it is refused for \
+some other reason and proves nothing about this wall",
     );
 
     // A member set that is not this occurrence's falls through to the caller's
     // own wall, which is what separates "this region cannot be built" from
     // "this cover names occurrences no output owns".
     let foreign = [crate::region::SemanticStage::first(
-        crate::region::SemanticMemberId(members[0].member().0 + 1),
+        crate::region::SemanticMemberId(proved_members[0].member().0 + 1),
     )];
     assert_eq!(
-        crate::physical::spell_region(
-            &target,
-            &foreign,
-            crate::physical::RegionWrite::ProgramOutput,
-        ),
+        spell(&proved_program, &proved_target, &foreign),
         Err(crate::physical::RegionVocabularyWall::PartialCoverage),
+    );
+}
+
+/// The spelled gather region is the one the request-subject binding admits.
+///
+/// **The builder and the binding are two accounts of one region, and this is
+/// what stops them drifting.** `gather_region` places the source read, the
+/// address read it owns, and the write in the canonical order, derives the
+/// address relation through `gather_index_read_map`, and embeds the proof the
+/// occurrence's realization retained; `gather_accesses_match` re-derives every
+/// one of those independently and compares. A builder that named the wrong
+/// ordinal, proposed `LinearIdentity` for a replicating index, or embedded a
+/// proof from another region would produce a region this call refuses — and
+/// through `enumerate_frontier` such a region is a `MalformedProposal`, not a
+/// graceful decline, so the agreement is load-bearing rather than cosmetic.
+///
+/// It is also the positive control the whole ticket rests on: the wall retired
+/// because a region can now be built *and admitted*, not because the check
+/// stopped running. Hard feasibility, intrinsic verification, and the
+/// numerical-realization comparison all run here unchanged.
+///
+/// **The negative control transplants the proof out of the spelled region**, so
+/// the admission above cannot be a binding that admits every gather. It is the
+/// same region this vocabulary just built, with one field replaced by a proof
+/// minted for a shape-compatible sibling — the occupancy conjunct
+/// `a_gather_proof_minted_for_another_region_is_refused` introduced, asked here
+/// of the *spelled* region rather than of a hand-built fixture, which is what
+/// shows the threading did not weaken it.
+///
+/// Watched failing under a deliberate subject perturbation: swapping
+/// `gather_region`'s two reads so the address read is placed at local access 0
+/// reddens this with
+/// `left: Some(Intrinsic { rule: "gather-address-read-not-later", region: RegionId(0) })  right: None`.
+/// The rule is `tiler_ir::schedule`'s rather than this crate's
+/// `request-binding`, and the difference is worth keeping: the intrinsic
+/// verifier owns the canonical-order obligation and refuses the swap before the
+/// request-subject binding is asked anything, so the two checks are not two
+/// spellings of one rule.
+#[test]
+fn the_spelled_gather_region_binds_its_own_request_subject() {
+    let (program, target) = transplant_gather_target();
+    let [output] = target.normalized().outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let lowering = crate::lowering::resolve_lowering(&program, &target)
+        .expect("the governed gather capability lowers a recognized gather");
+    let (region, members) = crate::physical::gather_region(
+        &target,
+        output,
+        crate::physical::RegionWrite::ProgramOutput,
+        &lowering,
+    )
+    .expect("a statically proved gather has a governed region");
+    assert_eq!(
+        members,
+        output.members(),
+        "the built region claims exactly the occurrences the recognizer did",
+    );
+    let verified = crate::physical::verify_schedule_with_feasibility(
+        region.clone(),
+        members.clone(),
+        &target,
+        &lowering,
+    );
+    assert_eq!(
+        verified.as_ref().err(),
+        None,
+        "the region this vocabulary spells must bind the subject it claims",
+    );
+
+    // The same spelled region carrying a proof minted for a different region.
+    // Every fact the binding compared before the occupancy conjunct existed is
+    // equal between the two proofs, so only that conjunct can refuse it.
+    let mut transplanted = region;
+    let crate::physical::BoundsProofKind::GatherSource { proof, .. } =
+        &mut transplanted.index.bounds_proofs[0].kind
+    else {
+        panic!("the spelled region proves its source read as a gather");
+    };
+    let foreign = mint_gather_proof(true);
+    assert_eq!(
+        foreign.source_shape(),
+        proof.source_shape(),
+        "the transplant must agree on every pre-existing comparison, or it \
+refuses for a reason that is not the occupancy check",
+    );
+    assert_ne!(foreign.region().as_bytes(), proof.region().as_bytes());
+    **proof = foreign;
+    assert_eq!(
+        crate::physical::verify_schedule_with_feasibility(
+            transplanted,
+            members,
+            &target,
+            &lowering,
+        )
+        .as_ref()
+        .err(),
+        Some(&crate::physical::PhysicalError::Intrinsic {
+            rule: "request-binding",
+            region: tiler_ir::schedule::RegionId::new(0),
+        }),
+        "a proof minted for another region must not bind the spelled one",
     );
 }
 
@@ -6819,4 +7008,81 @@ fn a_gather_occurrence_resolves_a_governed_lowering_and_refines() {
     let error = crate::lowering::resolve_lowering(&gather, &target)
         .expect_err("a registry without the gather row cannot lower a gather");
     assert_eq!(error.reason(), "missing-capability");
+}
+
+/// A statically proved gather is spelled, admitted, and then declined by name
+/// for the kernel body it has no emission for.
+///
+/// **This pins the boundary the region-vocabulary retirement moved the refusal
+/// to, and it pins its *class*.** The occurrence is recognized, lowered,
+/// refined, statically proved, spelled by `physical::gather_region`, verified
+/// intrinsically, bound to its request subject, and admitted as hard-feasible.
+/// `tiler_ir::kernel`'s lowering then refuses it under `body-refinement`,
+/// because emitting an indirect read needs an address *load* inside the body and
+/// no `ReadAddressing` form has one.
+///
+/// **The class is the assertion.** That refusal is a
+/// `PhysicalError::Refinement`, whose ordinary compiler class is
+/// `InvalidCompilerOutput` — a claim that the compiler emitted something
+/// malformed, which is false here: the governed builder emitted exactly the
+/// region the schedule layer admits, and the kernel profile has no body for it.
+/// `pipeline::planning`'s `kernel_lowering_failure` therefore reports the
+/// missing capability, and this is what would notice it silently reverting to
+/// the malformed-output claim.
+///
+/// **The population is reachable and cheap rather than exotic**, which is why
+/// the classification matters at all. A `[4, 0]` source has an empty result
+/// domain, so the index layer discharges the bounds obligation *vacuously* — no
+/// `2^32` extent required — and this tiny program reaches the boundary. Its
+/// sibling `a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary`
+/// stops one layer earlier because its obligation is undischarged, so the two
+/// together show both layers refusing their own population by their own name.
+///
+/// Watched failing under a deliberate subject perturbation: returning the
+/// `physical_error_stage` classification for every refusal — that is, deleting
+/// the gather arm of `kernel_lowering_failure` — reddens this with
+/// `left: None  right: Some(("kernel-lowering", "gather-kernel-body"))`, and the
+/// compile then reports
+/// `InvalidCompilerOutput(Physical(Refinement { rule: "body-refinement", region: RegionId(0) }))`.
+#[test]
+fn a_statically_proved_gather_is_declined_for_its_missing_kernel_body() {
+    // Empty result domain: the vacuous closed argument, so the obligation is
+    // discharged without the `2^32` extent the inhabited argument needs.
+    let program = gather_program_over([4, 0], [2], 0);
+    let mut request = CompilationRequest::governed(&program);
+    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    let planned = verify_planned_request(request).expect("the fixture admits a planned request");
+    let target = planned
+        .for_target(0)
+        .expect("the U32-capable profile admits the fixture");
+    let lowering = crate::lowering::resolve_lowering(&program, &target)
+        .expect("the governed gather capability lowers a recognized gather");
+    let [output] = target.normalized().outputs() else {
+        panic!("the fixture declares one output");
+    };
+    // The premise: this occurrence really is statically proved, so the refusal
+    // below is about the kernel body rather than about the bounds obligation.
+    let spelling = crate::physical::spell_region(
+        &target,
+        &output.members(),
+        crate::physical::RegionWrite::ProgramOutput,
+        &lowering,
+    )
+    .expect("a vacuously proved gather is spelled by the governed vocabulary");
+    assert_eq!(spelling.kind(), crate::physical::RegionSpellingKind::Gather);
+
+    let mut request = CompilationRequest::governed(&program);
+    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    let refusal = crate::pipeline::compile(request).expect_err("the fixture has no kernel body");
+    // Projected to the phase and rule alone, for the reason
+    // `a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary`
+    // projects its own: a `CompileError` reaching this layer carries a whole
+    // explain trace, and printing it whole on failure buries the one difference
+    // this test is about under fifteen megabytes of canonical bytes.
+    assert_eq!(
+        planning_capability_rule(&refusal),
+        Some(("kernel-lowering", "gather-kernel-body")),
+        "a region this build spells but cannot emit is a missing capability, not \
+malformed compiler output",
+    );
 }
