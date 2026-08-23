@@ -42,3 +42,17 @@ Re-deciding any flash-class conclusion; editing `crates/`; and the wider zero-sy
 ## Closes when
 
 Every supplied command's stated output matches what it produces, each surviving conclusion carries a reproduction that supports it, drifted pins are anchors, and the sibling scan is reported with its clean results.
+
+## Coordinator re-audit at `39fdb54c`, 2026-08-22 — all five confirmed, and **two further pins the ticket did not name**
+
+Every command below was run by the coordinator at this base before dispatch, not relayed.
+
+- **Falsified grep 1 — confirmed.** `grep -rn 'SubgroupWidth\|lane_identity\|SubgroupThenWorkgroup' crates/ | wc -l` returns **69**. The record says "returns nothing".
+- **Falsified grep 2 — confirmed.** `grep -rni 'simdgroup' crates/ | wc -l` returns **21**. The record says "returns five lines".
+- **`feasibility.rs:211` — confirmed drifted, and the visibility mis-statement is real.** `grep -rn "enum CapabilityAxis" crates/` returns `crates/tiler-compiler/src/target/feasibility.rs:241:pub(crate) enum CapabilityAxis {`. Pin moved 211 → 241, and it is `pub(crate)`.
+- **`component_cost.rs:619` — confirmed drifted to `:629`.** The shared arm is intact: `CostComponent::ResourcePressure | CostComponent::CompileTime => CostValue::Unknown`.
+- **`target.rs:755` — confirmed drifted to `:871`, and the ticket's bare filename is ambiguous.** The record cites **two different `target.rs` files**: `crates/tiler-metal/src/target.rs` for `MetalTargetFacts` and `crates/tiler-compiler/src/target.rs` at line 229. Always name the crate. `MetalTargetFacts` still has exactly five fields — language, platform, deployment_minimum, subnormal_arithmetic, and the buffer binding limit — so that conclusion survives, as the ticket says.
+
+**Two pins the ticket does not name, and they fail in the dangerous direction.** Line 229 of the record cites `declare_local_memory_bytes` and `declare_measured_local_memory_bytes` at `crates/tiler-compiler/src/target.rs:1937`, `:1950`. Both functions now live in `crates/tiler-compiler/src/target/builder.rs:634` and `:647`. **The named file still exists** — 3,818 lines — and line 1937 lands inside an unrelated test assertion, `Err(TargetProfileBuildError::DuplicateSynchronizationRealization)`. So a reader following the pin does not get an obvious miss; they land in plausible, compiling, entirely unrelated code. This is the module-split false-absence hazard AGENTS.md records under the anchor `the named file usually still exists`. Audit the record for **every** citation of this shape, not only the seven now named — the sibling scan the Required work asks for should treat a stale path as a distinct failure class from a stale line.
+
+**Carried from `retire-the-l4-zero-synchronization-ground-where-other-records-restate-it`, landed as `624b863c`.** That lane verified that no production target profile declares a subgroup width — the sole declaration is the `pub(crate)` fixture `BoundMetalSubgroupDeclaration` in `crates/tiler-build/src/metal_subgroup_declaration.rs`, not re-exported from its crate root. Its finding **does not** contradict this record's surviving conclusion; it supports it, and is a better-shaped reproduction than the emptiness grep this ticket exists to retire. That lane also withdrew the L4 zero-synchronization ground wherever other records restated it. If this record restates that ground too, **it is in scope here only where it is one of the supplied-command repairs**; the retirement itself is that ticket's and it is done.
