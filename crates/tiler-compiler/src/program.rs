@@ -671,6 +671,7 @@ impl CoverAssembly {
     pub(crate) fn from_plan(
         semantic: &SemanticProgram,
         plan: &SelectedPlan,
+        lowering: &crate::lowering::ResolvedLowering,
     ) -> Result<Self, AssemblyRefusal> {
         let cover = plan.cover();
         let regions = cover.regions();
@@ -953,7 +954,7 @@ impl CoverAssembly {
                                     )
                                 })?;
                             let ordinal = stage_regions[stage]
-                                .declared_input_at(access)
+                                .declared_input_at(lowering, access)
                                 .and_then(|ordinal| usize::try_from(ordinal.get()).ok())
                                 .ok_or_else(|| {
                                     AssemblyRefusal::missing(

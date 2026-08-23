@@ -134,7 +134,11 @@ fn fixture_with_scale(
     let semantic = builder.build().unwrap();
     let request = verify_planned_request(CompilationRequest::governed(&semantic)).unwrap();
     let request = request.for_target(request.target_profiles()[0]).unwrap();
-    let scheduled = build_scheduled_regions(&request).unwrap();
+    let scheduled = build_scheduled_regions(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .unwrap();
     (semantic, request, scheduled)
 }
 
@@ -416,7 +420,11 @@ fn the_program_identity_is_the_shared_canonical_identity() {
         second.core().canonical_identity().as_bytes()
     );
 
-    let fused_region = build_fused_scheduled_region(&request).unwrap();
+    let fused_region = build_fused_scheduled_region(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .unwrap();
     let fused = build_kernel_program(
         &semantic,
         &request,
@@ -468,7 +476,11 @@ fn compiler_layers_recheck_the_target_and_the_planned_launch() {
     // pairing it with the two-stage strategy's pointwise region — which is
     // planned over the input extent — must be caught as a launch disagreement
     // rather than accepted because both are individually verified.
-    let fused_region = build_fused_scheduled_region(&request).unwrap();
+    let fused_region = build_fused_scheduled_region(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .unwrap();
     let fused = build_kernel_program(
         &semantic,
         &request,
@@ -694,7 +706,11 @@ fn the_assembled_obligations_are_refused_when_stated_wrongly() {
 #[test]
 fn a_fused_program_binds_one_stage_and_no_cross_stage_value() {
     let (semantic, request, scheduled) = fixture();
-    let fused_region = build_fused_scheduled_region(&request).unwrap();
+    let fused_region = build_fused_scheduled_region(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .unwrap();
     let fused = build_kernel_program(
         &semantic,
         &request,
@@ -789,7 +805,11 @@ fn artifact_receipt_rejects_provider_program_and_receipt_mutations() {
     // A program from the other strategy is not the artifact's expected program,
     // and the receipt path finds that by re-deriving through the same route the
     // build path took rather than by matching the schedule count.
-    let fused_region = build_fused_scheduled_region(&request).unwrap();
+    let fused_region = build_fused_scheduled_region(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .unwrap();
     let fused = build_kernel_program(
         &semantic,
         &request,
@@ -916,7 +936,12 @@ fn a_split_under_a_reassociation_forbidding_contract_is_refused() {
     // constructor produces carries `permits_reassociation: false` and the
     // schedule verifier refuses it rather than costing it.
     assert_eq!(
-        crate::physical::verify_schedule(partial, members, &request),
+        crate::physical::verify_schedule(
+            partial,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        ),
         Err(crate::physical::PhysicalError::Intrinsic {
             rule: "numerical-or-access-refinement",
             region: crate::physical::RegionId::new(2),

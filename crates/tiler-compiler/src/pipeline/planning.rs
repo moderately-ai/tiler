@@ -465,15 +465,20 @@ pub(super) fn enumerate_complete_plans(
             {
                 enumerated.clone()
             } else {
-                let enumerated =
-                    enumerate_frontier(verified, &subject, physical.providers(), physical.calls())
-                        .map_err(|source| {
-                            failure_at_source(
-                                source.into(),
-                                ExplainStage::IntrinsicScheduling,
-                                record_cause(numerical_cause),
-                            )
-                        })?;
+                let enumerated = enumerate_frontier(
+                    verified,
+                    &subject,
+                    physical.providers(),
+                    physical.calls(),
+                    &lowering,
+                )
+                .map_err(|source| {
+                    failure_at_source(
+                        source.into(),
+                        ExplainStage::IntrinsicScheduling,
+                        record_cause(numerical_cause),
+                    )
+                })?;
                 frontiers_by_subject.push((subject.clone(), enumerated.clone()));
                 enumerated
             };
@@ -1041,7 +1046,7 @@ pub(super) fn build_alternative_for_origin(
     // containing an opaque call has no scheduled region for it, and a cover this
     // assembler has no expression for is a named missing capability rather than
     // invalid compiler output; both reach a caller through this one refusal.
-    let assembly = CoverAssembly::from_plan(semantic, plan)
+    let assembly = CoverAssembly::from_plan(semantic, plan, lowering)
         .map_err(|refusal| assembly_failure(&refusal, cause.copied()))?;
     let scheduled = assembly.regions().to_vec();
     let kernels = scheduled

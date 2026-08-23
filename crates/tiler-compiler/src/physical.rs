@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use tiler_ir::index::IndexRealizationLaw;
+use tiler_ir::index::{CanonicalIndexRegionIdentity, IndexRealizationLaw};
 use tiler_ir::semantic::{
     AttributeFieldId, CanonicalIntegerWidth, CanonicalValueView, F32, InputKey,
 };
@@ -31,7 +31,8 @@ use tiler_ir::schedule::{
     admit_exact_cooperative_contraction, admit_predicated_cooperative_contraction,
 };
 
-use crate::region::SemanticStage;
+use crate::lowering::{OccurrenceEvidence, ResolvedLowering};
+use crate::region::{SemanticMemberId, SemanticStage};
 use crate::request::{
     BoundaryRead, DeclaredInputOrdinal, NormalizedContraction, NormalizedContractionRead,
     NormalizedOutput, NormalizedOutputSubject, NormalizedPointwise, NormalizedSerialSum,
@@ -1179,11 +1180,16 @@ impl VerifiedScheduledRegion {
     /// subject. It is deliberately not stored as a second vector beside the
     /// region: doing so would give schedule construction and program assembly
     /// two authorities that could drift while remaining individually typed.
-    pub(crate) fn declared_input_at(&self, access: AccessOrdinal) -> Option<DeclaredInputOrdinal> {
+    pub(crate) fn declared_input_at(
+        &self,
+        lowering: &ResolvedLowering,
+        access: AccessOrdinal,
+    ) -> Option<DeclaredInputOrdinal> {
         declared_input_for_region_access(
             self.region(),
             &self.semantic_members,
             &self.request_subject,
+            lowering,
             access,
         )
     }
@@ -1198,6 +1204,7 @@ pub(crate) fn declared_input_for_region_access(
     region: &ScheduledRegion,
     semantic_members: &[SemanticStage],
     subject: &VerifiedRequestSubject,
+    lowering: &ResolvedLowering,
     access: AccessOrdinal,
 ) -> Option<DeclaredInputOrdinal> {
     let position = usize::try_from(access.get()).ok()?;
@@ -1206,7 +1213,8 @@ pub(crate) fn declared_input_for_region_access(
         return None;
     }
     let normalized = subject.normalized().outputs().iter().find(|normalized| {
-        verify_region_output_binding(region, semantic_members, normalized, subject).is_ok()
+        verify_region_output_binding(region, semantic_members, normalized, subject, lowering)
+            .is_ok()
     })?;
     declared_input_for_verified_access(region, semantic_members, normalized, position)
 }
@@ -1215,9 +1223,11 @@ pub(crate) fn output_elements_for_region(
     region: &ScheduledRegion,
     semantic_members: &[SemanticStage],
     subject: &VerifiedRequestSubject,
+    lowering: &ResolvedLowering,
 ) -> Option<u64> {
     let normalized = subject.normalized().outputs().iter().find(|normalized| {
-        verify_region_output_binding(region, semantic_members, normalized, subject).is_ok()
+        verify_region_output_binding(region, semantic_members, normalized, subject, lowering)
+            .is_ok()
     })?;
     tiler_ir::schedule::element_count(published_shape(normalized)?).ok()
 }
@@ -1543,6 +1553,7 @@ impl Error for PhysicalError {}
 )]
 pub(crate) fn build_scheduled_regions(
     request: &VerifiedTargetRequest,
+    lowering: &ResolvedLowering,
 ) -> Result<Vec<VerifiedScheduledRegion>, PhysicalError> {
     // The prologue of a materialized serial sum, which every cover placing it
     // materializes for the fold that reads it.
@@ -1552,8 +1563,8 @@ pub(crate) fn build_scheduled_regions(
     let (reduction, reduction_members) =
         reduction_region(request, output, RegionWrite::ProgramOutput);
     Ok(vec![
-        verify_schedule(pointwise, pointwise_members, request)?,
-        verify_schedule(reduction, reduction_members, request)?,
+        verify_schedule(pointwise, pointwise_members, request, lowering)?,
+        verify_schedule(reduction, reduction_members, request, lowering)?,
     ])
 }
 
@@ -1563,13 +1574,14 @@ pub(crate) fn build_scheduled_regions(
 )]
 pub(crate) fn build_fused_scheduled_region(
     request: &VerifiedTargetRequest,
+    lowering: &ResolvedLowering,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     let (fused, members) = fused_region(request, request.sole_output(), RegionWrite::ProgramOutput)
         .ok_or(PhysicalError::Intrinsic {
             rule: "fused-prologue-unspellable",
             region: RegionId::new(0),
         })?;
-    verify_schedule(fused, members, request)
+    verify_schedule(fused, members, request, lowering)
 }
 
 /// The one authored symbol of an admitted live pointwise domain, or `None`.
@@ -3802,8 +3814,9 @@ pub(crate) fn verify_schedule(
     region: ScheduledRegion,
     semantic_members: Vec<SemanticStage>,
     request: &VerifiedTargetRequest,
+    lowering: &ResolvedLowering,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
-    verify_schedule_with_feasibility(region, semantic_members, request)
+    verify_schedule_with_feasibility(region, semantic_members, request, lowering)
 }
 
 /// Verifies one scheduled region and additionally surfaces the resolved
@@ -3823,6 +3836,7 @@ pub(crate) fn verify_schedule_with_feasibility(
     region: ScheduledRegion,
     semantic_members: Vec<SemanticStage>,
     request: &VerifiedTargetRequest,
+    lowering: &ResolvedLowering,
 ) -> Result<VerifiedScheduledRegion, PhysicalError> {
     let id = region.index.id;
     let subject = request.subject();
@@ -3842,7 +3856,7 @@ pub(crate) fn verify_schedule_with_feasibility(
     {
         return intrinsic("numerical-realization", id);
     }
-    verify_region_subject_binding(verified.region(), &semantic_members, subject)?;
+    verify_region_subject_binding(verified.region(), &semantic_members, subject, lowering)?;
     let evidence = assess_region(
         id,
         verified.requirements(),
@@ -3900,6 +3914,7 @@ fn verify_region_subject_binding(
     region: &ScheduledRegion,
     semantic_members: &[SemanticStage],
     subject: &VerifiedRequestSubject,
+    lowering: &ResolvedLowering,
 ) -> Result<(), PhysicalError> {
     // A publishing copy claims no occurrence, so no recognized partition's
     // member comparison can admit it and every arm below would answer `false`.
@@ -3910,7 +3925,8 @@ fn verify_region_subject_binding(
     }
     let mut first = None;
     for normalized in subject.normalized().outputs() {
-        match verify_region_output_binding(region, semantic_members, normalized, subject) {
+        match verify_region_output_binding(region, semantic_members, normalized, subject, lowering)
+        {
             Ok(()) => return Ok(()),
             Err(error) => first.get_or_insert(error),
         };
@@ -4016,6 +4032,7 @@ fn verify_region_output_binding(
     semantic_members: &[SemanticStage],
     normalized: &NormalizedOutputSubject,
     subject: &VerifiedRequestSubject,
+    lowering: &ResolvedLowering,
 ) -> Result<(), PhysicalError> {
     // A partitioned-copy region binds no recognized output at this base: the
     // one path from a request to a copy region is the concatenate projection,
@@ -4140,9 +4157,13 @@ fn verify_region_output_binding(
             let fold = SemanticStage::first(occurrence.member);
             if semantic_members != [fold] && semantic_members != [fold.next_stage()] {
                 return match normalized.producer() {
-                    Some(producer) => {
-                        verify_region_output_binding(region, semantic_members, producer, subject)
-                    }
+                    Some(producer) => verify_region_output_binding(
+                        region,
+                        semantic_members,
+                        producer,
+                        subject,
+                        lowering,
+                    ),
                     None => intrinsic("request-binding", region.index.id),
                 };
             }
@@ -4218,7 +4239,7 @@ fn verify_region_output_binding(
                 && element_count(normalized.result_shape(), region.index.id)?
                     == normalized.result_elements()
                 && expression_is_the_single_leaf_identity(expression)
-                && gather_accesses_match(region, normalized)
+                && gather_accesses_match(region, normalized, lowering)
         }
         // The fail-closed answer for a contraction or gather subject paired with
         // any other scalar program. Each is bound above against the one program
@@ -4244,6 +4265,7 @@ fn verify_region_output_binding(
                     semantic_members,
                     normalized.producer(),
                     subject,
+                    lowering,
                 );
             };
             if semantic_members != normalized.members() {
@@ -4252,6 +4274,7 @@ fn verify_region_output_binding(
                     semantic_members,
                     normalized.producer(),
                     subject,
+                    lowering,
                 );
             }
             element_count(normalized.shape(), region.index.id)? == normalized.elements()
@@ -4307,6 +4330,7 @@ fn verify_region_output_binding(
                         semantic_members,
                         materialized.producer(),
                         subject,
+                        lowering,
                     );
                 }
             }
@@ -4886,9 +4910,29 @@ fn expression_is_the_single_leaf_identity(expression: &PointwiseF32Expression) -
 /// two can disagree observably; a proof whose shapes, axis, or owned ordinal
 /// drift from the relation is refused. Holding a `GatherSource` proof at all is
 /// evidence the index layer's closed deriver ran, since nothing else mints one.
+///
+/// **The retained proof must additionally belong to this occurrence's own
+/// realized region**, which the five restated members cannot decide. Both closed
+/// proof kinds are functions of the source shape, the index shape, and the axis
+/// — exactly the members compared above — so a proof minted for a *different*
+/// region of the same shape stays bounds-sound and agrees with every comparison
+/// here. What it corrupts is identity: `GatherIndexBoundsProof` binds a
+/// `CanonicalIndexRegionIdentity`, that identity is folded into the proof
+/// identity the schedule encodes, and a transplanted proof therefore makes a
+/// schedule name a region nothing lowered — verbatim the corruption
+/// [`RegionVocabularyWall::GatherProofUnavailable`] documents as its reason for
+/// existing. `tiler_ir::schedule`'s rule 8 structurally cannot make this
+/// comparison, because [`IndexRegion`] carries no region identity to compare
+/// against (ADR 0070 keeps semantic correlation out of the schedule), which is
+/// why the check is here and why this function needs the resolved lowering.
+///
+/// The expected identity is [`realized_region_identity`]'s, taken from the
+/// occurrence's own refinement rather than from the proposal, so a provider
+/// cannot supply both operands of the comparison.
 fn gather_accesses_match(
     region: &ScheduledRegion,
     normalized: &crate::request::NormalizedGatherSubject,
+    lowering: &ResolvedLowering,
 ) -> bool {
     let [source, index, write] = region.index.accesses.as_slice() else {
         return false;
@@ -4920,6 +4964,10 @@ fn gather_accesses_match(
         // that position. Checking it against the canonical order rather than
         // trusting the field is what keeps a self-locating relation honest.
         && normalized.index_access() == AccessOrdinal::new(1);
+    // Resolved before the proof is inspected so that an occurrence with no
+    // refined single-region realization refuses here rather than reaching a
+    // comparison with nothing to compare against.
+    let realized = realized_region_identity(lowering, normalized.member());
     accesses_bind
         && region
             .index
@@ -4936,14 +4984,39 @@ fn gather_accesses_match(
                             axis,
                             index_access,
                             index_shape,
-                            ..
+                            proof,
                         } if source_shape == normalized.source_shape()
                             && result_shape == normalized.result_shape()
                             && *axis == normalized.axis()
                             && *index_access == normalized.index_access()
                             && index_shape == normalized.index_shape()
+                            // `None` on the left refuses: an absent realization
+                            // is not a matching one.
+                            && realized == Some(proof.region())
                     )
             })
+}
+
+/// The canonical identity of the index region one occurrence's lowering realized.
+///
+/// `None` has two causes and both are refusals at every call site. The member may
+/// name no resolved occurrence at all, which means the proposal claims an
+/// occurrence this compilation did not lower. Or its realization may be a chain,
+/// whose stages have several identities and none of which is "the occurrence's
+/// region" — [`IndexRefinement::single_region`] answers `None` there for the same
+/// reason, and a gather bound by [`gather_accesses_match`] is a single region by
+/// construction, so a chain reaching that comparison is already a disagreement.
+///
+/// [`IndexRefinement::single_region`]: crate::legality::IndexRefinement::single_region
+fn realized_region_identity(
+    lowering: &ResolvedLowering,
+    member: SemanticMemberId,
+) -> Option<&CanonicalIndexRegionIdentity> {
+    match lowering.occurrence(member)?.evidence() {
+        OccurrenceEvidence::Refined(refinement) => {
+            Some(refinement.single_region()?.canonical_identity())
+        }
+    }
 }
 
 fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContraction) -> bool {
@@ -5957,7 +6030,11 @@ mod tests {
     #[test]
     fn fixed_schedules_and_kernels_refine_the_two_regions() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let regions = build_scheduled_regions(&request).unwrap();
+        let regions = build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let pointwise = lower_structured_kernel(&regions[0]).unwrap();
         let reduction = lower_structured_kernel(&regions[1]).unwrap();
 
@@ -5983,9 +6060,17 @@ mod tests {
     #[test]
     fn scheduled_regions_carry_a_transient_independent_identity() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let regions = build_scheduled_regions(&request).unwrap();
+        let regions = build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         // Equivalent normalized regions built from a fresh request share bytes.
-        let rebuilt = build_scheduled_regions(&request).unwrap();
+        let rebuilt = build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         for (first, second) in regions.iter().zip(&rebuilt) {
             assert_eq!(
                 first.verified.canonical_identity().as_bytes(),
@@ -6002,7 +6087,11 @@ mod tests {
     #[test]
     fn empty_reduction_lowers_to_explicit_positive_zero_stores() {
         let request = request(Shape::from_dims([2, 0]), [Axis::new(1)]);
-        let regions = build_scheduled_regions(&request).unwrap();
+        let regions = build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let reduction = lower_structured_kernel(&regions[1]).unwrap();
         // An empty reduction commits the proved identity directly: no loop and
         // no contributor load remain for a backend to interpret.
@@ -6016,7 +6105,11 @@ mod tests {
     #[test]
     fn schedule_and_kernel_fail_closed_on_refinement_mismatches() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let regions = build_scheduled_regions(&request).unwrap();
+        let regions = build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         let mut invalid_schedule = regions[1].region().clone();
         invalid_schedule.schedule.reduction = ReductionTopology::None;
@@ -6024,7 +6117,8 @@ mod tests {
             verify_schedule(
                 invalid_schedule,
                 regions[1].semantic_members().to_vec(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-or-access-refinement",
@@ -6038,7 +6132,8 @@ mod tests {
             verify_schedule(
                 invalid_access,
                 regions[0].semantic_members().to_vec(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "proof-reference",
@@ -6053,7 +6148,8 @@ mod tests {
             verify_schedule(
                 invalid_proof,
                 regions[0].semantic_members().to_vec(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "bounds-proof",
@@ -6070,7 +6166,8 @@ mod tests {
             verify_schedule(
                 invalid_numerics,
                 regions[0].semantic_members().to_vec(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-realization",
@@ -6094,6 +6191,7 @@ mod tests {
                 wrong_expression,
                 regions[0].semantic_members().to_vec(),
                 &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "request-binding",
@@ -6107,7 +6205,13 @@ mod tests {
         let request = pointwise_request();
         let (raw, members) =
             pointwise_region(&request, request.sole_output(), RegionWrite::ProgramOutput);
-        let region = verify_schedule(raw, members, &request).unwrap();
+        let region = verify_schedule(
+            raw,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let expected = [
             SemanticStage::first(SemanticMemberId(0)),
             SemanticStage::first(SemanticMemberId(1)),
@@ -6129,6 +6233,7 @@ mod tests {
                 wrong_expression,
                 region.semantic_members().to_vec(),
                 &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "request-binding",
@@ -6154,7 +6259,12 @@ mod tests {
             ],
         };
         assert!(matches!(
-            verify_schedule(forged_map, region.semantic_members().to_vec(), &request),
+            verify_schedule(
+                forged_map,
+                region.semantic_members().to_vec(),
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test()
+            ),
             Err(PhysicalError::Intrinsic {
                 rule: "request-binding",
                 ..
@@ -6173,7 +6283,12 @@ mod tests {
             ],
         ] {
             assert!(matches!(
-                verify_schedule(region.region().clone(), forged, &request),
+                verify_schedule(
+                    region.region().clone(),
+                    forged,
+                    &request,
+                    &crate::lowering::ResolvedLowering::unresolved_for_test()
+                ),
                 Err(PhysicalError::Intrinsic {
                     rule: "request-binding",
                     ..
@@ -6252,9 +6367,18 @@ mod tests {
         let (serial, serial_members) =
             reduction_region(&request, folded, RegionWrite::ProgramOutput);
         assert_eq!(serial.index.accesses[0].tensor, expected);
-        let serial = verify_schedule(serial, serial_members, &request).unwrap();
+        let serial = verify_schedule(
+            serial,
+            serial_members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         assert_eq!(
-            serial.declared_input_at(AccessOrdinal::FIRST),
+            serial.declared_input_at(
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+                AccessOrdinal::FIRST
+            ),
             Some(DeclaredInputOrdinal::new(1))
         );
 
@@ -6264,20 +6388,44 @@ mod tests {
             <[_; 2]>::try_from(split.stages).unwrap();
         assert_eq!(partial.index.accesses[0].tensor, expected);
         assert_eq!(combine.index.accesses[0].tensor, TensorRole::Intermediate);
-        let partial = verify_schedule(partial, partial_members, &request).unwrap();
+        let partial = verify_schedule(
+            partial,
+            partial_members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         assert_eq!(
-            partial.declared_input_at(AccessOrdinal::FIRST),
+            partial.declared_input_at(
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+                AccessOrdinal::FIRST
+            ),
             Some(DeclaredInputOrdinal::new(1))
         );
-        verify_schedule(combine, combine_members, &request).unwrap();
+        verify_schedule(
+            combine,
+            combine_members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         let (tree, tree_members) =
             single_workgroup_tree_region(&request, folded, RegionWrite::ProgramOutput)
                 .expect("the relaxed four-contributor fold admits a tree");
         assert_eq!(tree.index.accesses[0].tensor, expected);
-        let tree = verify_schedule(tree, tree_members, &request).unwrap();
+        let tree = verify_schedule(
+            tree,
+            tree_members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         assert_eq!(
-            tree.declared_input_at(AccessOrdinal::FIRST),
+            tree.declared_input_at(
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+                AccessOrdinal::FIRST
+            ),
             Some(DeclaredInputOrdinal::new(1))
         );
     }
@@ -6313,10 +6461,20 @@ mod tests {
         assert_eq!(combine_claim[0], partial_claim[0].next_stage());
 
         // Each pass binds under its own stage.
-        verify_schedule(partial.clone(), partial_claim.clone(), &request)
-            .expect("the partial pass claims the occurrence's first stage");
-        verify_schedule(combine.clone(), combine_claim.clone(), &request)
-            .expect("the combine claims the stage after it");
+        verify_schedule(
+            partial.clone(),
+            partial_claim.clone(),
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the partial pass claims the occurrence's first stage");
+        verify_schedule(
+            combine.clone(),
+            combine_claim.clone(),
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the combine claims the stage after it");
 
         // And under nothing else. The empty claim is the pre-atom spelling of
         // the combine; the other pass's claim is the only remaining set of this
@@ -6328,7 +6486,12 @@ mod tests {
             (&partial, combine_claim.clone()),
         ] {
             assert_eq!(
-                verify_schedule(region.clone(), forged, &request),
+                verify_schedule(
+                    region.clone(),
+                    forged,
+                    &request,
+                    &crate::lowering::ResolvedLowering::unresolved_for_test()
+                ),
                 Err(PhysicalError::Intrinsic {
                     rule: "request-binding",
                     region: region.index.id,
@@ -6341,8 +6504,16 @@ mod tests {
     #[test]
     fn reduction_access_and_proof_shapes_are_bound_to_the_verified_request() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let regions = build_scheduled_regions(&request).unwrap();
-        let fused = build_fused_scheduled_region(&request).unwrap();
+        let regions = build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
+        let fused = build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         for (mut forged, members) in [
             (
@@ -6366,7 +6537,12 @@ mod tests {
             *input_shape = Shape::from_dims([2, 4]);
 
             assert_eq!(
-                verify_schedule(forged, members, &request),
+                verify_schedule(
+                    forged,
+                    members,
+                    &request,
+                    &crate::lowering::ResolvedLowering::unresolved_for_test()
+                ),
                 Err(PhysicalError::Intrinsic {
                     rule: "request-binding",
                     region,
@@ -6378,7 +6554,11 @@ mod tests {
     #[test]
     fn fused_schedule_rejects_numerical_corruption() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let scheduled = build_fused_scheduled_region(&request).unwrap();
+        let scheduled = build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let mut invalid_schedule = scheduled.region().clone();
         let RegionProgram::Numerical {
             scalar: ScalarProgram::FusedMultiplyAddSerialSum { contraction, .. },
@@ -6392,7 +6572,8 @@ mod tests {
             verify_schedule(
                 invalid_schedule,
                 scheduled.semantic_members().to_vec(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "numerical-or-access-refinement",
@@ -6404,7 +6585,11 @@ mod tests {
     #[test]
     fn malformed_axes_zero_launch_and_late_zero_products_fail_without_panicking() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let scheduled = build_fused_scheduled_region(&request).unwrap();
+        let scheduled = build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         let mut zero_threads = scheduled.region().clone();
         zero_threads.schedule.threads_per_workgroup = 0;
@@ -6413,7 +6598,8 @@ mod tests {
             verify_schedule(
                 zero_threads,
                 scheduled.semantic_members().to_vec(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(PhysicalError::Intrinsic {
                 rule: "launch-coverage",
@@ -6453,7 +6639,12 @@ mod tests {
                 *proof_axes = axes;
             }
             assert!(matches!(
-                verify_schedule(malformed, scheduled.semantic_members().to_vec(), &request),
+                verify_schedule(
+                    malformed,
+                    scheduled.semantic_members().to_vec(),
+                    &request,
+                    &crate::lowering::ResolvedLowering::unresolved_for_test()
+                ),
                 Err(PhysicalError::Intrinsic { .. })
             ));
         }
@@ -6717,7 +6908,13 @@ mod tests {
 
         let (direct, members) = contraction_region(&request, output, RegionWrite::ProgramOutput);
         let bind = |region: &ScheduledRegion| {
-            verify_region_output_binding(region, &members, &subject_output, request.subject())
+            verify_region_output_binding(
+                region,
+                &members,
+                &subject_output,
+                request.subject(),
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
         };
 
         // The admitted blocked map for a two-by-two output block over a

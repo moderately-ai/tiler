@@ -119,6 +119,34 @@ pub(crate) struct ResolvedLowering {
 }
 
 impl ResolvedLowering {
+    /// A lowering that resolves no occurrence at all.
+    ///
+    /// **Fail-closed, not permissive.** Every consumer reads this value by
+    /// asking [`Self::occurrence`] for one member, and an unresolved member is a
+    /// refusal at each of them — `physical::gather_accesses_match`'s
+    /// proof-to-occurrence binding, the one comparison that reads a lowering
+    /// today, answers `false` under it. So a test that passes this cannot
+    /// thereby admit something a real lowering would refuse; it can only fail to
+    /// exercise the binding.
+    ///
+    /// It exists because the threading reaches every direct caller of
+    /// `physical::verify_schedule_with_feasibility` and
+    /// `frontier::enumerate_frontier`, and the overwhelming majority of those
+    /// are tests whose subject is a pointwise, contraction, reduction, staged,
+    /// or copy region — none of which reads a lowering. Handing them a
+    /// fabricated *populated* lowering would be a fixture asserting facts about
+    /// a compilation that never happened; handing them one that resolves nothing
+    /// asserts only that nothing was resolved, which is true.
+    ///
+    /// A test whose subject *is* a gather must resolve a real lowering through
+    /// [`resolve_lowering`], because this one refuses every gather.
+    #[cfg(test)]
+    pub(crate) const fn unresolved_for_test() -> Self {
+        Self {
+            occurrences: Vec::new(),
+        }
+    }
+
     /// Returns the per-occurrence lowerings in ascending member order.
     pub(crate) fn occurrences(&self) -> &[OccurrenceLowering] {
         &self.occurrences

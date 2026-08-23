@@ -29,6 +29,27 @@ Found 2026-08-22 by the refinement-seam packet, which set out to answer a public
 
 **Fact — the evidence is already public, so this cannot be closed by withholding it.** `BoundsProofKind::GatherSource`'s `proof` is a public field of a public variant, `ScheduledRegion.index.bounds_proofs` is public, `ImplementationContext::baseline()` is `pub`, and `GatherIndexBoundsProof` is `Clone`. Verified by the coordinator at `0c086aee`. Refinement evidence already reaches every installed provider under the surface accepted 2026-08-18.
 
+## Fact audit at `f6982914`, before any edit
+
+Each verdict re-read the named source in full at this base.
+
+| Fact | Verdict | Evidence |
+|---|---|---|
+| Nothing checks which occurrence a retained proof belongs to | **verified** | `gather_accesses_match` matched `BoundsProofKind::GatherSource { .., .. }` with the `proof` field elided and never bound it. Schedule rule 8 (anchor `Rule 8: proof mismatch`) reads exactly four proof accessors — `source_shape()`, `result_shape()`, `index_shape()`, `axis()` — and no other. |
+| Rule 8 structurally cannot make that check | **verified** | `schedule::IndexRegion` has six fields — `id`, `iteration_shape`, `accesses`, `bounds_proofs`, `ownership_proof`, `program` — and none is an identity; its own doc says it "does not carry any semantic-graph correlation". `grep -r CanonicalIndexRegionIdentity crates/tiler-ir/src/schedule/` returns **0 lines**. |
+| The failure is identity corruption, not an out-of-bounds read | **verified, and now demonstrated rather than inferred** | With the new conjunct deleted, a proof minted for a different index region is admitted **whole** — intrinsic verification, the request-subject binding, and hard feasibility all pass — returning `Ok(VerifiedScheduledRegion { .. })`. Both closed kinds are functions of the source shape, index shape, and axis, which is why the five restated members cannot separate the pair. |
+| The evidence is already public | **verified in its parts, imprecise in its route** | The four cited properties all hold. But the route the Fact names does not carry a gather proof at this base: `spell_output`'s gather arm answers `Err(RegionVocabularyWall::GatherProofUnavailable)`, so `ImplementationContext::baseline()` is `None` for every gather subject — and no gather subject is enumerated at all (see below). The route that **is** open is `tiler-ir`'s public `IndexRegionBuilder::gather_read`, which mints a real proof out of crate; the fixture here uses exactly that. The Fact's conclusion — this cannot be closed by withholding evidence — stands, for that reason rather than the stated one. |
+
+### The flagged-unverified inference is **false at this base**, and was not merely left unconstructed
+
+The delivering packet inferred that a third-party provider can reach the transplant by retaining proofs across `propose()` calls. It cannot, and the obstacle is upstream of the proof.
+
+`enumerate_complete_plans` resolves lowering for **every** recognized occurrence before any cover, frontier, or `propose()` call. A gather occurrence never resolves: the governed registry carries no `tiler::gather-f32@1` capability row, and adding one would not help, because `IndexAccessLoweringContext` — the facade an installed lowering provider emits through — exposes **no gather emission at all**. [`carry-the-gather-relation-through-the-compiler-vertical`](carry-the-gather-relation-through-the-compiler-vertical.md) records why: its `gather_read` "was written and then **deliberately removed** from this lane", pending the capability row. Verified by reading the complete `impl IndexAccessLoweringContext` block; `grep -c gather crates/tiler-compiler/src/capability.rs` is **0**.
+
+So at this base no gather program reaches a frontier, and `gather_accesses_match` is unreachable in production for any program. That does not weaken the repair — the gap is latent in the accepted surface and this closes it before the emission route makes it live — but it does mean **the check's positive direction cannot be exercised yet**, and no test here fabricates one. `a_gather_occurrence_resolves_no_lowering_at_this_base` pins the reason as a check rather than leaving it as prose.
+
+**Remainder, owned by an existing lane.** The positive control — a legitimately lowered gather whose own proof is admitted, and the same occurrence with another region's proof refused while a lowering exists — belongs to [`carry-the-gather-relation-through-the-compiler-vertical`](carry-the-gather-relation-through-the-compiler-vertical.md) remainder item 2, which lands the governed capability row and the `gather_read` facade. No new ticket is filed; that lane must add both cases.
+
 ## Required work
 
 - Re-audit every Fact at your base with a per-Fact verdict. The delivering lane's own report flags one inference it did not construct — that a third-party provider can reach the transplant by retaining proofs across `propose()` calls — **treat that as unverified and either construct it or say you did not**.

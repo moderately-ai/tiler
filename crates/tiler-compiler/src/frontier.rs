@@ -87,6 +87,7 @@ use crate::boundary::{
 };
 use crate::call_declaration::{GuaranteeError, OpaqueCallDeclaration, WorkScaling};
 use crate::call_registry::{OpaqueCallProposal, OpaqueCallRegistry, RegisteredCall};
+use crate::lowering::ResolvedLowering;
 use crate::physical::{
     AdmissionEvidence, PhysicalError, ResourceVerdict, VerifiedScheduledRegion,
     verify_schedule_with_feasibility,
@@ -2385,6 +2386,7 @@ pub(crate) fn enumerate_frontier(
     subject: &FrontierRegionSubject,
     providers: &[&dyn PhysicalImplementationProvider],
     calls: &OpaqueCallRegistry,
+    lowering: &ResolvedLowering,
 ) -> Result<ImplementationFrontier, FrontierError> {
     #[cfg(test)]
     crate::workcount::FRONTIER_ENUMERATIONS.record();
@@ -2570,6 +2572,7 @@ pub(crate) fn enumerate_frontier(
                         baseline.region(),
                         subject,
                         request,
+                        lowering,
                     ) {
                         Ok(work_items) => work_items,
                         Err(fault) => {
@@ -2635,6 +2638,7 @@ pub(crate) fn enumerate_frontier(
                         &provenance,
                         &proposal.applicability,
                         proposal.declared_cost,
+                        lowering,
                     )? {
                         Ok(admission) => admitted.push(admission),
                         Err(rejection) => rejections.push(rejection),
@@ -2655,6 +2659,7 @@ pub(crate) fn enumerate_frontier(
                 region,
                 subject.semantic_members.clone(),
                 request,
+                lowering,
             ) {
                 Ok(verified) => {
                     let admission = verified.admission().clone();
@@ -3118,6 +3123,7 @@ fn resolve_work_items(
     region: &ScheduledRegion,
     subject: &FrontierRegionSubject,
     request: &VerifiedTargetRequest,
+    lowering: &ResolvedLowering,
 ) -> Result<u64, WorkResolutionError> {
     match work {
         WorkScaling::Fixed(count) => Ok(count),
@@ -3155,6 +3161,7 @@ fn resolve_work_items(
                     region,
                     subject.semantic_members(),
                     request.subject(),
+                    lowering,
                     *access,
                 )
                 .and_then(|ordinal| request.normalized().agreed_input_elements_at(ordinal))
@@ -3163,6 +3170,7 @@ fn resolve_work_items(
                     region,
                     subject.semantic_members(),
                     request.subject(),
+                    lowering,
                 )
                 .ok_or(WorkResolutionError::UnknownParameter(name)),
                 TensorRole::Intermediate => subject
@@ -3253,6 +3261,7 @@ fn admit_subprogram(
     provider: &PhysicalProviderProvenance,
     applicability: &TargetApplicability,
     cost: PhysicalCostEstimate,
+    lowering: &ResolvedLowering,
 ) -> Result<Result<AdmittedImplementation, FrontierRejection>, FrontierError> {
     let malformed = |rule: &'static str| FrontierError::UndeterminedBoundaryProperty {
         provider: provider.provider().clone(),
@@ -3270,7 +3279,12 @@ fn admit_subprogram(
     }
     let mut verified = Vec::with_capacity(subprogram.stages.len());
     for stage in subprogram.stages {
-        match verify_schedule_with_feasibility(stage.region, stage.semantic_members, request) {
+        match verify_schedule_with_feasibility(
+            stage.region,
+            stage.semantic_members,
+            request,
+            lowering,
+        ) {
             Ok(region) => verified.push(region),
             Err(PhysicalError::Target {
                 rule,
@@ -4238,10 +4252,13 @@ mod tests {
     }
 
     fn fused_region(request: &VerifiedTargetRequest) -> ScheduledRegion {
-        build_fused_scheduled_region(request)
-            .unwrap()
-            .region()
-            .clone()
+        build_fused_scheduled_region(
+            request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap()
+        .region()
+        .clone()
     }
 
     fn governed_applicability() -> TargetApplicability {
@@ -4300,6 +4317,7 @@ mod tests {
             &fused_subject(&request),
             &[&provider],
             &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .expect_err("the complete provider subject exceeds explain's bound");
         assert!(matches!(
@@ -4326,8 +4344,14 @@ mod tests {
             cost: PhysicalCostEstimate::structural(1, 2, 0),
         };
         let providers: [&dyn PhysicalImplementationProvider; 2] = [&first, &second];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         assert_eq!(frontier.admitted().len(), 2);
         assert!(frontier.rejections().is_empty());
@@ -4354,8 +4378,14 @@ mod tests {
             cost: PhysicalCostEstimate::structural(1, 2, 0),
         };
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         let admitted = &frontier.admitted()[0];
         assert_eq!(
@@ -4685,10 +4715,22 @@ mod tests {
 
         let forward: [&dyn PhysicalImplementationProvider; 2] = [&alpha, &beta];
         let reverse: [&dyn PhysicalImplementationProvider; 2] = [&beta, &alpha];
-        let first =
-            enumerate_frontier(&request, &subject, &forward, &OpaqueCallRegistry::new()).unwrap();
-        let second =
-            enumerate_frontier(&request, &subject, &reverse, &OpaqueCallRegistry::new()).unwrap();
+        let first = enumerate_frontier(
+            &request,
+            &subject,
+            &forward,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
+        let second = enumerate_frontier(
+            &request,
+            &subject,
+            &reverse,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         let identities = |frontier: &super::ImplementationFrontier| -> Vec<Vec<u8>> {
             frontier
@@ -4743,8 +4785,14 @@ mod tests {
         };
         let opaque = OpaqueProvider;
         let providers: [&dyn PhysicalImplementationProvider; 2] = [&scheduled, &opaque];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         assert_eq!(frontier.admitted().len(), 1);
         assert_eq!(
@@ -4825,6 +4873,7 @@ mod tests {
             &infeasible_subject,
             &providers,
             &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         assert!(
@@ -4858,6 +4907,7 @@ mod tests {
             &feasible_subject,
             &providers,
             &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         assert_eq!(
@@ -4902,8 +4952,14 @@ mod tests {
         let subject = fused_subject(&request);
         let malformed = MalformedProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&malformed];
-        let error = enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
-            .unwrap_err();
+        let error = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap_err();
         assert!(matches!(error, FrontierError::MalformedProposal { .. }));
     }
 
@@ -4929,8 +4985,14 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = WrongCostModelProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let error = enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
-            .unwrap_err();
+        let error = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap_err();
         assert!(matches!(
             error,
             FrontierError::MalformedCostProvenance {
@@ -4978,7 +5040,13 @@ mod tests {
         let provider = FatalThenValidProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
         let (result, census) = crate::workcount::observe_physical_planning(|| {
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
+            enumerate_frontier(
+                &request,
+                &subject,
+                &providers,
+                &OpaqueCallRegistry::new(),
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
         });
 
         assert!(matches!(
@@ -5041,8 +5109,14 @@ mod tests {
         let provider = MixedPathProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
         let (frontier, census) = crate::workcount::observe_physical_planning(|| {
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
-                .expect("the inapplicable and reserved paths are local rejections")
+            enumerate_frontier(
+                &request,
+                &subject,
+                &providers,
+                &OpaqueCallRegistry::new(),
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .expect("the inapplicable and reserved paths are local rejections")
         });
 
         assert_eq!(
@@ -5091,8 +5165,14 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = AnalyticalCostProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let error = enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new())
-            .unwrap_err();
+        let error = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap_err();
         assert!(
             matches!(
                 error,
@@ -5115,8 +5195,11 @@ mod tests {
     fn an_implementation_body_answers_only_for_its_own_kind() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let scheduled = ImplementationBody::Scheduled(Box::new(
-            crate::physical::build_fused_scheduled_region(&request)
-                .expect("the fused region builds"),
+            crate::physical::build_fused_scheduled_region(
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .expect("the fused region builds"),
         ));
 
         assert!(scheduled.scheduled().is_some());
@@ -5192,8 +5275,11 @@ mod tests {
         )
         .expect("coherent");
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let baseline = crate::physical::build_fused_scheduled_region(&request)
-            .expect("the fused region builds");
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the fused region builds");
 
         let contract = derive_call_boundary_contract(
             &declaration,
@@ -5306,7 +5392,11 @@ mod tests {
         )
         .unwrap();
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let baseline = crate::physical::build_fused_scheduled_region(&request).unwrap();
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let bindings = [
             ("x", AccessOrdinal::FIRST),
             ("x2", AccessOrdinal::FIRST),
@@ -5369,8 +5459,11 @@ mod tests {
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let normalized = request.serial_sum();
-        let baseline = crate::physical::build_fused_scheduled_region(&request)
-            .expect("the fused region builds");
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the fused region builds");
         assert_ne!(
             normalized.input_elements, normalized.output_elements,
             "the fixture cannot distinguish the two roles"
@@ -5384,7 +5477,8 @@ mod tests {
                 &bindings,
                 baseline.region(),
                 &subject,
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(normalized.input_elements)
         );
@@ -5394,7 +5488,8 @@ mod tests {
                 &bindings,
                 baseline.region(),
                 &subject,
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(normalized.output_elements)
         );
@@ -5404,7 +5499,8 @@ mod tests {
                 &bindings,
                 baseline.region(),
                 &coverless_subject(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(7),
             "a fixed scaling was not taken directly"
@@ -5434,7 +5530,13 @@ mod tests {
         );
         let (region, members) =
             contraction_region(&request, request.sole_output(), RegionWrite::ProgramOutput);
-        let baseline = verify_schedule(region, members, &request).unwrap();
+        let baseline = verify_schedule(
+            region,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let parameter = |name, role| ParameterSpec {
             name,
             role,
@@ -5481,7 +5583,14 @@ mod tests {
         let admitted = |bindings: Vec<(&'static str, AccessOrdinal)>| {
             let provider = CallProvider(identity, bindings);
             let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-            let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+            let frontier = enumerate_frontier(
+                &request,
+                &subject,
+                &providers,
+                &registry,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .unwrap();
             assert_eq!(frontier.rejections(), []);
             assert_eq!(frontier.admitted().len(), 1);
             frontier.admitted()[0].clone()
@@ -5520,6 +5629,7 @@ mod tests {
                 baseline.region(),
                 &subject,
                 &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(2)
         );
@@ -5530,6 +5640,7 @@ mod tests {
                 baseline.region(),
                 &subject,
                 &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(4)
         );
@@ -5544,8 +5655,11 @@ mod tests {
         use super::{WorkResolutionError, WorkScaling, resolve_work_items};
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let baseline = crate::physical::build_fused_scheduled_region(&request)
-            .expect("the fused region builds");
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the fused region builds");
         let subject = fused_subject(&request);
         let mut intermediate_region = baseline.region().clone();
         intermediate_region.index.accesses[0].tensor = TensorRole::Intermediate;
@@ -5557,7 +5671,8 @@ mod tests {
                 &bindings,
                 baseline.region(),
                 &subject,
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(WorkResolutionError::UnknownParameter("absent")),
             "a scaling naming an unbound parameter produced a count"
@@ -5573,7 +5688,8 @@ mod tests {
                 &bindings,
                 &intermediate_region,
                 &coverless_subject(),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: "z" }),
             "a subject stated without a cover produced an intermediate count"
@@ -5594,7 +5710,8 @@ mod tests {
                     [edge_elements],
                     crate::physical::RegionWrite::ProgramOutput,
                 ),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(edge_elements),
             "a cover-stated intermediate must resolve to the edge's own size"
@@ -5614,7 +5731,8 @@ mod tests {
                     [1, 2],
                     crate::physical::RegionWrite::ProgramOutput,
                 ),
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Err(WorkResolutionError::IntermediateShapeUnavailable { parameter: "z" }),
             "two differently sized intermediates must not resolve to one of them"
@@ -5631,8 +5749,11 @@ mod tests {
     fn a_bound_access_resolves_through_the_checked_request_subject() {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
-        let baseline = crate::physical::build_fused_scheduled_region(&request)
-            .expect("the fused region builds");
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the fused region builds");
         let bindings = [("x", AccessOrdinal::FIRST), ("y", AccessOrdinal::new(1))];
         assert_eq!(
             resolve_work_items(
@@ -5641,6 +5762,7 @@ mod tests {
                 baseline.region(),
                 &subject,
                 &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(request.serial_sum().input_elements),
         );
@@ -5765,7 +5887,14 @@ mod tests {
         let scheduled = GovernedPhysicalProvider;
         let opaque = CallProvider(identity, bindings);
         let providers: [&dyn PhysicalImplementationProvider; 2] = [&scheduled, &opaque];
-        let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &registry,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         assert_eq!(
             frontier.rejections().len(),
@@ -5864,8 +5993,11 @@ mod tests {
         .expect("coherent");
 
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
-        let baseline = crate::physical::build_fused_scheduled_region(&request)
-            .expect("the fused region builds");
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the fused region builds");
         assert_eq!(
             super::validate_opaque_access_bindings(
                 declaration.abi(),
@@ -6019,7 +6151,14 @@ mod tests {
 
         let provider = CallProvider(identity, bindings);
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &registry,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         assert!(frontier.admitted().is_empty(), "a loose call was admitted");
         assert!(
@@ -6112,7 +6251,14 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = CallProvider(identity, bindings.clone());
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let frontier = enumerate_frontier(&request, &subject, &providers, &registry).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &registry,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         assert_eq!(
             frontier.rejections().len(),
@@ -6135,8 +6281,11 @@ mod tests {
         // The contract is the one the declaration derives, and the work count is
         // the one the binding resolves — asserted against the same functions the
         // admission used, so a wired-up-but-wrong admission fails here.
-        let baseline = crate::physical::build_fused_scheduled_region(&request)
-            .expect("the fused region builds");
+        let baseline = crate::physical::build_fused_scheduled_region(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the fused region builds");
         let expected = derive_call_boundary_contract(
             &declaration,
             &bindings,
@@ -6153,7 +6302,8 @@ mod tests {
                 &bindings,
                 baseline.region(),
                 &subject,
-                &request
+                &request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
             ),
             Ok(request.serial_sum().input_elements)
         );
@@ -6383,8 +6533,14 @@ mod tests {
         let subject = fused_subject(&request);
         let provider = ForeignTargetProvider;
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         assert!(frontier.admitted().is_empty());
         assert_eq!(frontier.rejections().len(), 1);
         assert!(matches!(
@@ -6563,6 +6719,7 @@ mod tests {
                 cost: PhysicalCostEstimate::structural(1, 2, 0),
             } as &dyn PhysicalImplementationProvider],
             &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         let pointwise = enumerate_frontier(
@@ -6570,6 +6727,7 @@ mod tests {
             &pointwise_subject(&request),
             &[&GovernedPhysicalProvider as &dyn PhysicalImplementationProvider],
             &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
 
@@ -6608,8 +6766,14 @@ mod tests {
             cost: PhysicalCostEstimate::structural(2, 1, 0),
         };
         let providers: [&dyn PhysicalImplementationProvider; 3] = [&cheap, &dominated, &trade_off];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         assert_eq!(frontier.admitted().len(), 3, "feasibility admits all three");
         let non_dominated: Vec<&ProviderIdentity> = frontier
@@ -6714,8 +6878,14 @@ mod tests {
         use std::fmt::Write as _;
 
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
-        let frontier =
-            enumerate_frontier(request, subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            request,
+            subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         assert!(
             !frontier.admitted().is_empty(),
             "no admitted implementation for {}: {:?}",
@@ -6819,8 +6989,14 @@ mod tests {
         let request = request(Shape::from_dims([2, 2]), [Axis::new(1)]);
         let subject = fused_subject(&request);
         let providers: [&dyn PhysicalImplementationProvider; 0] = [];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         assert!(frontier.is_empty());
         assert!(frontier.rejections().is_empty());
         assert_eq!(frontier.region_role(), "fused");
@@ -6945,7 +7121,13 @@ mod tests {
     ) -> Result<ImplementationFrontier, FrontierError> {
         let provider = SubprogramProvider { stages };
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&provider];
-        enumerate_frontier(request, subject, &providers, &OpaqueCallRegistry::new())
+        enumerate_frontier(
+            request,
+            subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
     }
 
     /// The governed split composes; three perturbations of it do not.
@@ -7051,8 +7233,14 @@ mod tests {
         let request = splittable_request(Shape::from_dims([1, 4]));
         let subject = reduction_subject(&request);
         let providers: [&dyn PhysicalImplementationProvider; 1] = [&GovernedPhysicalProvider];
-        let frontier =
-            enumerate_frontier(&request, &subject, &providers, &OpaqueCallRegistry::new()).unwrap();
+        let frontier = enumerate_frontier(
+            &request,
+            &subject,
+            &providers,
+            &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         let identities: Vec<&[u8]> = frontier
             .admitted()
             .iter()
@@ -7071,6 +7259,7 @@ mod tests {
             &wider_subject,
             &providers,
             &OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         for admitted in other.admitted() {

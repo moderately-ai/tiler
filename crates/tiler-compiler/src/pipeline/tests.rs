@@ -3331,15 +3331,25 @@ fn the_staged_regions_compute_the_normalization_bit_for_bit() {
         staged,
         crate::physical::RegionWrite::Materialized,
     );
-    let fold = crate::physical::verify_schedule(fold, fold_members, &request)
-        .expect("the producing stage passes the checked verification path");
+    let fold = crate::physical::verify_schedule(
+        fold,
+        fold_members,
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the producing stage passes the checked verification path");
     let (pass, pass_members) = crate::physical::staged_pass_region(
         &request,
         staged,
         crate::physical::RegionWrite::ProgramOutput,
     );
-    let pass = crate::physical::verify_schedule(pass, pass_members, &request)
-        .expect("the consuming stage passes the checked verification path");
+    let pass = crate::physical::verify_schedule(
+        pass,
+        pass_members,
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the consuming stage passes the checked verification path");
     assert_eq!(fold.region().schedule.work_items, 2);
     assert_eq!(pass.region().schedule.work_items, 4);
 
@@ -5833,7 +5843,14 @@ fn lowering_refuses_an_opaque_plan_before_program_assembly() {
     let plan = opaque
         .plans()
         .iter()
-        .find(|plan| crate::program::CoverAssembly::from_plan(&semantic, plan).is_err())
+        .find(|plan| {
+            crate::program::CoverAssembly::from_plan(
+                &semantic,
+                plan,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .is_err()
+        })
         .expect("one opaque plan");
 
     let error = build_alternative(
@@ -5866,7 +5883,14 @@ fn verification_refuses_an_alternative_with_an_opaque_plan() {
     let plan = opaque
         .plans()
         .iter()
-        .find(|plan| crate::program::CoverAssembly::from_plan(&semantic, plan).is_err())
+        .find(|plan| {
+            crate::program::CoverAssembly::from_plan(
+                &semantic,
+                plan,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .is_err()
+        })
         .expect("one opaque plan")
         .clone();
     forged.structural_cost = plan.cost();
@@ -6718,6 +6742,7 @@ fn mixed_frontier_trace(
         &subject,
         &providers,
         &crate::call_registry::OpaqueCallRegistry::new(),
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
     )
     .unwrap();
     assert_eq!(frontier.admitted().len(), 1);
@@ -7159,6 +7184,7 @@ fn reduction_frontier(
         &subject,
         &providers,
         &crate::call_registry::OpaqueCallRegistry::new(),
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
     )
     .expect("the governed provider emits well-formed proposals")
 }
@@ -7443,12 +7469,21 @@ fn a_cooperative_region_declares_its_own_launch() {
         crate::physical::RegionWrite::ProgramOutput,
     )
     .expect("the tree is available");
-    let tree =
-        crate::physical::verify_schedule(tree, members, &request).expect("the tree verifies");
+    let tree = crate::physical::verify_schedule(
+        tree,
+        members,
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the tree verifies");
     // The tree replaces the reduction of the materialized pair; its prologue is
     // the ordinary pointwise stage, which is what makes the two stages' launches
     // differ in both quantities inside one program.
-    let serial = crate::physical::build_scheduled_regions(&request).expect("the serial pair");
+    let serial = crate::physical::build_scheduled_regions(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the serial pair");
     let [pointwise, _] = serial.as_slice() else {
         panic!("the materialized strategy is a pointwise stage and a reduction");
     };
@@ -7729,7 +7764,15 @@ fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() 
     )
     .expect("a reassociating eight-contributor request admits the tree");
     // The control: the tile the strategy actually emits verifies.
-    assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
+    assert!(
+        crate::physical::verify_schedule(
+            region.clone(),
+            members.clone(),
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        )
+        .is_ok()
+    );
 
     let mut divergent = region;
     let tiler_ir::schedule::ReductionTopology::CooperativeWorkgroup { tile, .. } =
@@ -7741,7 +7784,12 @@ fn a_divergent_tile_is_refused_by_the_schedule_before_any_target_is_consulted() 
     // the per-phase participation field exists to make statable.
     tile.phases[1].participation = tiler_ir::schedule::ParticipantRange { first: 0, count: 3 };
     assert_eq!(
-        crate::physical::verify_schedule(divergent, members, &request),
+        crate::physical::verify_schedule(
+            divergent,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        ),
         Err(crate::physical::PhysicalError::Intrinsic {
             rule: "cooperative-phase-participation",
             region: RegionId::new(4),
@@ -7767,14 +7815,27 @@ fn the_tree_subject_binding_refuses_a_region_that_does_not_realize_the_request()
     )
     .expect("a reassociating eight-contributor request admits the tree");
     // The control: unperturbed, it binds.
-    assert!(crate::physical::verify_schedule(region.clone(), members.clone(), &request).is_ok());
+    assert!(
+        crate::physical::verify_schedule(
+            region.clone(),
+            members.clone(),
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        )
+        .is_ok()
+    );
 
     // A region ordinal the tree does not own. Two strategies sharing one ordinal
     // would make the program's region correlation ambiguous.
     let mut forged = region.clone();
     forged.index.id = RegionId::new(1);
     assert!(matches!(
-        crate::physical::verify_schedule(forged, members.clone(), &request),
+        crate::physical::verify_schedule(
+            forged,
+            members.clone(),
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        ),
         Err(crate::physical::PhysicalError::Intrinsic {
             rule: "request-binding",
             ..
@@ -7785,7 +7846,12 @@ fn the_tree_subject_binding_refuses_a_region_that_does_not_realize_the_request()
     // would double-cover the graph.
     let forged_members = request.serial_sum().members.all();
     assert!(matches!(
-        crate::physical::verify_schedule(region.clone(), forged_members, &request),
+        crate::physical::verify_schedule(
+            region.clone(),
+            forged_members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        ),
         Err(crate::physical::PhysicalError::Intrinsic {
             rule: "request-binding",
             ..
@@ -7798,7 +7864,12 @@ fn the_tree_subject_binding_refuses_a_region_that_does_not_realize_the_request()
     let mut forged = region;
     forged.index.iteration_shape = Shape::from_dims([1, 2]);
     assert!(matches!(
-        crate::physical::verify_schedule(forged, members, &request),
+        crate::physical::verify_schedule(
+            forged,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        ),
         Err(crate::physical::PhysicalError::Intrinsic { .. })
     ));
 }
@@ -7873,8 +7944,13 @@ fn the_tree_matches_the_reference_at_its_declared_order_for_every_extent() {
             partition.contributors_per_partition, contributors_per_partition,
             "extent {extent}"
         );
-        let verified = crate::physical::verify_schedule(region, members, &request)
-            .expect("the tree region verifies");
+        let verified = crate::physical::verify_schedule(
+            region,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the tree region verifies");
         let kernel = crate::physical::lower_structured_kernel(&verified)
             .expect("the tree region lowers to a verified kernel");
 
@@ -8044,8 +8120,13 @@ fn the_tree_takes_the_capped_participant_count_where_the_balanced_split_differs(
 
     // The region still verifies at the wider width: the cap chooses among the
     // participant counts the schedule admits and does not reach past them.
-    crate::physical::verify_schedule(region, members, &request)
-        .expect("the capped tree region verifies");
+    crate::physical::verify_schedule(
+        region,
+        members,
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the capped tree region verifies");
 
     // Same domain, different choice. Counted, and the disagreement counted too,
     // so neither half can pass by being empty.
@@ -8190,8 +8271,13 @@ fn the_capped_tree_refuses_the_local_memory_band_and_admits_its_neighbour() {
 
     let (region, members, request) = tree_for(512);
     assert_eq!(
-        crate::physical::verify_schedule(region, members, &request)
-            .expect_err("the 512-byte profile must refuse the capped tree"),
+        crate::physical::verify_schedule(
+            region,
+            members,
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test()
+        )
+        .expect_err("the 512-byte profile must refuse the capped tree"),
         crate::physical::PhysicalError::Target {
             rule: "local-memory-bytes",
             region: tiler_ir::schedule::RegionId::new(4),
@@ -8201,8 +8287,13 @@ fn the_capped_tree_refuses_the_local_memory_band_and_admits_its_neighbour() {
     );
 
     let (region, members, request) = tree_for(1_024);
-    crate::physical::verify_schedule(region, members, &request)
-        .expect("the same capped tree verifies once 1,024 bytes are available");
+    crate::physical::verify_schedule(
+        region,
+        members,
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the same capped tree verifies once 1,024 bytes are available");
 }
 
 /// The tree's width rule bounds the *downward* direction, and pays nothing for it
@@ -8362,8 +8453,13 @@ fn the_tree_widens_toward_the_cap_rather_than_truncating_at_it() {
     )
     .expect("the tree is offered at a count whose only sub-cap width is two");
     assert_eq!(region.schedule.threads_per_workgroup, 2);
-    crate::physical::verify_schedule(region, members, &request)
-        .expect("the two-participant tree region verifies");
+    crate::physical::verify_schedule(
+        region,
+        members,
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the two-participant tree region verifies");
 }
 
 /// Assembles the three verified regions of one request's split program.
@@ -8485,7 +8581,13 @@ fn split_regions(
         crate::physical::RegionWrite::Materialized,
     );
     let mut regions = vec![
-        crate::physical::verify_schedule(raw, members, request).expect("the prologue verifies"),
+        crate::physical::verify_schedule(
+            raw,
+            members,
+            request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .expect("the prologue verifies"),
     ];
     let split = crate::physical::split_reduction_regions(
         request,
@@ -8497,7 +8599,13 @@ fn split_regions(
     assert_eq!(split.partition.contributors_per_partition, 2);
     for (raw, members) in split.stages {
         regions.push(
-            crate::physical::verify_schedule(raw, members, request).expect("each pass verifies"),
+            crate::physical::verify_schedule(
+                raw,
+                members,
+                request,
+                &crate::lowering::ResolvedLowering::unresolved_for_test(),
+            )
+            .expect("each pass verifies"),
         );
     }
     regions
@@ -8591,7 +8699,11 @@ fn the_assembled_split_program_matches_the_partitioned_sum_oracle() {
 
     // The serial fold of the same prologue output disagrees, which is what makes
     // the exact comparison above discriminating.
-    let serial_regions = crate::physical::build_scheduled_regions(&request).unwrap();
+    let serial_regions = crate::physical::build_scheduled_regions(
+        &request,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .unwrap();
     let serial = interpret_fused(
         &crate::physical::lower_structured_kernel(&serial_regions[1]).unwrap(),
         &pointwise,

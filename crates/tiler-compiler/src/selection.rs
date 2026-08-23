@@ -2007,7 +2007,14 @@ mod tests {
             providers.push(host);
         }
         providers.push(&opaque);
-        let frontier = enumerate_frontier(request, &subject, &providers, &registry).unwrap();
+        let frontier = enumerate_frontier(
+            request,
+            &subject,
+            &providers,
+            &registry,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
         RegionFrontier::new(subject, frontier)
     }
 
@@ -2059,22 +2066,33 @@ mod tests {
     }
 
     fn pointwise_raw(request: &VerifiedTargetRequest) -> ScheduledRegion {
-        build_scheduled_regions(request).unwrap()[0]
+        build_scheduled_regions(
+            request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap()[0]
             .region()
             .clone()
     }
 
     fn reduction_raw(request: &VerifiedTargetRequest) -> ScheduledRegion {
-        build_scheduled_regions(request).unwrap()[1]
+        build_scheduled_regions(
+            request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap()[1]
             .region()
             .clone()
     }
 
     fn fused_raw(request: &VerifiedTargetRequest) -> ScheduledRegion {
-        build_fused_scheduled_region(request)
-            .unwrap()
-            .region()
-            .clone()
+        build_fused_scheduled_region(
+            request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap()
+        .region()
+        .clone()
     }
 
     fn pointwise_frontier(
@@ -2098,6 +2116,7 @@ mod tests {
             &subject,
             &providers,
             &crate::call_registry::OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         RegionFrontier::new(subject, frontier)
@@ -2124,6 +2143,7 @@ mod tests {
             &subject,
             &providers,
             &crate::call_registry::OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         RegionFrontier::new(subject, frontier)
@@ -2139,6 +2159,7 @@ mod tests {
             &subject,
             &providers,
             &crate::call_registry::OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         RegionFrontier::new(subject, frontier)
@@ -2170,6 +2191,7 @@ mod tests {
             &subject,
             &refs,
             &crate::call_registry::OpaqueCallRegistry::new(),
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
         )
         .unwrap();
         RegionFrontier::new(subject, frontier)

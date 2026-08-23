@@ -738,7 +738,11 @@ mod tests {
         .unwrap()
         .for_target(0)
         .unwrap();
-        let regions = crate::physical::build_scheduled_regions(&request).unwrap();
+        let regions = crate::physical::build_scheduled_regions(
+            &request,
+            &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        )
+        .unwrap();
 
         // The two regions of the materialized cover claim disjoint occurrences,
         // which is what every plan this build assembles looks like.

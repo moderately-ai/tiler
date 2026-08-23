@@ -4799,9 +4799,13 @@ fn the_admitted_symbolic_population_forms_a_verified_source_bound_live_schedule(
          the final write included",
     );
 
-    let verified =
-        crate::physical::verify_schedule_with_feasibility(region.clone(), members.clone(), &target)
-            .expect("the source-bound live schedule verifies and binds");
+    let verified = crate::physical::verify_schedule_with_feasibility(
+        region.clone(),
+        members.clone(),
+        &target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the source-bound live schedule verifies and binds");
     assert_eq!(
         tiler_ir::schedule::live_input_extents(verified.region()),
         vec![(tiler_ir::schedule::AccessOrdinal::new(0), Axis::new(0))],
@@ -4824,6 +4828,7 @@ fn the_admitted_symbolic_population_forms_a_verified_source_bound_live_schedule(
         bound_region,
         bound_members,
         &bound_target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
     )
     .expect("a bound symbol still verifies as the symbol");
     assert_eq!(
@@ -4843,6 +4848,7 @@ fn the_admitted_symbolic_population_forms_a_verified_source_bound_live_schedule(
         literal_region,
         literal_members,
         &literal_target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
     )
     .expect("the literal neighbour verifies");
     assert_ne!(
@@ -4889,8 +4895,13 @@ fn the_source_marker_follows_the_environment_root_not_the_first_input() {
         ],
         "the marker moved to access 2 with the root, not stayed first",
     );
-    crate::physical::verify_schedule_with_feasibility(region, members, &target)
-        .expect("the c-rooted live schedule verifies and binds");
+    crate::physical::verify_schedule_with_feasibility(
+        region,
+        members,
+        &target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect("the c-rooted live schedule verifies and binds");
 }
 
 /// A hand-built region whose marker sits on the wrong access is refused as
@@ -4907,8 +4918,13 @@ fn a_forged_source_marker_position_fails_request_binding() {
     region.index.accesses[1].map = LogicalAccess::LiveRowMajorSource {
         inner_axis: Axis::new(0),
     };
-    let refusal = crate::physical::verify_schedule_with_feasibility(region, members, &target)
-        .expect_err("a marker off the decoded root must not bind");
+    let refusal = crate::physical::verify_schedule_with_feasibility(
+        region,
+        members,
+        &target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect_err("a marker off the decoded root must not bind");
     assert_eq!(
         refusal.to_string(),
         "schedule.intrinsic.request-binding: region 0 rejected",
@@ -4933,8 +4949,13 @@ fn a_specialized_representative_launch_fails_request_binding() {
         specialized.schedule.work_items, 4,
         "the specialized region launches over the bound value",
     );
-    let refusal = crate::physical::verify_schedule_with_feasibility(specialized, members, &target)
-        .expect_err("a [4] launch must not bind the symbolic subject");
+    let refusal = crate::physical::verify_schedule_with_feasibility(
+        specialized,
+        members,
+        &target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    )
+    .expect_err("a [4] launch must not bind the symbolic subject");
     assert_eq!(
         refusal.to_string(),
         "schedule.intrinsic.request-binding: region 0 rejected",
@@ -6244,5 +6265,419 @@ fn a_produced_folds_partition_claims_the_producer_and_the_continuation() {
     assert!(
         !recognized.owns_region_members(&grouped),
         "grouping the continuation with the fold is declined, not flattened",
+    );
+}
+
+/// The gathered source extent of the transplant fixture, chosen to reach `2^32`.
+///
+/// Only a *statically proved* gather carries a `GatherIndexBoundsProof` at all,
+/// and the two closed arguments are an empty result domain and a gathered extent
+/// containing the whole U32 space. `gather_program()`'s `[4, 2]` source reaches
+/// neither, so it mints a validation requirement rather than a proof and cannot
+/// stage this subject. The inhabited argument is taken over the vacuous one for
+/// the reason `tiler-ir`'s own gather fixture takes it: an empty domain makes
+/// every downstream count zero and could hide an arithmetic defect.
+const TRANSPLANT_SOURCE_EXTENT: u64 = 1 << 32;
+/// The result domain is four points, and the size is load-bearing.
+///
+/// `governed_with_gather_index_dispatch_for_test` admits four grid threads, so a
+/// wider fixture is refused for `grid-axis` hard feasibility *before* the
+/// binding's verdict is observable — which would leave the transplant assertion
+/// green for a reason that has nothing to do with the proof.
+const TRANSPLANT_RESULT_ELEMENTS: u64 = 4;
+
+fn transplant_source_shape() -> Shape {
+    Shape::from_dims([TRANSPLANT_SOURCE_EXTENT, 2])
+}
+
+fn transplant_index_shape() -> Shape {
+    Shape::from_dims([2])
+}
+
+fn transplant_result_shape() -> Shape {
+    Shape::from_dims([2, 2])
+}
+
+/// Mints one real static gather proof through `tiler-ir`'s public index builder.
+///
+/// **Nothing here is a hand-built proof.** `GatherIndexBoundsProof` has no public
+/// constructor and its fields are crate-private, so the only way to hold one is
+/// to build a verified index region whose gather access the closed deriver
+/// proved — which is exactly the route an out-of-crate provider has, and exactly
+/// why the evidence cannot be withheld.
+///
+/// `index_tensor_first` selects between two regions that agree on every fact
+/// [`crate::physical`]'s gather binding compares — source shape, result shape,
+/// index shape, axis, and the owned address ordinal — and differ only in the
+/// order the two input boundaries are declared. That is enough to move
+/// `CanonicalIndexRegionIdentity`, which folds the tensor list, so the pair is a
+/// *shape-compatible different region*: the subject the transplant needs.
+fn mint_gather_proof(index_tensor_first: bool) -> tiler_ir::index::GatherIndexBoundsProof {
+    use tiler_ir::index::{DomainRole, IndexRegionBuilder, TensorAccessView};
+
+    let registry = tiler_ir::index::FrozenScalarRegistry::standard().expect("the profile composes");
+    let mut builder = IndexRegionBuilder::new(registry).expect("a builder is admitted");
+    let dimensions: Vec<_> = transplant_result_shape()
+        .extents()
+        .iter()
+        .map(|extent| {
+            builder
+                .dimension(DomainRole::Parallel, *extent)
+                .expect("a parallel dimension is admitted")
+        })
+        .collect();
+    let declare_source = |builder: &mut IndexRegionBuilder| {
+        builder
+            .tensor(
+                tiler_ir::index::TensorRole::Input,
+                F32::resolved_type().clone(),
+                transplant_source_shape(),
+            )
+            .expect("the source boundary is admitted")
+    };
+    let declare_index = |builder: &mut IndexRegionBuilder| {
+        builder
+            .tensor(
+                tiler_ir::index::TensorRole::Input,
+                gather_index_resolved_type(),
+                transplant_index_shape(),
+            )
+            .expect("the index boundary is admitted")
+    };
+    let (source, index) = if index_tensor_first {
+        let index = declare_index(&mut builder);
+        (declare_source(&mut builder), index)
+    } else {
+        let source = declare_source(&mut builder);
+        (source, declare_index(&mut builder))
+    };
+    let output = builder
+        .tensor(
+            tiler_ir::index::TensorRole::Output,
+            F32::resolved_type().clone(),
+            transplant_result_shape(),
+        )
+        .expect("the output boundary is admitted");
+    // Result axes are [source before axis | index | source after axis]. The
+    // gather is on axis 0, so the index run leads and the one remaining source
+    // axis trails: the source coordinate is result dimension 1.
+    let source_coordinates = vec![
+        builder
+            .dimension_expr(dimensions[1])
+            .expect("a dimension coordinate is admitted"),
+    ];
+    let index_coordinates = vec![
+        builder
+            .dimension_expr(dimensions[0])
+            .expect("a dimension coordinate is admitted"),
+    ];
+    let value = builder
+        .gather_read(
+            source,
+            index,
+            &dimensions,
+            &source_coordinates,
+            &index_coordinates,
+            Axis::new(0),
+        )
+        .expect("the gather is admitted");
+    let write_coordinates: Vec<_> = dimensions
+        .iter()
+        .map(|dimension| {
+            builder
+                .dimension_expr(*dimension)
+                .expect("a dimension coordinate is admitted")
+        })
+        .collect();
+    let write = builder
+        .write(output, &dimensions, &write_coordinates)
+        .expect("the write is admitted");
+    builder
+        .output(write, value)
+        .expect("the output is admitted");
+    let region = builder.build().expect("the index region verifies");
+    let proof = region
+        .accesses()
+        .find_map(|access| match access.view() {
+            TensorAccessView::GatherRead(gather) => gather.bounds_resolution().statically_proved(),
+            TensorAccessView::Direct(_) => None,
+        })
+        .expect("a gathered extent containing every U32 value discharges the obligation")
+        .clone();
+    assert_eq!(
+        proof.kind(),
+        tiler_ir::index::GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent,
+        "the fixture must rest on the inhabited argument, not on vacuity",
+    );
+    proof
+}
+
+/// Builds the one scheduled region a recognized gather occurrence would bind.
+///
+/// Canonical order for the one-gather occurrence the accepted surface admits:
+/// the `f32` source read at local access 0, the address-only U32 read it owns at
+/// access 1, and the owning write at access 2.
+fn transplant_gather_region(
+    target: &VerifiedTargetRequest,
+    proof: tiler_ir::index::GatherIndexBoundsProof,
+) -> crate::physical::ScheduledRegion {
+    use crate::physical::{
+        Access, AccessMode, AccessOrdinal, BoundsProof, BoundsProofKind, BoundsWitnessId,
+        ExecutionBinding, KernelSchedule, LaunchPlan, LogicalAccess, OwnershipProof,
+        OwnershipProofKind, OwnershipWitnessId, ReductionTopology, RegionId, RegionProgram,
+        ScalarProgram, TailPolicy, TensorRole,
+    };
+
+    let relation = LogicalAccess::GatherSource {
+        source_shape: transplant_source_shape(),
+        result_shape: transplant_result_shape(),
+        axis: Axis::new(0),
+        index_access: AccessOrdinal::new(1),
+        index_shape: transplant_index_shape(),
+    };
+    let address = tiler_ir::schedule::gather_index_read_map(
+        &transplant_source_shape(),
+        Axis::new(0),
+        &transplant_index_shape(),
+    )
+    .expect("the fixture is a well-formed gather");
+    let read = |map: LogicalAccess, bounds: u32| Access {
+        tensor: TensorRole::Input,
+        component_role: None,
+        mode: AccessMode::Read,
+        map,
+        bounds: BoundsWitnessId::new(bounds),
+        ownership: None,
+    };
+    let accesses = vec![
+        read(relation, 0),
+        read(address.clone(), 1),
+        Access {
+            tensor: TensorRole::Output,
+            component_role: None,
+            mode: AccessMode::Write,
+            map: LogicalAccess::LinearIdentity,
+            bounds: BoundsWitnessId::new(2),
+            ownership: Some(OwnershipWitnessId::new(0)),
+        },
+    ];
+    let bounds_proofs = vec![
+        BoundsProof {
+            id: BoundsWitnessId::new(0),
+            tensor: TensorRole::Input,
+            component_role: None,
+            kind: BoundsProofKind::GatherSource {
+                source_shape: transplant_source_shape(),
+                result_shape: transplant_result_shape(),
+                axis: Axis::new(0),
+                index_access: AccessOrdinal::new(1),
+                index_shape: transplant_index_shape(),
+                proof: Box::new(proof),
+            },
+        },
+        BoundsProof {
+            id: BoundsWitnessId::new(1),
+            tensor: TensorRole::Input,
+            component_role: None,
+            // Derived from the address read's own relation rather than restated:
+            // `gather_index_read_map` answers a replicating relation for this
+            // fixture, whose bounded population is the index operand's two
+            // elements and not the result domain's six.
+            kind: BoundsProofKind::LinearRange {
+                element_count: match &address {
+                    LogicalAccess::BroadcastReplication { operand_shape, .. } => {
+                        tiler_ir::schedule::element_count(operand_shape)
+                            .expect("a bounded index operand")
+                    }
+                    _ => TRANSPLANT_RESULT_ELEMENTS,
+                },
+            },
+        },
+        BoundsProof {
+            id: BoundsWitnessId::new(2),
+            tensor: TensorRole::Output,
+            component_role: None,
+            kind: BoundsProofKind::LinearRange {
+                element_count: TRANSPLANT_RESULT_ELEMENTS,
+            },
+        },
+    ];
+    let mut expression = tiler_ir::schedule::PointwiseF32ExpressionBuilder::new();
+    let root = expression
+        .input(AccessOrdinal::FIRST)
+        .expect("the one f32 leaf is admitted");
+    let expression = expression.build(root).expect("the identity composes");
+    crate::physical::ScheduledRegion {
+        index: crate::physical::IndexRegion {
+            id: RegionId::new(0),
+            iteration_shape: transplant_result_shape(),
+            accesses,
+            bounds_proofs,
+            ownership_proof: OwnershipProof {
+                id: OwnershipWitnessId::new(0),
+                tensor: TensorRole::Output,
+                kind: OwnershipProofKind::OneGlobalInvocationPerOutput {
+                    output_count: TRANSPLANT_RESULT_ELEMENTS,
+                },
+            },
+            program: RegionProgram::Numerical {
+                scalar: ScalarProgram::PointwiseF32(expression),
+                // The region must implement *this request's* resolved
+                // realization; a value re-derived here would be a second
+                // account of the contract free to disagree with it.
+                numerical: target.numerical_contract().realization(),
+            },
+        },
+        schedule: KernelSchedule {
+            binding: ExecutionBinding::GlobalLinearInvocation,
+            work_items: TRANSPLANT_RESULT_ELEMENTS,
+            threads_per_workgroup: 1,
+            tail: TailPolicy::Exact,
+            output_owner: OwnershipWitnessId::new(0),
+            reduction: ReductionTopology::None,
+            launch: LaunchPlan {
+                grid_threads: TRANSPLANT_RESULT_ELEMENTS,
+                threads_per_workgroup: 1,
+                zero_work_skips_dispatch: true,
+            },
+        },
+    }
+}
+
+/// Builds the verified target request the transplant fixture's occurrence belongs to.
+fn transplant_gather_target() -> VerifiedTargetRequest {
+    let program = gather_program_over([TRANSPLANT_SOURCE_EXTENT, 2], [2], 0);
+    let mut request = CompilationRequest::governed(&program);
+    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    let planned = verify_planned_request(request).expect("the fixture admits a planned request");
+    planned
+        .for_target(0)
+        .expect("the U32-capable profile admits the fixture")
+}
+
+/// A retained gather proof minted for another region is refused by the binding.
+///
+/// **The two proofs are shape-compatible and region-distinct, and both halves
+/// are asserted rather than assumed.** Every fact the request binding compared
+/// before this change — source shape, result shape, index shape, axis, and the
+/// owned address ordinal — is equal between them, so none of those comparisons
+/// can separate the pair; their `CanonicalIndexRegionIdentity` differs, so the
+/// new one can. That is the exact state the finding is about: a proof minted for
+/// region A, attached to a shape-compatible occurrence B, staying *bounds*-sound
+/// while corrupting identity, because both closed proof kinds are functions of
+/// the source shape, the index shape, and the axis and the schedule folds the
+/// proof identity — which folds A's region — into its own.
+///
+/// **What it would take for this to say something else, and whether that case is
+/// reachable.** The refusal has two independent causes and only one of them is
+/// the transplant. `gather_accesses_match` admits a proof when the occurrence's
+/// lowering realized a single region *and* that region's identity is the proof's.
+/// At this base the first conjunct is unreachable for every gather:
+/// `IndexAccessLoweringContext` exposes no gather emission at all — the facade's
+/// `gather_read` was written and deliberately removed by the
+/// `carry-the-gather-relation-through-the-compiler-vertical` lane pending the
+/// governed capability row — so no provider can emit a region realizing a gather
+/// and `resolve_lowering` refuses before any frontier exists.
+/// [`a_gather_occurrence_resolves_no_lowering_at_this_base`] pins that, and it is
+/// why the canonical proof below is refused too rather than admitted as the
+/// positive control this test would otherwise carry.
+///
+/// So what this test does demonstrate is that the transplant no longer passes,
+/// and the perturbation that shows the new comparison is what refuses it is
+/// deleting the `realized == Some(proof.region())` conjunct, which was run: the
+/// transplanted region is then **admitted whole** — intrinsic verification, the
+/// request-subject binding, and hard feasibility all pass — and this assertion
+/// reddens with
+/// `left: None  right: Some(Intrinsic { rule: "request-binding", region: RegionId(0) })`.
+/// That admission is the finding stated as an observation rather than a claim.
+/// A positive control belongs to the lane that lands the emission route.
+#[test]
+fn a_gather_proof_minted_for_another_region_is_refused() {
+    let own = mint_gather_proof(false);
+    let transplant = mint_gather_proof(true);
+
+    // The pre-existing comparisons cannot separate the pair.
+    assert_eq!(own.source_shape(), transplant.source_shape());
+    assert_eq!(own.result_shape(), transplant.result_shape());
+    assert_eq!(own.index_shape(), transplant.index_shape());
+    assert_eq!(own.axis(), transplant.axis());
+    assert_eq!(own.kind(), transplant.kind());
+    // The new one can.
+    assert_ne!(
+        own.region().as_bytes(),
+        transplant.region().as_bytes(),
+        "the fixture must offer two genuinely different regions, or the \
+         transplant is a proof swapped for an equal one and corrupts nothing",
+    );
+
+    let target = transplant_gather_target();
+    let [output] = target.normalized().outputs() else {
+        panic!("the fixture declares one output");
+    };
+    let members = output.members();
+    assert_eq!(members.len(), 1, "a gather claims exactly one occurrence");
+
+    let refusal = crate::physical::verify_schedule_with_feasibility(
+        transplant_gather_region(&target, transplant),
+        members.clone(),
+        &target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    );
+    // Projected to the error alone so an admission prints `None` rather than a
+    // whole verified region; the discrimination is unchanged, because `None` is
+    // reachable only from `Ok`.
+    assert_eq!(
+        refusal.as_ref().err(),
+        Some(&crate::physical::PhysicalError::Intrinsic {
+            rule: "request-binding",
+            region: tiler_ir::schedule::RegionId::new(0),
+        }),
+        "a proof minted for another region must not bind this occurrence",
+    );
+}
+
+/// No gather occurrence resolves a lowering at this base, so no gather proof
+/// can be the occurrence's own.
+///
+/// This is the reachability fact the transplant test above rests on, pinned as a
+/// check rather than left as prose: it is what makes
+/// `gather_accesses_match`'s new conjunct refuse every gather today, and what a
+/// later lane must change before a positive control can exist.
+///
+/// **The negative control is the second half**, and it is what makes this a fact
+/// about gathers rather than about the harness: the same `resolve_lowering` call
+/// over the module's ordinary elementwise fixture answers `Ok`, so the refusal
+/// above is not "this test cannot resolve anything". Without it a broken request
+/// fixture would read as a proved absence.
+///
+/// The reason code is compared rather than the error, because
+/// *no capability row* and *a row whose provider emitted a bad region* are two
+/// different absences that would otherwise both read as "gathers do not lower",
+/// and only the first is what makes a gather proof unobtainable.
+#[test]
+fn a_gather_occurrence_resolves_no_lowering_at_this_base() {
+    let gather = gather_program_over([TRANSPLANT_SOURCE_EXTENT, 2], [2], 0);
+    let mut request = CompilationRequest::governed(&gather);
+    request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    let planned = verify_planned_request(request).expect("the fixture admits a planned request");
+    let target = planned
+        .for_target(0)
+        .expect("the U32-capable profile admits the fixture");
+    let error = crate::lowering::resolve_lowering(&gather, &target)
+        .expect_err("no installed capability lowers a gather");
+    assert_eq!(error.reason(), "missing-capability");
+
+    // The negative control: the same call over a fixture whose occurrences the
+    // governed registry does carry resolves, so the refusal above is a fact
+    // about gathers and not about this harness.
+    let elementwise = program();
+    let planned = verify_planned_request(CompilationRequest::governed(&elementwise))
+        .expect("the elementwise fixture admits a planned request");
+    let elementwise_target = planned
+        .for_target(0)
+        .expect("the governed profile admits the elementwise fixture");
+    assert!(
+        crate::lowering::resolve_lowering(&elementwise, &elementwise_target).is_ok(),
+        "resolve_lowering must be able to answer Ok, or its Err proves nothing",
     );
 }
