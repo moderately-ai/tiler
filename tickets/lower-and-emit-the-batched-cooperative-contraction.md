@@ -1,7 +1,7 @@
 ---
 id: lower-and-emit-the-batched-cooperative-contraction
 title: Lower and emit the batched cooperative contraction
-status: in-progress
+status: done
 priority: p1
 dependencies: [admit-a-batched-cooperative-contraction-for-the-attention-structures, honour-the-declared-access-maps-in-the-cooperative-contraction-emission]
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/metal]
 shared_scopes: [project/tickets]
 paths: []
 tags: [contraction, lowering, metal, attention]
-claimed_from: todo
-assignee: worker-lowerbatch
-lease_expires_at: 1787450840
 ---
 ## User-visible outcome
 
