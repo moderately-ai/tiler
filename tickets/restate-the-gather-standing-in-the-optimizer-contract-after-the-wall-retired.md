@@ -1,7 +1,7 @@
 ---
 id: restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired
 title: Restate the gather standing in the optimizer contract after the wall retired
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift]
+claimed_from: todo
+assignee: worker-optrestate
+lease_expires_at: 1787474269
 ---
 ## User-visible outcome
 

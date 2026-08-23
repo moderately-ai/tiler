@@ -1,7 +1,7 @@
 ---
 id: re-derive-the-contraction-fusion-role-rationale-after-the-key-replacement
 title: Re-derive the contraction fusion-role rationale after the key replacement
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [repair-the-research-records-the-key-replacement-and-splits-falsified, replace-the-serial-sum-contributor-fields-with-the-exhaustive-source]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, compiler, documentation, numerics]
+claimed_from: todo
+assignee: worker-fusionrole
+lease_expires_at: 1787474269
 ---
 ## User-visible outcome
 

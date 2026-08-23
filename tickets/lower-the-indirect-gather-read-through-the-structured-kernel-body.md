@@ -1,7 +1,7 @@
 ---
 id: lower-the-indirect-gather-read-through-the-structured-kernel-body
 title: Lower the indirect gather read through the structured kernel body
-status: todo
+status: in-progress
 priority: p2
 dependencies: [thread-resolved-lowering-into-the-governed-spelling-path]
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, gather, kernel-ir]
+claimed_from: todo
+assignee: worker-gatherbody
+lease_expires_at: 1787474269
 ---
 ## User-visible outcome
 
