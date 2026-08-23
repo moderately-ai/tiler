@@ -156,7 +156,7 @@ pub(super) fn verify_alternative(
     // means the plan describes a program this assembler has no expression for,
     // which the alternative could not have been built from — so it is a binding
     // failure like any other mismatch, not a separate outcome.
-    let Ok(assembly) = CoverAssembly::from_plan(semantic, &alternative.plan) else {
+    let Ok(assembly) = CoverAssembly::from_plan(semantic, &alternative.plan, lowering) else {
         return Err(failure_at_source(
             ProgramError::Structure {
                 rule: "portfolio-schedule-binding",

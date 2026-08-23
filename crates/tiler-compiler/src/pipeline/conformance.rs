@@ -777,7 +777,10 @@ fn read_declared_inputs(region: &crate::physical::VerifiedScheduledRegion) -> Ve
                 u32::try_from(position).expect("bounded access position"),
             );
             region
-                .declared_input_at(access)
+                .declared_input_at(
+                    &crate::lowering::ResolvedLowering::unresolved_for_test(),
+                    access,
+                )
                 .expect("verified input access has a checked declaration")
                 .get()
         })
