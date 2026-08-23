@@ -39,3 +39,19 @@ Offering any of these realizations — `admit-reassociated-contraction-schedule-
 ## Closes when
 
 Each uncovered contraction realization records a typed decline naming its own ground, the three explanations stay separately named, the contract-sensitivity control holds, and the workspace gate is green.
+
+## Coordinator re-audit at `d19c3b40`, 2026-08-22 — both checkable Facts verified, with the model sites named
+
+Run and read by the coordinator at this base before dispatch. Contradict any of it with evidence rather than deferring.
+
+**Fact 1 — verified.** `govern_spelling`'s contraction arm is `crate::physical::RegionSpellingKind::Contraction => (crate::physical::contraction_region(request, producer, subject.write()).0, …)` in `crates/tiler-compiler/src/frontier.rs`. It offers the region and records no decline beside it.
+
+**Fact 2 — verified, and no widening is needed.** `pub enum StrategyDeclineCause` carries `#[non_exhaustive]` and already declares `NumericalPermissionRefused { dimension: &'static str }` and `AlgebraicCapabilityUnsupported { dimension }`, with `tag()` spelling them `"numerical-permission-refused"` and `"algebraic-capability-unsupported"`. The enum doc states the design intent this ticket is executing, at the anchor `it can also say what it deliberately withheld` — quote it in your reasoning rather than re-deriving it.
+
+**Two model sites, which the ticket does not name.** A third variant, `UnspellableRegion`, is already recorded from this same function at two places in `frontier.rs`, and the recording mechanism is `.decline(DeclinedStrategy::new(strategy, cause))` with `DeclinedStrategy::new` a `const fn` taking a `&'static str` strategy name and a cause. **Copy that shape.** Reading those two sites first will show you how a decline reaches the caller and what the strategy-name convention is, which is cheaper than inferring it.
+
+**On the public boundary.** `StrategyDeclineCause` is `pub` and `#[non_exhaustive]`, so adding a variant is not a breaking change for downstream matches — but it is still a public-surface addition and AGENTS.md reserves those to Tom. The Facts above say you should not need one. If your reading says otherwise, **stop and report** with the evidence rather than adding it; a fourth ground that the existing two cannot express is a genuine finding worth escalating, not a detail.
+
+**Fact 3 is not verifiable from source and is not the coordinator's.** The four realizations and their grounds come from the L3 record `docs/research/scheduling/first-metal-contraction-realizations.md`. I did not re-derive them. Read that record in full and give it its own per-Fact verdict — in particular check that `ksplit_strided` really is the measured demonstration that reassociation and permutation are two plans rather than one, because that claim is what makes collapsing the declines wrong.
+
+**On the negative control.** The Required work asks that under a contract granting reassociation, the contiguous split's decline changes or disappears. Before trusting it, state what would make it say *no* and confirm that case is reachable — a control that cannot fail is the recurring defect on this repository. Perturb the subject (the contract, the permission read), never the assertion, and quote the failure text.
