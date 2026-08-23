@@ -308,3 +308,161 @@ Checked before this packet reaches Tom, because a decision packet is the worst p
 **Imprecise — "the fixture merge `829bd1f0` changed no production crate source".** It did: `git diff 829bd1f0^1 829bd1f0 -- crates/tiler-conformance/src/lib.rs` shows **24 lines added**. They are entirely `//!` documentation — the section `# One integration test, and why it is not a module here` — carrying no public item, no code, no `metal` edge, and no macOS predicate. So the **conclusion is untouched** and the accurate claim is *narrower and stronger*: the merge added **no public item to any production crate**, which is what the argument actually needs. State it that way. As written, the sentence is refutable by a one-command diff, and a reviewer who ran that diff would reasonably distrust the rest of the packet for it.
 
 Neither finding changes the packet's recommendation. Whoever re-derives it should carry the corrected wording rather than restating the original, and should not treat this note as having done the re-derivation.
+
+## Second re-derivation — 2026-08-22, at base `3291b105985857db25d0596d7dc442bdb9e83dda`
+
+The independent review above returned the first re-derivation because its crux was refuted. This section re-derives the decision from source at a new base. Everything above is preserved, including the claims this section falsifies, so no grep count shrinks across the repair. Where this section and an earlier one disagree, **this section is current**.
+
+The returned packet's conclusion is reached again here — but on a different ground, derived independently, and stated *against* the pattern the review found rather than in ignorance of it. A conclusion that survives the refutation of its stated reason is only worth keeping if the replacement reason is checked as hard as the refutation was.
+
+### Per-Fact verdict on the 2026-08-17 discovery, re-read at this base
+
+Every command below was run in this worktree at `3291b105` before being written down.
+
+| # | Claim | Verdict at `3291b105` | Command and output |
+| --- | --- | --- | --- |
+| 1 | ADR 0106 admits the crate; its header says `There is none` under `# Public surface` | **Verified** | `grep -c 'There is none' crates/tiler-conformance/src/lib.rs` → `1`. ADR 0106's 2026-08-07 supersession note keeps `item 5's no-public-surface bullet stands`, and a 2026-08-12 correction reads `unchanged from item 5: no public surface and no support-matrix authority` |
+| 2 | The complete-suite ticket requires reusable public types | **Verified; the carrier population has grown since the claim was written** | `grep -n '^status:'` gives `publish-the-backend-provider-conformance-suite` → `deferred` and, filed after the 2026-08-17 discovery and so unnameable by it, `publish-the-partial-backend-conformance-facade` → `todo`. The stated requirement is unchanged; **two** carriers now depend on this answer, not one |
+| 3 | ADR 0090 has no runtime-adapter registry; a missing adapter is not constructible | **Verified** | `grep -n` in ADR 0090 returns `no runtime-adapter registration, and this record proposes none` and `has no registry either` |
+| 4 | An empty `ProviderOffer` is legitimate | **Verified** | `crates/tiler-compiler/src/frontier.rs` carries `An empty offer is legitimate`; `crates/tiler-compiler/src/physical_provider.rs` carries `is a legitimate local result` |
+| 5 | Eleven externally participated rows plus two counted exclusions | **Verified as the accepted census; the table a reader would check it against is still stale** | `grep -c '^| [0-9]' docs/research/extensions/backend-provider-composition.md` → `31` across three tables; the responsibility matrix is thirteen rows and 13 − 2 = 11. **Stated more precisely than the first re-derivation did**: `grep -c 'nothing installs one'` → `3`, and the three are not three stale sites — line 45 is the live matrix row 4, line 441 is 2026-08-05 audit prose, and line 467 is the dated correction that already refutes line 441 by quoting it. Only the matrix row is unrepaired. `grep -c 'no indirection at all — statically Metal'` → `1`, the live row 8 |
+| 6 | Selected-physical and compile-profile provenance **are not carried**; their tickets **remain blocked** | **FALSE — both landed** | Verified in source, not from status. `pub fn selected_physical_implementations` exists at `crates/tiler-artifact/src/program/model.rs` and `crates/tiler-artifact/src/program/codec/view.rs`. `COMPILATION_SELECTION_DOMAIN` in `crates/tiler-metal-aot/src/identity.rs` is `tiler.metal-aot.compilation-selection.v1`, and `FACT_SOURCE_PROVENANCE_SCHEMA_VERSION` in `crates/tiler-ir/src/numerics.rs` is `4`. Both tickets are `status: done` |
+| 7 | `ExplainDisposition` and record iteration stay compiler-private | **Verified** | `pub(crate) enum ExplainDisposition` in `crates/tiler-compiler/src/explain.rs`; `pub struct ExplainReport` in `crates/tiler-compiler/src/session.rs`; `pub struct VerifiedCompilationExplain` in `crates/tiler-compiler/src/explain.rs`. `grep -rn 'pub use.*Explain' crates/tiler-compiler/src/` returns exactly one line, `pub use crate::explain::VerifiedCompilationExplain;` — no disposition re-export |
+
+**Evidence-packet Facts, re-read.** `cargo nextest run -p tiler-conformance --lib -E 'test(portability)' --no-capture` printed `portability census: 22 source file(s); 81 device-free test(s) and 3 in the macOS-gated module(s) ["device_buffer.rs", "dispatch.rs", "envelope/apple.rs"]` and reported `1 test run: 1 passed, 83 skipped`, i.e. 84 library tests. `cargo nextest run -p tiler-conformance --test independent_backend --no-capture` reported `12 tests run: 12 passed, 0 skipped`. `Measured<T>`, its `Unavailable(String)`, and `REQUIRE_MEASUREMENT` naming `TILER_REQUIRE_METAL_CONFORMANCE` are all still in `crates/tiler-conformance/src/measurement.rs`.
+
+**The imprecise merge claim, carried in its corrected form rather than restated.** The first re-derivation wrote that the fixture merge `829bd1f0` *"changed no production crate source at all"*. That is refutable by one command and is not repeated as a claim here: `git diff 829bd1f0^1 829bd1f0 -- crates/tiler-conformance/src/lib.rs` adds **24 lines**, every one of them prefixed `+//!`, forming the header section `# One integration test, and why it is not a module here`. The accurate and stronger statement, which is what the argument actually needs, is that **the merge added no public item to any production crate** — no item, no re-export, no visibility change, no `metal` edge, no macOS predicate.
+
+### The refuted crux, and why re-deriving it was necessary rather than cosmetic
+
+The returned packet's load-bearing step was that *"Tiler cannot run a third party's backend, so a published report can only record what the caller tells it"*, and that this is *"unavoidable for any published report type"*. **That is false, and it is false in public API five times over.** Re-verified here at this base rather than accepted from the review:
+
+- `ConvergenceEvidence::CallerAsserted` (`crates/tiler-ir/src/schedule/synchronization.rs`), `pub`, tag `0x02`, documented `Always refused`;
+- `ToolchainEvidence::ReportedVersions` (`crates/tiler-metal-aot/src/identity.rs`), `pub`, whose entire content is self-reported version strings Tiler cannot check;
+- `ValueDomainProvenance::CallerDeclaredUnvalidated` (`crates/tiler-ir/src/numerics.rs`), `pub`;
+- `ConformanceEvidenceClass` (`crates/tiler-ir/src/semantic/accuracy/evidence.rs`), `pub`, five classes including `Unknown`;
+- `TargetFactAuthority` (`crates/tiler-compiler/src/target/evidence.rs`), `pub`, seven variants.
+
+So the question is not whether a caller-supplied claim may be published — the repository settled that — but **under what condition** it is safe. That condition is what the returned packet never derived, and deriving it is what decides candidate B-restricted.
+
+### What actually makes those five safe, read out of each one's consumption site
+
+The common structure is not that the class is *labelled*. It is that **each class is an input to a Tiler decision, and Tiler's own consumption site bounds what may be concluded from it.** Each site was opened and read here:
+
+| Public class | Tiler's consumption site | What the site refuses |
+| --- | --- | --- |
+| `ConvergenceEvidence` | `crates/tiler-ir/src/schedule/builder/tile.rs`, the comparison `if point.convergence != ConvergenceEvidence::required_for_rounds(tile.rounds)` | The verifier **re-derives** the required class from the tile's own round count and refuses anything else, so `CallerAsserted` never validates. A perturbation already exists at `convergence asserted rather than derived` |
+| `ToolchainEvidence` | `require_cross_host_reuse` in `crates/tiler-metal-aot/src/identity.rs`, which matches on `reuse_scope()` | Returns `CrossHostReuseUnsupported` for `SameHost`. The self-reported class is admitted and the *conclusion drawn from it* is bounded to one host |
+| `ConformanceEvidence` | `crates/tiler-compiler/src/target/accuracy.rs`, which calls `.discharge()` on both bound and exceptional evidence in production | `discharges_hard_requirement` is `false` for `EmpiricalQualification` and `Unknown`, so a caller-supplied measurement cannot satisfy a hard accuracy contract |
+| `ValueDomainProvenance` | the canonical behaviour encoding in `crates/tiler-ir/src/numerics.rs` | The provenance enters the profile descriptor as `assume-absent.caller-declared-unvalidated`, so a caller-declared assumption **cannot share a descriptor digest** with a compiler-proven one. It is not launderable |
+| `TargetFactAuthority` | its split from `MeasuredFactAuthority` (`crates/tiler-compiler/src/target/source.rs`) | The read-side enum has **seven** variants and the declare-side has **four**; `GovernedProfile`, `ExternalProfile`, and `MeasuredProfile` are omitted from the declaration vocabulary because no caller may claim them |
+
+**The rule, stated as narrowly as the evidence supports.** A caller-supplied evidence class is safe to publish when Tiler itself consumes it at a site that can refuse, re-derive, bound, or separate identities on it. The label is not the safeguard; the refusing consumer is. A label with no refusing consumer is a comment with a type attached.
+
+### Applying that rule to a backend-provider conformance report
+
+**A conformance report about a third party's backend has no Tiler consumption site, and cannot be given one without entering certification.**
+
+Nothing in Tiler makes a decision from such a report. It is not an input to a verifier, a cache-reuse scope, a feasibility discharge, or an identity. It is an output the author shows to somebody else. Every one of the five precedents earns its safety at a consumption site; a responsibility-row report has none, so there is nothing for the label to bound.
+
+The obvious repair — give it one — is the option that must be eliminated rather than explored. A consumption site means a third party's claim about its own backend gates a Tiler decision: admitting an artifact, widening an identity, or licensing a feasibility conclusion. That is exactly **certification**, which sits in this decision's unsupported population and which no candidate here proposes to enter. So the gap is not an implementation gap that a later ticket closes; it is the boundary itself.
+
+**The `TargetFactAuthority` split confirms this rather than weakening it.** That pattern works because Tiler *itself* attributes the three privileged authorities when it refuses, so there is something to put on the privileged side of the split. For a third-party conformance report every class is caller-side, and a split with an empty privileged half is not a split.
+
+**And for the one row where a refusing consumer does exist, the vocabulary is already published.** `ConformanceEvidence` is a nine-field, five-class, canonically encoded, `discharge`-gated public record in `tiler-ir`, and it is already reached from out-of-crate integration tests — `crates/tiler-compiler/tests/caller_target_profile.rs` constructs `ConformanceEvidence::new` with both `NormativeGuarantee` and `EmpiricalQualification`. A second conformance-evidence vocabulary owned by `tiler-conformance` would be a duplicate public authority for classifying conformance evidence, with a second domain separator beside `tiler.conformance-evidence.v1`.
+
+### What a facade would contain, itemized from the fixture by reading it
+
+Re-itemized here from `crates/tiler-conformance/tests/independent_backend/` read in full, not carried from the returned packet.
+
+| Candidate export | Where it is | What publishing it is worth |
+| --- | --- | --- |
+| `HostPolicy`, `HostRequest`, `HostUnavailable`, `ExecutionOutcome`, `apply_policy` | `nodefold_adapter.rs` | The shape is genuinely good — `ExecutionOutcome` carries no `PartialEq` and no `Default`, `completed()` answers `None`, and `agrees_with_reference` takes bits rather than an outcome, so an unavailable host has no expression that reaches a comparison. But `HostRequest` is `{ policy, stack_bytes }`, and a worker-thread stack is *this* backend's resource. Neutralized it degenerates to a two-valued policy enum and a `String` reason. **Its real value is internal**, see the follow-up below |
+| `Disagreement`, `agrees_with_reference` | `nodefold_adapter.rs` | An element-wise `&[u32]` comparison with a length guard, about thirty lines. Neutral and trivial |
+| `workload::reference_bits` | `workload.rs` | The one genuinely reusable, genuinely non-self-certifying helper: it wraps `ReferenceEvaluator` and the caller cannot manufacture the oracle. It belongs in `tiler-reference`, not in a conformance facade, and that is a small non-Tom decision |
+| `Subject` / `SUBJECT_COVERAGE` | `main.rs` | **Unpublishable by construction, and for a reason stronger than its shape.** The census checks itself by `include_str!("main.rs")` and asserting `THIS_SOURCE.contains(&format!("fn {named}()"))` — it is a claim about *this file*. Published, it would become a report with no refusing consumer, which is precisely the class the rule above excludes |
+| The structural assertions | `main.rs` | Nothing to factor out. They are `assert_eq!` against public accessors — `variant.target_profile()`, `variant.feasibility_rules()`, `variant.deferred_predicates()`, `entry.backend_entry_key()` — and the evidence is produced by the seam, not by any harness type |
+| Whole-backend routing | — | Already public and already exactly this: `route_with_adapter` |
+
+**The pattern, and it is the same pattern the rule predicts.** Every refusal this fixture observes is produced by a *production seam refusing*, and each was watched firing: `UnmappedBackendEntry { payload: 0 }` from the decoder, `runtime.no-eligible-variant` from the loader, `1 entr(y/ies) were submitted and 0 terminal use(s) were witnessed` from the adapter's own witness, and `element 0 is 0x00000000 and tiler-reference requires 0x3fc00000` from the oracle — the last refusing a `Certify` adapter that reached terminal success. None of those refusals comes from a harness, and none of them could.
+
+### Candidate enumeration, re-run at this base
+
+Every 2026-08-17 elimination resting on the missing subject or the held carriers is void and re-derived. B-restricted and H were never enumerated and are enumerated here.
+
+| Candidate | Correctness and fail-closed strictness | Public compatibility and maintenance | Host runtime and memory | Disposition at this base |
+| --- | --- | --- | --- | --- |
+| **A. Re-defer with a narrowed trigger** | Sound; publishes nothing | Re-litigates a question whose evidence has arrived and been assessed twice | Unchanged | **Eliminated.** This record already rules that a hold without a recorded finding `leaves the publication request liable to be reopened from stale proposal prose` |
+| **B. Publish result/report vocabulary as a harness** | **Fails** — a report with no refusing consumer, presented as evidence | Reads as a harness and is not one | Trivial | **Eliminated**, but *not* on the impossibility ground the returned packet used. It is eliminated because the vocabulary would carry no bound: nothing consumes it, so nothing constrains what a reader concludes |
+| **B-restricted. A `ConvergenceEvidence`-shaped conformance vocabulary: caller assertion nameable, non-privileged, refusable** | The shape is legitimate and has five accepted precedents. It fails on the condition those precedents actually satisfy: **there is no Tiler consumption site that could refuse it**, and giving it one is certification | Would add a second public conformance-evidence authority beside `tiler.conformance-evidence.v1`, whose `discharge` gate is already reached from out-of-crate tests | Trivial | **Eliminated on two independent grounds**, either sufficient: no refusing consumer, and duplication of an accepted public vocabulary for the one row that has one |
+| **C. Whole-backend `run` facade** | Conflates device-free and host outcomes; bundles independently selected responsibilities | Contradicts ADR 0090's per-responsibility composition | Reaches every selected device path | **Eliminated, and additionally redundant**: `route_with_adapter` already is the public whole-route call, and it is what the fixture uses |
+| **D1. Explicitly partial split structural/execution facade** | Its 2026-08-17 blocker is gone — the subject exists and is demonstrated | The itemization shows the split has no substance to own: the structural half is `assert_eq!` against public accessors and the execution half is `route_with_adapter` plus a thirty-line comparison. Its two publishable types carry one backend's resource | Device-free half stays device-free | **Eliminated on new grounds** — not a missing subject, but a demonstrated subject showing the seams already are the harness |
+| **D2. Split facade claiming all eleven rows** | Both 2026-08-17 grounds are void: the subject exists and both carriers landed, so rows 4, 6 and 11 are claimable and explain can be truthfully excluded | Inherits every D1 defect across eleven rows | Same split cost plus every row | **Eliminated by D1's ground at greater width** |
+| **E. Typed deferral (the 2026-08-18 accepted outcome)** | Sound, but its stated sole surviving blocker — `solely by the missing neutral subject/second independent fixture` — no longer exists | Re-deferring after the trigger fired and was assessed records nothing | Unchanged | **Eliminated: its own reopening condition fired and has now been assessed twice** |
+| **F. Further bounded research — a third fixture** | Sound and cheap | Tests the same conclusion in a third shape | Unchanged | **Eliminated as dominated.** The obvious gap — nodefold carries zero deferred prepared-entry predicates, which its own assertion states and explains — is covered by the other member of the pair, whose CPU leg routes a Metal-assessed plan carrying deferred predicates. The argument being tested is structural, not statistical, so a third instance does not strengthen it |
+| **G. No public conformance facade; the accepted seams are the harness** | Preserves every current fail-closed check; publishes nothing unbounded; states its own reversal condition | Zero API commitment; retires a standing trigger instead of leaving it to be re-litigated | Exactly the existing private gate | **Survivor** |
+| **H. No Rust surface, plus a documented backend-conformance authoring reference** | Identical to G on every correctness and strictness dimension: a document publishes no item and cannot be forged into a pass | Strictly better than G on maintainability — the next author is pointed at the worked fixture and the accepted seams rather than re-deriving them — at the cost of a revisable prose commitment and no compile-time compatibility debt | Identical to G | **Survivor, and it dominates G** |
+
+### Frontier, and why there is no Tom choice to manufacture between G and H
+
+**H dominates G**: equal on correctness, strictness, identity, schema, public surface, and host cost, and strictly better on long-term maintainability. So the frontier has one point.
+
+But H's *increment over G* is a markdown document under `docs/backends/`, which crosses no public crate, module, trait, type, or call-site boundary and is therefore **not Tom's under ADR 0075**. Presenting H and G to him as alternatives would manufacture a choice out of a routing question. The honest handling, and the one taken here: **the decision put to Tom is G's public-boundary content, and the document is filed as a required follow-up so the work is not left implicit.**
+
+### The recommendation, stated exactly
+
+**Accept that Tiler publishes no backend-provider conformance facade, and close the question rather than deferring it a second time.**
+
+No public Rust spelling leaves `tiler-conformance`: no `pub mod`, re-export, trait, report, result, fixture, builder, constructor, error, completion token, or environment-policy type; no provider or adapter registry; no conformance-owned whole-backend bundle; and no second conformance-evidence vocabulary beside `tiler.conformance-evidence.v1`.
+
+The accepted production seams — `TargetProfileBuilder`, `assemble_plan_artifact`, `decode_artifact`, `RuntimeAdapter`, `route_with_adapter`, and `tiler-reference` — already constitute the harness. `crates/tiler-conformance/tests/independent_backend/` is the retained, executable demonstration: 3,348 lines across five files, importing only `tiler_artifact::program`, `tiler_build`, `tiler_compiler::session`, `tiler_compiler::target`, `tiler_ir`, `tiler_reference`, and `tiler_runtime`, with `grep -rn 'tiler_conformance' crates/tiler-conformance/tests/` returning **0** — it reaches nothing from the library beside it, because that library exports nothing and an integration test compiles against public surfaces alone.
+
+The unsupported population is unchanged and stays named rather than absent: third-party reusable reports; certification; arbitrary mathematical correctness; benchmarks and performance; dynamic plugins; adapter discovery; missing-adapter tests; explain-disposition coverage; generic device or output buffers; non-Metal availability policy; and any pass synthesized from unavailable hardware.
+
+### Explain coverage, decided atomically
+
+**Documented exclusion, and under this recommendation it is structural rather than documentary.** With no facade there is no published type that could construct a completeness label, so `all provider dispositions` is not a claim any Tiler surface can make. `ExplainDisposition` stays `pub(crate)` with no public re-export; no rendered string is a parse target; and the private gate makes no disposition claim.
+
+**Downstream effect on `make-explain-dispositions-assertable-by-a-conformance-suite`: it closes.** Its `## Closes when` has two clauses and both hold — explain coverage is documented as explicitly out of scope with the reason, and no suite reports coverage of the disposition obligation it does not check, vacuously, because no suite is published. The 2026-08-18 acceptance already recorded that an accepted answer excluding explain closes it without an implementation edge; no facade at all closes it on the same ground, and no backward edge is created.
+
+**One residual is named rather than absorbed.** Closing that ticket does not discharge the operation-extension contract's obligation that every disposition reach the explain trace as its own typed outcome. That obligation is compiler-owned and partly reserved today — `crates/tiler-compiler/src/explain.rs` says so itself in its crate-level allow reason, `what stays unconstructed is the reserved evidence, quantity, disposition, and subject vocabulary`. It is not created by this decision and is filed as a follow-up rather than left implicit.
+
+### Graph consequences if accepted
+
+- **`publish-the-partial-backend-conformance-facade` — closes rather than builds.** Its premise is that a partial facade should be published; this recommendation answers that none should be. Its own text already anticipates this: *"If Tom accepts that, this carrier closes rather than building."*
+- **`publish-the-backend-provider-conformance-suite`** — narrow it to a private cross-layer gate ticket in `tiler-conformance`, where the fixture is already a working instance, rather than closing it, so the row-coverage work keeps a home. Its complete-suite outcome no longer needs a public surface, and three of its five dependencies are `done`.
+- **`make-explain-dispositions-assertable-by-a-conformance-suite`** — closes, per the section above.
+- **Follow-ups below are filed, not folded into the answer.**
+
+### Follow-ups, filed rather than left implicit
+
+Four are filed now because each is true regardless of what Tom answers. One is deliberately **not** filed, and the reason is stated rather than silent.
+
+1. [`repair-the-stale-row-4-and-row-8-cells-in-the-backend-composition-matrix`](repair-the-stale-row-4-and-row-8-cells-in-the-backend-composition-matrix.md) (p2) — the matrix a reader would check the eleven-plus-two census against still prints `nothing installs one` for row 4 and `no indirection at all — statically Metal` for row 8, both retired by ADR 0090's dated corrections. The ticket carries the line-number breakdown, because `grep -c` returns 3 for the first anchor and only one of the three is a defect.
+2. [`give-the-private-conformance-gate-a-typed-host-unavailability-outcome`](give-the-private-conformance-gate-a-typed-host-unavailability-outcome.md) (p2) — **the one extraction with real substance, and it is internal.** The private gate still uses `Unavailable(String)` plus the ambient `TILER_REQUIRE_METAL_CONFORMANCE` switch; the fixture demonstrated a strictly better private design. Adds no public item.
+3. [`decide-whether-tiler-reference-publishes-a-bit-extraction-convenience`](decide-whether-tiler-reference-publishes-a-bit-extraction-convenience.md) (p3) — `workload::reference_bits` is the one genuinely reusable, genuinely non-self-certifying helper the fixture contains, and it belongs to `tiler-reference` rather than to any conformance facade. Kept separate so a small unrelated surface does not ride along on a facade answer.
+4. [`census-explain-disposition-reachability-inside-the-compiler`](census-explain-disposition-reachability-inside-the-compiler.md) (p3) — the residual named above, so closing the explain carrier is not read as discharging the operation-extension obligation.
+
+**Not filed: the authoring reference, candidate H's increment.** A `docs/backends/` document naming the two demonstrated subjects, the accepted seams, the fixture as the worked example, and the unsupported population. It is not filed because its entire content is determined by which answer Tom gives, so filing it now would presume the answer this packet exists to ask. It is named here so acceptance carries it, and it is the one piece of work this packet leaves unfiled.
+
+### Strongest counterarguments, reversal evidence, and perturbations
+
+**Counterargument 1 — the one the review's refutation actually supports.** The repository publishes caller-supplied evidence classes routinely, so refusing to publish one here looks like inconsistency. *Answer:* the five precedents are consistent with each other on a property this case lacks — a Tiler consumption site that refuses, re-derives, bounds, or separates identity. *Reversal evidence:* a named Tiler decision that a third-party conformance report would legitimately gate, without that decision being certification. **Perturbation that would test it:** take any of the five and delete its consumption site — remove the `required_for_rounds` comparison in `builder/tile.rs`, or the `discharge()` calls in `target/accuracy.rs` — and observe whether the class still bounds anything. If it does, the rule is wrong.
+
+**Counterargument 2 — the value is contractual, not technical.** An author who wants to say *my backend is Tiler-conformant* needs a Tiler-owned definition of that claim. *Answer:* that is certification, which is in the unsupported population and which no candidate enters. *Reversal evidence:* a named consumer who needs the claim rather than the capability — at which point the question is certification policy, not a Rust surface.
+
+**Counterargument 3 — the honest bound on this finding.** It rests on one fixture pair, n = 2. The itemization and the consumption-site rule are what carry it rather than the count, and both are structural. Still, a third backend in a materially different shape could surface shared machinery both of these hid.
+
+**Reversal condition, replacing the retired trigger.** A backend whose conformance evidence *cannot* be expressed against the public seams — concretely, one that must reach a `pub(crate)` item of any Tiler crate to state its structural or execution subject — reopens this decision. That is a compile error a future fixture would hit, so it fails loudly rather than silently. Trigger 4 is retired as moot: with no facade there is no report that could make a full-disposition claim.
+
+### The single Tom question
+
+> Accept that Tiler publishes **no** backend-provider conformance facade — the accepted production seams are the harness, `tiler-conformance` stays with no public surface, explain-disposition coverage is a structural exclusion, and `publish-the-partial-backend-conformance-facade` closes rather than builds — with reopening reserved for a backend that provably cannot state its subjects without reaching a `pub(crate)` item?
+
+### Checks run at this base
+
+`cargo nextest run -p tiler-conformance --lib -E 'test(portability)' --no-capture` (census `22`/`81`/`3`, green); `cargo nextest run -p tiler-conformance --test independent_backend --no-capture` (`12 tests run: 12 passed, 0 skipped`); plus `tkt lint`, `make citations`, `git diff --check`, and exact-base `tkt guard` recorded on the branch. This delta touches `tickets/` and `.ticketsplease/` only, so the last green gate carries.
+
+### Status of this packet
+
+**Not ready for presentation.** This ticket's own Stop boundary requires the packet to be Pareto-complete *and independently reviewed*, and this second re-derivation has not been reviewed. Independent strongest-reasoning review is the next step. No queue item is awaiting an answer from Tom at this base — items 1–8, 10, 12–23 and 25 are accepted or resolved, item 24 is resolved, and items 9 and 11 are held before presentation by their own release triggers — so the presentation slot is free once review passes.
