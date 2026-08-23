@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: []
 related: [re-run-a-merged-document-s-own-evidence-commands-against-the-merged-tree, decide-whether-the-citation-checker-should-reach-spike-records]
-scopes: []
+scopes: [research/scheduling, research/runtime, research/target-profiles, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, graph-hygiene, spikes]
@@ -47,3 +47,19 @@ The ~35 run-it-by-hand mentions above. Changing `check-citations.sh`. Editing `c
 ## Closes when
 
 Each of the four carries a dated correction whose reproduction supports the claim beside it, and the PROTOCOL no longer tells a reader a `spikes/` delta carries the gate for free.
+
+## Worker note — 2026-08-22, `worker-spikerec`, base `2c312826b6`
+
+**Scopes added, as scheduling metadata.** `scopes: []` did not cover the paths this ticket edits; `research/scheduling`, `research/runtime`, `research/target-profiles`, and `research/program-planning` were added because the four repaired files sit under `spikes/scheduling/**`, `spikes/runtime/**`, `spikes/target-profiles/**`, and `spikes/program-planning/**` respectively, per `ticketsplease.toml`'s path-to-scope table.
+
+**Re-audited the four named Facts, each re-read at `2c312826b6`.**
+- `spikes/reference/staged-combine-derivability/README.md` — the anchor `sits outside every gate, so this harness breaks` no longer exists verbatim. This file was already repaired, separately, at `46f74a90` ("Repair the staged-combine spike's citations the scheduled-region join made stale"), which landed a dated correction retiring both `"no `make` target reaches `spikes/`"` and `"`spikes/` sits outside every gate"` and stating the current gate reach. **No action taken; the Fact was stale before I started.**
+- The other three Facts were verified true as stated and repaired in place, each with a dated correction preserving the retired wording verbatim: `spikes/scheduling/metal_contraction_tile_width/PROTOCOL-2026-08-22-contraction-tile-width.md` ("The standing hazard this spike sits inside"), `spikes/runtime/backend-provider-portfolio/README.md` (the "Nothing detected those breaks" paragraph), `spikes/target-profiles/scalar-cpu-vertical/README.md` (the "Two API steps landed" Fact).
+
+**Population re-derived rather than trusted, per the ticket's own instruction.** Built a subject-side census in Python (not shell, per the backtick-corruption warning) over every `spikes/**/*.md` line matching any of: `outside every( repository)? gate`, `outside the workspace \`?members\`?`, `cannot see this directory`, `gates? nothing`, `no \`?make\`? target reaches`, `no target reaches`, `no gate (compiles|runs|reaches|checks)`, `nothing (in the repository )?(gates|checks|reaches|sees)`, `the only detector is a reader`, `so this harness breaks`, `reuses the last green gate` — 42 matching lines across 68 files, read individually. All but one non-ticket-named site fell into the ~35 true "no target builds/runs a spike" population the ticket excludes (run-it-by-hand instructions, several deferring to `spikes/README.md`), or turned out to be a false positive (`spikes/apple-targets/README.md`'s "the gate" refers to an in-harness numerical oracle, not a repository gate). One additional genuinely false site was found and repaired: `spikes/program-planning/physical-frontier-budget-calibration/README.md`, "The rule is adopted, not written" paragraph, which stated `spikes/ sits outside every repository gate` as the reason a copied quiet-host threshold could drift silently. Repaired with a dated correction: the premise is false (citations reaches this file), the conclusion survives (no gate checks whether a quoted constant tracks its source, and no target still compiles/runs/lints the directory).
+
+**Grep counts did not shrink**, confirmed by comparing the base and post-edit counts of the three false-claim phrasings (`outside every gate`, `cannot see this directory`, `the only detector is a reader`) across the seven touched/adjacent files: 7 at base, 10 now — the increase is the preserved retired-wording quotes.
+
+**Checks run:** `tkt lint` (`ok: no problems found`), `make citations` (exit 0; `spikes 609 link(s) ... 62 pinned citation(s) DECLINED`, both up from 601/61 because of the new ticket links and one new pinned citation my corrections quote), `git diff --check` (exit 0). `tkt guard --base 2c312826b60e275002f7332f167dd3c795861b99` run and reviewed.
+
+**Nothing in this ticket contradicted the brief.** `Spikes gate nothing.` (verbatim, in `spikes/runtime/backend-provider-portfolio/README.md`, `spikes/extensions/forkless-physical-provider/README.md`, and `spikes/program-planning/physical-frontier-budget-calibration/README.md`) was deliberately left untouched: read literally it says spikes-as-subjects don't gate anything else (a broken spike never blocks a merge), which stays true, rather than "nothing gates spikes" — the false claim this ticket targets.
