@@ -46,3 +46,32 @@ The rank-N lowering and Metal emission, which depend on this; widening what the 
 ## Closes when
 
 An operand whose layout differs from the emitter's assumption is emitted correctly or refused by name, the wrong-layout construction is watched producing that outcome with its output quoted, each behaviour is perturbed separately, and no identity value has moved.
+
+## Fact audit at `d46a4f44`
+
+Re-read at the base this work was done from, which is not the `b77e65af` the Facts were written against.
+
+**Fact 1 — the emitter discards its declared access maps: verified.** `grep -n "let _ = (left_addr, right_addr)" crates/tiler-ir/src/kernel/lower.rs` returned exactly one line. `emit_cooperative_contraction` then computed `left_off` from `IndexMultiply(row, contracted)` and `right_off` from `IndexMultiply(col, contracted)`, which is `[M, K]` and `[N, K]`.
+
+**Fact 2 — nothing constrains the sources to that layout: verified, and narrowed usefully.** `verify_cooperative_contraction` requires each operand axis to name one distinct in-range coordinate whose extent it agrees with, and `verify_blocked_operand_roles` requires the left to read the output's row axis and the right its column axis. Neither constrains the *order*, so at rank two each operand is admitted in both `[free, K]` and `[K, free]` orders — four combinations, of which the emission addressed one correctly. A transposition is a bijection of the operand's own index space, so all four stayed inside their buffers: no bounds proof, element count, or verifier could have caught it.
+
+**Fact 3 — the attention value structure is exactly such a case: verified.** `attention_value_kernel` in `crates/tiler-metal/src/tests.rs` declares its right operand `sources` as `Output { position: 0 }`, `Contracted { position: 0 }`, `Output { position: 3 }` — contracted in the middle. Its own doc states *"a lowering that read axis sources positionally rather than by role would produce one of these kernels for both"*. That kernel reaches the **non**-cooperative `ReductionTopology::Contraction` path, which addresses through `linearize_contraction_operand` and was already correct; the defect was confined to the cooperative path.
+
+## Repair and evidence
+
+Derived, not refused: `ReadAddressing::BlockedContraction` carries one `stride * coordinate` term per operand axis, built by `blocked_contraction_terms` from the declared sources, and the emission sums them. All four rank-two layouts are expressible, so no reachable layout is refused. `emit_offset` is deliberately not used — it would decode from a linear root the blocked body never forms, adding a divide and a modulo per operand per round.
+
+`each_declared_operand_layout_is_addressed_as_declared` interprets the derived body's index arithmetic and compares each operand's round-zero address against an independently written derivation. Run against the base emitter it reported, in one run:
+
+```text
+mis-addressed operands: [
+    "OperandLayouts { left_transposed: false, right_transposed: true } right: read 338, declared 117",
+    "OperandLayouts { left_transposed: true, right_transposed: false } left: read 293, declared 178",
+    "OperandLayouts { left_transposed: true, right_transposed: true } left: read 293, declared 178",
+    "OperandLayouts { left_transposed: true, right_transposed: true } right: read 338, declared 117",
+]
+```
+
+The row-major pair is absent from that list, which is what shows the check is not vacuously failing; and the left-only and right-only rows show the two addressings fail separately.
+
+**No identity value moves.** The canonical kernel identity of all seven row-major cooperative-contraction fixtures — exact, predicated, tail-partial, and multi-round — is byte-identical before and after. That is a derived result, not an assumption: the emitted operation order and constant count are held fixed for that layout. The comparison was shown able to say *no*: dropping the stride-constant reuse added one operation and moved every one of the seven identities by 23 bytes.

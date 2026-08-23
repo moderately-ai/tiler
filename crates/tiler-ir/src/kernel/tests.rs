@@ -6610,11 +6610,47 @@ fn operand_tile(rounds: u64) -> CooperativeTile {
     crate::schedule::blocked_operand_tile(16, rounds).expect("a 16-wide operand tile is statable")
 }
 
+/// Which axis order each operand of a cooperative contraction declares.
+///
+/// The vocabulary expresses four combinations at rank two — each operand is
+/// either `[free, K]` or `[K, free]` — and the blocked emission once addressed
+/// every one of them as if it were `[M, K]` and `[N, K]`. Naming the other three
+/// is what this parameter exists for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct OperandLayouts {
+    /// The left operand is `[K, M]` rather than `[M, K]`.
+    left_transposed: bool,
+    /// The right operand is `[K, N]` rather than `[N, K]`.
+    right_transposed: bool,
+}
+
+/// The pair the fixtures used before any other was expressible: `[M, K]`, `[N, K]`.
+const ROW_MAJOR_OPERANDS: OperandLayouts = OperandLayouts {
+    left_transposed: false,
+    right_transposed: false,
+};
+
 fn cooperative_contraction_region(
     output_m: u64,
     output_n: u64,
     contracted: u64,
     tail: TailPolicy,
+) -> VerifiedScheduledRegion {
+    cooperative_contraction_region_with_layouts(
+        output_m,
+        output_n,
+        contracted,
+        tail,
+        ROW_MAJOR_OPERANDS,
+    )
+}
+
+fn cooperative_contraction_region_with_layouts(
+    output_m: u64,
+    output_n: u64,
+    contracted: u64,
+    tail: TailPolicy,
+    layouts: OperandLayouts,
 ) -> VerifiedScheduledRegion {
     let block = 16;
     let admitted = match tail {
@@ -6654,17 +6690,33 @@ fn cooperative_contraction_region(
     let (binding, contracted_tile, rounds, work_items, grid_threads) = admitted;
     let output = Shape::from_dims([output_m, output_n]);
     let contracted_shape = Shape::from_dims([contracted]);
-    let operand_map = |free_position, operand: Shape| LogicalAccess::ContractionOperand {
-        operand_shape: operand,
-        output_shape: output.clone(),
-        contracted_shape: contracted_shape.clone(),
-        sources: vec![
-            ContractionAxisSource::Output {
-                position: free_position,
-            },
-            ContractionAxisSource::Contracted { position: 0 },
-        ],
-        order: ContributorOrder::OriginalAxisLexicographic,
+    // Each operand declares its two axes in one of two orders, and the shape
+    // follows the order rather than being stated beside it — a fixture that let
+    // the two disagree would be refused by the schedule verifier's extent rule
+    // and could never reach the lowering this exercises.
+    let operand_map = |free_position: u32, free_extent: u64, transposed: bool| {
+        let free = ContractionAxisSource::Output {
+            position: free_position,
+        };
+        let inner = ContractionAxisSource::Contracted { position: 0 };
+        let (operand_shape, sources) = if transposed {
+            (
+                Shape::from_dims([contracted, free_extent]),
+                vec![inner, free],
+            )
+        } else {
+            (
+                Shape::from_dims([free_extent, contracted]),
+                vec![free, inner],
+            )
+        };
+        LogicalAccess::ContractionOperand {
+            operand_shape,
+            output_shape: output.clone(),
+            contracted_shape: contracted_shape.clone(),
+            sources,
+            order: ContributorOrder::OriginalAxisLexicographic,
+        }
     };
     let mut builder = ScheduledRegionBuilder::new(RegionId::new(21));
     builder.iteration_shape(output.clone()).unwrap();
@@ -6672,12 +6724,12 @@ fn cooperative_contraction_region(
         (
             0,
             output_m * contracted,
-            operand_map(0, Shape::from_dims([output_m, contracted])),
+            operand_map(0, output_m, layouts.left_transposed),
         ),
         (
             1,
             output_n * contracted,
-            operand_map(1, Shape::from_dims([output_n, contracted])),
+            operand_map(1, output_n, layouts.right_transposed),
         ),
     ] {
         builder
@@ -6780,6 +6832,241 @@ fn cooperative_contraction_region(
     builder
         .build()
         .expect("the cooperative contraction verifies")
+}
+
+/// The element offsets round zero's two operand loads compute, for one invocation.
+///
+/// Interprets the *index* arithmetic of the derived body's top-level block, which
+/// is exactly where the peeled round-zero operand loads sit — the round loop and
+/// the committing store are nested blocks, and are deliberately not walked. The
+/// offsets come back in emission order: left operand, then right.
+///
+/// **This reads the address the kernel will compute, not the map it was built
+/// from, and nothing cheaper distinguishes the two.** A transposition is a
+/// bijection of the operand's own index space, so an operand addressed by the
+/// wrong layout still lands inside its buffer at a valid element: no bounds
+/// proof, no element count, and no verifier can see it. Only the arithmetic can.
+fn round_zero_operand_offsets(
+    scheduled: &VerifiedScheduledRegion,
+    global: u64,
+    local: u64,
+) -> Vec<u64> {
+    use super::model::{BinaryOp, Builtin, KernelConstant, OperationKind};
+    let data = super::lower::derive_canonical(
+        scheduled.region(),
+        scheduled.canonical_identity(),
+        scheduled.requirements(),
+    )
+    .expect("the canonical body exists");
+    let mut values: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
+    let mut offsets = Vec::new();
+    let block = data.blocks.first().expect("a body has a top-level block");
+    let define =
+        |values: &mut std::collections::BTreeMap<u32, u64>, results: &[u32], value: u64| {
+            let [result] = results else {
+                panic!("an index-producing operation yields exactly one value");
+            };
+            values.insert(*result, value);
+        };
+    for operation in &block.operations {
+        match &operation.kind {
+            OperationKind::Builtin { builtin } => {
+                let value = match builtin {
+                    Builtin::GlobalInvocationIndex => global,
+                    Builtin::LocalInvocationIndex => local,
+                };
+                define(&mut values, &operation.results, value);
+            }
+            OperationKind::Constant {
+                value: KernelConstant::Index(value),
+            } => define(&mut values, &operation.results, *value),
+            OperationKind::Binary { op, lhs, rhs } => {
+                // A non-index operand resolves to nothing, which is how the
+                // arithmetic of the fold is skipped without naming it.
+                let (Some(lhs), Some(rhs)) = (values.get(lhs).copied(), values.get(rhs).copied())
+                else {
+                    continue;
+                };
+                let value = match op {
+                    BinaryOp::IndexAdd => lhs + rhs,
+                    BinaryOp::IndexSubtract => lhs - rhs,
+                    BinaryOp::IndexMultiply => lhs * rhs,
+                    BinaryOp::IndexDivide => lhs / rhs,
+                    BinaryOp::IndexModulo => lhs % rhs,
+                    _ => continue,
+                };
+                define(&mut values, &operation.results, value);
+            }
+            OperationKind::Load { offset, .. } | OperationKind::GuardedLoad { offset, .. } => {
+                offsets.push(*values.get(offset).expect(
+                    "an operand load's offset is index arithmetic over the launch builtins",
+                ));
+            }
+            _ => {}
+        }
+    }
+    offsets
+}
+
+/// The addresses the *declared* maps say round zero's two loads must read.
+///
+/// Derived here from the layout alone rather than by calling the lowering's own
+/// term builder, so the two derivations are independent and a shared mistake
+/// cannot make them agree. The block geometry — participants on the output's
+/// trailing pair, participant `(m, n)` fetching the left tile's column `n` and
+/// the right tile's column `m` — is the tile's staging relation and is the same
+/// for every layout; only the stride each coordinate carries changes.
+fn declared_operand_offsets(
+    output_m: u64,
+    output_n: u64,
+    contracted: u64,
+    layouts: OperandLayouts,
+    global: u64,
+    local: u64,
+) -> [u64; 2] {
+    let block = 16;
+    let workgroups_n = output_n.div_ceil(block);
+    let workgroup = global / (block * block);
+    let row = (workgroup / workgroups_n) * block + local / block;
+    let column = (workgroup % workgroups_n) * block + local % block;
+    let left_k = local % block;
+    let right_k = local / block;
+    let left = if layouts.left_transposed {
+        left_k * output_m + row
+    } else {
+        row * contracted + left_k
+    };
+    let right = if layouts.right_transposed {
+        right_k * output_n + column
+    } else {
+        column * contracted + right_k
+    };
+    [left, right]
+}
+
+/// Every declared operand layout is addressed as declared, not as assumed.
+///
+/// **This is the construction the defect was found by.** Before the addressing
+/// was derived from the declared sources, all four subjects below emitted the
+/// same two addresses — `row * K + k` and `column * K + k` — so the three
+/// transposed ones read the wrong elements and nothing refused them. The two
+/// operands are asserted separately because they fail separately: a left-only
+/// transposition leaves the right address correct and vice versa, and a single
+/// combined assertion could not tell which addressing is load-bearing.
+///
+/// `M`, `N`, and `K` are three different values, and the invocation is chosen so
+/// all four candidate addresses differ; equal extents would let a wrong stride
+/// produce the right number.
+#[test]
+fn each_declared_operand_layout_is_addressed_as_declared() {
+    const OUTPUT_M: u64 = 32;
+    const OUTPUT_N: u64 = 48;
+    const CONTRACTED: u64 = 16;
+    // Workgroup 4 of the 2x3 grid, participant (2, 5) of the 16x16 block.
+    const GLOBAL: u64 = 4 * 256 + 37;
+    const LOCAL: u64 = 37;
+    // Every operand of every layout is judged, and the verdicts are reported
+    // together rather than through the first failing assertion. A left-only
+    // transposition and a right-only one are separate behaviours that fail
+    // separately, and a run that stopped at the first would say nothing about
+    // which of the two the addressing actually honours.
+    let mut wrong = Vec::new();
+    let mut judged = 0_usize;
+    for left_transposed in [false, true] {
+        for right_transposed in [false, true] {
+            let layouts = OperandLayouts {
+                left_transposed,
+                right_transposed,
+            };
+            let region = cooperative_contraction_region_with_layouts(
+                OUTPUT_M,
+                OUTPUT_N,
+                CONTRACTED,
+                TailPolicy::Exact,
+                layouts,
+            );
+            let observed = round_zero_operand_offsets(&region, GLOBAL, LOCAL);
+            let [left, right] = observed.as_slice() else {
+                panic!("{layouts:?}: round zero loads exactly two operands, saw {observed:?}");
+            };
+            let expected =
+                declared_operand_offsets(OUTPUT_M, OUTPUT_N, CONTRACTED, layouts, GLOBAL, LOCAL);
+            for (operand, observed, expected) in
+                [("left", *left, expected[0]), ("right", *right, expected[1])]
+            {
+                judged += 1;
+                if observed != expected {
+                    wrong.push(format!(
+                        "{layouts:?} {operand}: read {observed}, declared {expected}"
+                    ));
+                }
+            }
+        }
+    }
+    assert_eq!(judged, 8, "four layouts, two operands each");
+    assert!(wrong.is_empty(), "mis-addressed operands: {wrong:#?}");
+}
+
+/// A transposed operand is a different kernel, not the same one relabelled.
+///
+/// The four layouts are four distinct bodies. Stated as a body property rather
+/// than as a kernel-identity one on purpose: the identity folds the scheduled
+/// region's identity, which already differs when an access map differs, so
+/// comparing identities would have passed even while every layout emitted the
+/// same addresses.
+#[test]
+fn the_four_operand_layouts_emit_four_distinct_address_pairs() {
+    const GLOBAL: u64 = 4 * 256 + 37;
+    const LOCAL: u64 = 37;
+    let mut seen = Vec::new();
+    for left_transposed in [false, true] {
+        for right_transposed in [false, true] {
+            let region = cooperative_contraction_region_with_layouts(
+                32,
+                48,
+                16,
+                TailPolicy::Exact,
+                OperandLayouts {
+                    left_transposed,
+                    right_transposed,
+                },
+            );
+            seen.push(round_zero_operand_offsets(&region, GLOBAL, LOCAL));
+        }
+    }
+    assert_eq!(seen.len(), 4, "four layouts were built");
+    let mut sorted = seen.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(sorted.len(), 4, "distinct address pairs among {seen:?}");
+}
+
+/// A transposed operand still lowers, verifies, and keeps its guarded tail.
+///
+/// The addressing repair must not have narrowed what the emission accepts: the
+/// transposed layouts reach a whole verified kernel, under the predicated tail
+/// as well as the exact one.
+#[test]
+fn a_transposed_operand_pair_lowers_to_a_verified_kernel() {
+    for tail in [TailPolicy::Exact, TailPolicy::Predicated] {
+        let region = cooperative_contraction_region_with_layouts(
+            32,
+            48,
+            16,
+            tail,
+            OperandLayouts {
+                left_transposed: true,
+                right_transposed: true,
+            },
+        );
+        let kernel = lower_scheduled_region(&region)
+            .unwrap_or_else(|error| panic!("{tail:?}: transposed operands lower: {error:?}"));
+        let expected = match tail {
+            TailPolicy::Exact => 0,
+            TailPolicy::Predicated => 2,
+        };
+        assert_eq!(guarded_load_count(&kernel), expected, "{tail:?}");
+    }
 }
 
 fn guarded_load_count(kernel: &VerifiedKernel) -> usize {

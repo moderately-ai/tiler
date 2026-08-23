@@ -61,6 +61,41 @@ struct OffsetTerm {
     stride: u64,
 }
 
+/// Which coordinate of a blocked cooperative contraction one operand axis reads.
+///
+/// The three coordinates a blocked body already holds as separate values: the
+/// participant's output row, its output column, and the contracted index its
+/// staged tile load names. Naming the coordinate rather than a position in a
+/// linear space is the whole point of this form — it is what lets the address be
+/// a sum of `stride * coordinate` with no decode, where [`OffsetTerm`] would
+/// need a divide and a modulo to recover coordinates this body never linearized.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BlockedCoordinate {
+    /// The output coordinate the participant's block row names.
+    Row,
+    /// The output coordinate the participant's block column names.
+    Column,
+    /// The contracted coordinate the participant's staged tile load names.
+    ///
+    /// Its value differs between the two operands — participant `(m, n)` fetches
+    /// the left tile's column `n` and the right tile's column `m` — so the
+    /// emission supplies it rather than this term carrying it.
+    Contracted,
+}
+
+/// One `stride * coordinate` term of a blocked contraction operand's address.
+///
+/// The stride is the operand's *own* row-major stride for that axis, so a
+/// transposed operand yields the same two terms with the strides exchanged. That
+/// exchange is the entire difference between `[M, K]` and `[K, M]`, and reading
+/// it from the declared sources is what keeps the emitted address the one the
+/// region states rather than the one the first fixture happened to use.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct BlockedTerm {
+    coordinate: BlockedCoordinate,
+    stride: u64,
+}
+
 /// How the read access computes its element offset.
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum ReadAddressing {
@@ -72,6 +107,16 @@ enum ReadAddressing {
     /// One contraction operand addressed by its static free coordinates and a
     /// live inner contracted index: `offset = free * S + contributor`.
     LiveContracted { free: Vec<OffsetTerm> },
+    /// One operand of a blocked cooperative contraction, addressed by the block
+    /// coordinates its body already holds.
+    ///
+    /// Deliberately not [`Self::Linearized`]. That form decodes every coordinate
+    /// out of one linear root, and a blocked body has no such root: its row,
+    /// column, and contracted coordinates are separate values built from the
+    /// workgroup and local indices. Reconstructing a linear coordinate to decode
+    /// it again would add a divide and a modulo per operand per round to a
+    /// kernel that carries a retained timing.
+    BlockedContraction(Vec<BlockedTerm>),
     /// A reduction contributor position linearized over the input shape.
     Linearized(Vec<OffsetTerm>),
     /// A partitioned contributor position of one pass of a split reduction.
@@ -186,7 +231,6 @@ struct CooperativeContractionPlan {
     workgroups_n: u64,
     output_m: u64,
     output_n: u64,
-    contracted: u64,
     rounds: u64,
     predicated: bool,
     left_staging: crate::schedule::StagingId,
@@ -552,7 +596,6 @@ fn cooperative_contraction_plan(
         workgroups_n: workgroups.extents()[1].get(),
         output_m: schedule.index.iteration_shape.extents()[0].get(),
         output_n: schedule.index.iteration_shape.extents()[1].get(),
-        contracted: contracted_shape.extents()[0].get(),
         rounds: tile.rounds,
         predicated: matches!(schedule.schedule.tail, TailPolicy::Predicated),
         left_staging: left.id,
@@ -730,6 +773,15 @@ fn addressing(
             sources,
             ..
         } => {
+            // The blocked topology addresses through named block coordinates
+            // rather than through a linear root, so it resolves to its own form
+            // before the linearization below — which would otherwise produce
+            // terms whose roots this body never computes.
+            if matches!(reduction, ReductionTopology::CooperativeContraction { .. }) {
+                return Ok(ReadAddressing::BlockedContraction(
+                    blocked_contraction_terms(operand_shape, output_shape, sources)?,
+                ));
+            }
             let terms = linearize_contraction_operand(
                 operand_shape,
                 output_shape,
@@ -916,6 +968,106 @@ fn linearize_contraction_operand(
             mirror: None,
             stride,
         });
+    }
+    Ok(terms)
+}
+
+/// Builds the address terms of one blocked cooperative-contraction operand.
+///
+/// Each operand axis contributes one `stride * coordinate` term: the coordinate
+/// is whichever of the block's three the declared source names, and the stride is
+/// the operand's own row-major stride for that axis. Nothing is decoded, because
+/// the emitted body holds all three coordinates already.
+///
+/// **This is the function that makes `[K, M]` a different kernel from `[M, K]`.**
+/// The two declare the same coordinates in the opposite axis order, so they
+/// differ only in which term carries the non-unit stride — and an emission that
+/// hardcoded one of them read the wrong element for the other with no refusal
+/// anywhere.
+///
+/// A term whose operand extent is one, or whose stride is zero, is dropped: the
+/// coordinate is then constantly zero wherever the load actually happens, which
+/// is the same convention [`linearize_contraction_operand`] follows. It stays
+/// sound under a predicated tail, where the row or column coordinate may exceed
+/// its extent, because such an invocation's load is guarded off and performs no
+/// access.
+///
+/// # Errors
+///
+/// Returns [`KernelDiagnostic::CooperativeLoweringShape`] for a declared layout
+/// this emission has no body for — an operand axis reading an output coordinate
+/// outside the participants' trailing pair, or a contracted coordinate other
+/// than the single one the round loop walks. Both are refused by *layout*, not by
+/// shape: they name a coordinate no value in this body computes. The schedule
+/// layer's `verify_blocked_operand_roles` and `cooperative_contraction_plan`
+/// already exclude them, so this is the fail-closed backstop for a body derived
+/// outside those gates rather than a reachable refusal.
+fn blocked_contraction_terms(
+    operand_shape: &Shape,
+    output_shape: &Shape,
+    sources: &[crate::schedule::ContractionAxisSource],
+) -> Result<Vec<BlockedTerm>, KernelDiagnostic> {
+    let operand_extents: Vec<u64> = operand_shape
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    if sources.len() != operand_extents.len() {
+        return Err(KernelDiagnostic::ContributorDomain);
+    }
+    let operand_strides = suffix_products(&operand_extents);
+    // The participants occupy the output's trailing two axes, which is the
+    // relation `participant_space_matches_block` couples the block to.
+    let Some(row) = output_shape.rank().checked_sub(2) else {
+        return Err(KernelDiagnostic::CooperativeLoweringShape);
+    };
+    let column = row + 1;
+
+    let mut terms = Vec::with_capacity(sources.len());
+    for (axis, source) in sources.iter().enumerate() {
+        let position = match source {
+            crate::schedule::ContractionAxisSource::Output { position }
+            | crate::schedule::ContractionAxisSource::Contracted { position } => {
+                usize::try_from(*position).map_err(|_| KernelDiagnostic::ContributorDomain)?
+            }
+        };
+        let coordinate = match source {
+            crate::schedule::ContractionAxisSource::Output { .. } if position == row => {
+                BlockedCoordinate::Row
+            }
+            crate::schedule::ContractionAxisSource::Output { .. } if position == column => {
+                BlockedCoordinate::Column
+            }
+            // A batch coordinate outside the participants' pair. No value in this
+            // body names one, so the layout is refused rather than addressed by
+            // whichever coordinate sits nearest it.
+            //
+            // Kept a separate arm from the contracted refusal below, which shares
+            // its diagnostic: the two name different missing values — a batch
+            // coordinate no participant carries, against a second contracted
+            // induction the round loop does not have — and merging them would
+            // leave one comment standing for both.
+            #[expect(
+                clippy::match_same_arms,
+                reason = "distinct unaddressable coordinates that share one diagnostic"
+            )]
+            crate::schedule::ContractionAxisSource::Output { .. } => {
+                return Err(KernelDiagnostic::CooperativeLoweringShape);
+            }
+            crate::schedule::ContractionAxisSource::Contracted { .. } if position == 0 => {
+                BlockedCoordinate::Contracted
+            }
+            // The round loop walks one contracted coordinate; a second would need
+            // a second induction variable this body does not have.
+            crate::schedule::ContractionAxisSource::Contracted { .. } => {
+                return Err(KernelDiagnostic::CooperativeLoweringShape);
+            }
+        };
+        let stride = operand_strides[axis];
+        if operand_extents[axis] == 1 || stride == 0 {
+            continue;
+        }
+        terms.push(BlockedTerm { coordinate, stride });
     }
     Ok(terms)
 }
@@ -1599,7 +1751,20 @@ fn emit_cooperative_contraction(
             rule: "cooperative-contraction-access-count",
         });
     };
-    let _ = (left_addr, right_addr);
+    // The declared layout of each operand, resolved by `plan` from the access
+    // map the region states. Refusing anything else here rather than falling back
+    // to an assumed `[M, K]` / `[N, K]` pair is the point: those two layouts are
+    // one of four the vocabulary expresses, and the other three used to lower to
+    // a kernel that read the wrong elements with no refusal anywhere.
+    let (
+        ReadAddressing::BlockedContraction(left_terms),
+        ReadAddressing::BlockedContraction(right_terms),
+    ) = (left_addr, right_addr)
+    else {
+        return Err(KernelLoweringError::UnsupportedRegion {
+            rule: "cooperative-contraction-operand-layout",
+        });
+    };
     let element_type = region_element_type(plan.scalar);
     let left_buffer = builder.declare_buffer(BufferParameter {
         tensor: left.tensor,
@@ -1653,7 +1818,19 @@ fn emit_cooperative_contraction(
     let workgroups_n = builder.constant(KernelConstant::Index(contraction.workgroups_n))?;
     let output_m = builder.constant(KernelConstant::Index(contraction.output_m))?;
     let output_n = builder.constant(KernelConstant::Index(contraction.output_n))?;
-    let contracted = builder.constant(KernelConstant::Index(contraction.contracted))?;
+    // One index constant per *distinct* non-unit operand stride, in first
+    // appearance order across the two operands. Two operands that share a stride
+    // — which every `[M, K]` / `[N, K]` pair does, both being the contracted
+    // extent — therefore share one constant, exactly as the single hardcoded
+    // constant this replaces did.
+    let mut strides: Vec<(u64, KernelValueId)> = Vec::new();
+    for term in left_terms.iter().chain(right_terms.iter()) {
+        if term.stride <= 1 || strides.iter().any(|(stride, _)| *stride == term.stride) {
+            continue;
+        }
+        let value = builder.constant(KernelConstant::Index(term.stride))?;
+        strides.push((term.stride, value));
+    }
     let wg = builder.binary(BinaryOp::IndexDivide, gid, threads)?;
     let wg_n = builder.binary(BinaryOp::IndexModulo, wg, workgroups_n)?;
     let wg_m = builder.binary(BinaryOp::IndexDivide, wg, workgroups_n)?;
@@ -1667,43 +1844,53 @@ fn emit_cooperative_contraction(
     let column_active = builder.compare(CompareOp::IndexLessThan, col, output_n)?;
     let inactive = builder.constant(KernelConstant::F32Bits(0.0_f32.to_bits()))?;
 
-    let emit_tile =
-        |builder: &mut KernelBuilder, k0: KernelValueId| -> Result<(), KernelBuildError> {
-            let left_k = builder.binary(BinaryOp::IndexAdd, k0, local_n)?;
-            let right_k = builder.binary(BinaryOp::IndexAdd, k0, local_m)?;
-            let left_row = builder.binary(BinaryOp::IndexMultiply, row, contracted)?;
-            let right_row = builder.binary(BinaryOp::IndexMultiply, col, contracted)?;
-            let left_off = builder.binary(BinaryOp::IndexAdd, left_row, left_k)?;
-            let right_off = builder.binary(BinaryOp::IndexAdd, right_row, right_k)?;
-            let left_val = if contraction.predicated {
-                builder.guarded_load(row_active, left_buffer, left_off, left.bounds, inactive)?
-            } else {
-                builder.load(left_buffer, left_off, left.bounds)?
-            };
-            let right_val = if contraction.predicated {
-                builder.guarded_load(
-                    column_active,
-                    right_buffer,
-                    right_off,
-                    right.bounds,
-                    inactive,
-                )?
-            } else {
-                builder.load(right_buffer, right_off, right.bounds)?
-            };
-            let left_slot = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
-            let left_slot = builder.binary(BinaryOp::IndexAdd, left_slot, local_n)?;
-            let right_slot = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
-            let right_slot = builder.binary(BinaryOp::IndexAdd, right_slot, local_m)?;
-            builder.staged_store(left_staging, left_slot, left_val, contraction.produce_phase)?;
-            builder.staged_store(
-                right_staging,
-                right_slot,
-                right_val,
-                contraction.produce_phase,
-            )?;
-            Ok(())
+    let emit_tile = |builder: &mut KernelBuilder,
+                     k0: KernelValueId|
+     -> Result<(), KernelBuildError> {
+        // Participant `(m, n)` fetches the left tile's column `n` and the
+        // right tile's column `m`. That is the tile's staging relation rather
+        // than either operand's layout, so it stays stated here while the
+        // address the coordinate feeds comes from the declared map.
+        let left_k = builder.binary(BinaryOp::IndexAdd, k0, local_n)?;
+        let right_k = builder.binary(BinaryOp::IndexAdd, k0, local_m)?;
+        // Both operands' terms are scaled before either is summed. The two
+        // addresses are independent, so the interleaving is free — and fixing
+        // it this way is what keeps a region whose operands are already
+        // `[M, K]` and `[N, K]` emitting the byte-identical body, and so the
+        // identical canonical identity, that it did before.
+        let left_scaled = scale_blocked_terms(builder, left_terms, &strides, row, col, left_k)?;
+        let right_scaled = scale_blocked_terms(builder, right_terms, &strides, row, col, right_k)?;
+        let left_off = sum_blocked_terms(builder, &left_scaled)?;
+        let right_off = sum_blocked_terms(builder, &right_scaled)?;
+        let left_val = if contraction.predicated {
+            builder.guarded_load(row_active, left_buffer, left_off, left.bounds, inactive)?
+        } else {
+            builder.load(left_buffer, left_off, left.bounds)?
         };
+        let right_val = if contraction.predicated {
+            builder.guarded_load(
+                column_active,
+                right_buffer,
+                right_off,
+                right.bounds,
+                inactive,
+            )?
+        } else {
+            builder.load(right_buffer, right_off, right.bounds)?
+        };
+        let left_slot = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
+        let left_slot = builder.binary(BinaryOp::IndexAdd, left_slot, local_n)?;
+        let right_slot = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
+        let right_slot = builder.binary(BinaryOp::IndexAdd, right_slot, local_m)?;
+        builder.staged_store(left_staging, left_slot, left_val, contraction.produce_phase)?;
+        builder.staged_store(
+            right_staging,
+            right_slot,
+            right_val,
+            contraction.produce_phase,
+        )?;
+        Ok(())
+    };
 
     // One tile's contributors, folded into the *carried* accumulator rather than
     // into a subtotal of their own. `carried` is `None` on the first round and
@@ -1833,6 +2020,69 @@ fn emit_cooperative_contraction(
         })?;
     }
     Ok(())
+}
+
+/// Scales each blocked term's coordinate by the operand's own stride.
+///
+/// A unit stride emits no operation and yields the coordinate itself, which is
+/// what keeps the trailing axis of a row-major operand free — and what makes the
+/// transposed layout cost exactly the same one multiply and one add as the
+/// hardcoded one did, rather than paying for its generality.
+///
+/// `strides` holds the top-level constant for every non-unit stride the two
+/// operands declare. A term whose stride is absent from it is reported as an
+/// invalid handle rather than given a freshly emitted constant, because a
+/// constant emitted inside the round loop would not be the same value the peeled
+/// round used and the refinement gate compares those bodies structurally.
+fn scale_blocked_terms(
+    builder: &mut KernelBuilder,
+    terms: &[BlockedTerm],
+    strides: &[(u64, KernelValueId)],
+    row: KernelValueId,
+    column: KernelValueId,
+    contracted: KernelValueId,
+) -> Result<Vec<KernelValueId>, KernelBuildError> {
+    let mut scaled = Vec::with_capacity(terms.len());
+    for term in terms {
+        let coordinate = match term.coordinate {
+            BlockedCoordinate::Row => row,
+            BlockedCoordinate::Column => column,
+            BlockedCoordinate::Contracted => contracted,
+        };
+        if term.stride == 1 {
+            scaled.push(coordinate);
+            continue;
+        }
+        let stride = strides
+            .iter()
+            .find_map(|(stride, value)| (*stride == term.stride).then_some(*value))
+            .ok_or(KernelBuildError::InvalidHandle {
+                entity: super::error::KernelEntityKind::Value,
+            })?;
+        scaled.push(builder.binary(BinaryOp::IndexMultiply, coordinate, stride)?);
+    }
+    Ok(scaled)
+}
+
+/// Sums the scaled terms of one blocked operand address in axis order.
+///
+/// An operand every one of whose axes was dropped — every extent one — addresses
+/// its single element at zero, which is the one case that emits a constant.
+fn sum_blocked_terms(
+    builder: &mut KernelBuilder,
+    scaled: &[KernelValueId],
+) -> Result<KernelValueId, KernelBuildError> {
+    let mut total: Option<KernelValueId> = None;
+    for value in scaled {
+        total = Some(match total {
+            None => *value,
+            Some(accumulated) => builder.binary(BinaryOp::IndexAdd, accumulated, *value)?,
+        });
+    }
+    match total {
+        Some(value) => Ok(value),
+        None => builder.constant(KernelConstant::Index(0)),
+    }
 }
 
 /// Emits the canonical body of a cooperative tile whose phases repeat.
@@ -2828,7 +3078,13 @@ fn emit_offset(
 ) -> Result<KernelValueId, KernelBuildError> {
     let (terms, output, contributor) = match addressing {
         ReadAddressing::Identity => return Ok(invocation),
-        ReadAddressing::LiveRowMajor { .. } | ReadAddressing::LiveContracted { .. } => {
+        // Three forms with no linear root to decode. The blocked contraction is
+        // here for a reason worth stating: routing it through this function would
+        // silently emit the divide and modulo it exists to avoid, so the refusal
+        // is what keeps that cost out of a kernel with a retained timing.
+        ReadAddressing::LiveRowMajor { .. }
+        | ReadAddressing::LiveContracted { .. }
+        | ReadAddressing::BlockedContraction(_) => {
             return Err(KernelBuildError::InvalidHandle {
                 entity: super::error::KernelEntityKind::Value,
             });
@@ -2888,5 +3144,133 @@ fn emit_offset(
     match total {
         Some(value) => Ok(value),
         None => builder.constant(KernelConstant::Index(0)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BlockedCoordinate, BlockedTerm, KernelDiagnostic, blocked_contraction_terms};
+    use crate::schedule::ContractionAxisSource::{Contracted, Output};
+    use crate::shape::Shape;
+
+    /// The output every case below contracts into: `[M, N] = [32, 48]`.
+    ///
+    /// `M`, `N`, and `K` are deliberately three different values, so a term that
+    /// picked up the wrong extent as its stride cannot compare equal to the right
+    /// one by coincidence.
+    fn output() -> Shape {
+        Shape::from_dims([32, 48])
+    }
+
+    fn term(coordinate: BlockedCoordinate, stride: u64) -> BlockedTerm {
+        BlockedTerm { coordinate, stride }
+    }
+
+    /// `[M, K]`: the row coordinate carries the contracted extent as its stride.
+    #[test]
+    fn a_row_major_left_operand_scales_the_row_by_the_contracted_extent() {
+        let terms = blocked_contraction_terms(
+            &Shape::from_dims([32, 16]),
+            &output(),
+            &[Output { position: 0 }, Contracted { position: 0 }],
+        )
+        .expect("the row-major left layout is expressible");
+        assert_eq!(
+            terms,
+            vec![
+                term(BlockedCoordinate::Row, 16),
+                term(BlockedCoordinate::Contracted, 1),
+            ]
+        );
+    }
+
+    /// `[K, M]`: the same two coordinates, with the strides exchanged.
+    ///
+    /// This is the layout the emission used to address as if it were `[M, K]`,
+    /// and the exchange here is the whole content of that defect.
+    #[test]
+    fn a_transposed_left_operand_scales_the_contracted_index_by_the_row_extent() {
+        let terms = blocked_contraction_terms(
+            &Shape::from_dims([16, 32]),
+            &output(),
+            &[Contracted { position: 0 }, Output { position: 0 }],
+        )
+        .expect("the transposed left layout is expressible");
+        assert_eq!(
+            terms,
+            vec![
+                term(BlockedCoordinate::Contracted, 32),
+                term(BlockedCoordinate::Row, 1),
+            ]
+        );
+    }
+
+    /// `[K, N]`: the attention value structure's middle-contracted orientation.
+    #[test]
+    fn a_transposed_right_operand_scales_the_contracted_index_by_the_column_extent() {
+        let terms = blocked_contraction_terms(
+            &Shape::from_dims([16, 48]),
+            &output(),
+            &[Contracted { position: 0 }, Output { position: 1 }],
+        )
+        .expect("the transposed right layout is expressible");
+        assert_eq!(
+            terms,
+            vec![
+                term(BlockedCoordinate::Contracted, 48),
+                term(BlockedCoordinate::Column, 1),
+            ]
+        );
+    }
+
+    /// A batch coordinate is refused: no value in the blocked body names one.
+    ///
+    /// The refusal names the *layout* — an axis reading an output coordinate
+    /// outside the participants' trailing pair — rather than the operand's shape,
+    /// which is why a rank-four output whose operand read only the trailing pair
+    /// would not reach it.
+    #[test]
+    fn an_output_coordinate_outside_the_participant_pair_is_refused() {
+        assert_eq!(
+            blocked_contraction_terms(
+                &Shape::from_dims([8, 32, 16]),
+                &Shape::from_dims([8, 2, 32, 48]),
+                &[
+                    Output { position: 0 },
+                    Output { position: 2 },
+                    Contracted { position: 0 },
+                ],
+            ),
+            Err(KernelDiagnostic::CooperativeLoweringShape)
+        );
+    }
+
+    /// A second contracted coordinate is refused: one round loop, one induction.
+    #[test]
+    fn a_contracted_coordinate_beyond_the_first_is_refused() {
+        assert_eq!(
+            blocked_contraction_terms(
+                &Shape::from_dims([32, 4, 16]),
+                &output(),
+                &[
+                    Output { position: 0 },
+                    Contracted { position: 1 },
+                    Contracted { position: 0 },
+                ],
+            ),
+            Err(KernelDiagnostic::CooperativeLoweringShape)
+        );
+    }
+
+    /// An axis whose extent is one contributes no term: its coordinate is zero.
+    #[test]
+    fn a_unit_extent_axis_contributes_no_term() {
+        let terms = blocked_contraction_terms(
+            &Shape::from_dims([1, 16]),
+            &Shape::from_dims([1, 48]),
+            &[Output { position: 0 }, Contracted { position: 0 }],
+        )
+        .expect("a unit row extent is expressible");
+        assert_eq!(terms, vec![term(BlockedCoordinate::Contracted, 1)]);
     }
 }
