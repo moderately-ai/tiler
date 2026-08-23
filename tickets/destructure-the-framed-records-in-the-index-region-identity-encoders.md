@@ -43,3 +43,19 @@ Changing what any identity encodes, its field order, or its domain tag. Any publ
 ## Closes when
 
 Every framed record in the index-region identity encoders is destructured exhaustively, the paired length invariant is shown to hold, the emitted bytes are demonstrated unchanged over a discriminating population, no identity value has moved, and a field-addition perturbation is watched failing at an encoder span.
+
+## Coordinator correction, 2026-08-22 — my third anchor failure of this session, same shape each time
+
+The ticket text above cites the `numerics.rs` convention *"at the anchor `a field added to a provenance record is then a build error at the encoder`"*. Retired wording preserved. **That anchor returns 0.** A line break falls after `build error at`, so the full sentence never appears in the bytes. The shortest resolving fragment is `a field added to a provenance record is then a build error at`, which returns 1. Verified by the coordinator at `5c104c59`.
+
+**This is the third time in one session I have handed a worker a full-sentence anchor lifted from a rendered view without running its grep first** — after `it can also say what it deliberately withheld` on the typed-declines ticket and the `pub`/`pub(crate)` mis-citation on the flash-class ticket. AGENTS.md is not ambiguous about the obligation and does not need strengthening: *"run its grep against the file the citation names before handing it to anyone"*, and the coordinator section repeats it as *"run it yourself first — a supplied command that has never been executed is a claim, not a check."* The failure is mine, not the document's. Every instance failed in the dangerous direction, reading as *the text was removed* when the text was plainly there, and every instance was caught by a worker rather than by me.
+
+**Two counts in the same ticket were also imprecise, and the lane repaired both.** "Thirteen `let Self { … }` encoders below it" is 13 sites in the file, **12** below the anchor, of which only **7** are inside `pub fn encode`; the other 6 are `render`. And my brief's "nine per-element loops" is 8 in `encode_region` and 7 in `encoded_region_len`. Neither changed the substance.
+
+## Coordinator verification of the landed work, 2026-08-22 at `5c104c59`
+
+The fourth site the ticket left unverified is **real**: `alpha_access_key` in `compact.rs` frames the same `GatherReadAccessData` under `tiler.index.access-read.alpha.v1`, and its Direct arm additionally elided `mode` with nothing recording the omission.
+
+**The finding worth carrying forward is about what region identity can discriminate.** Perturbing `access_read_key` and `alpha_access_key` initially moved **zero** of 117 dumped records, because a consistent field reordering inside a structural or alpha key is a bijection on keys — interning and canonical order are unchanged, so every region identity stays put. Region identity therefore **cannot discriminate those two encoders at all**, and a byte-identity harness that only dumps region identities would have reported a clean comparison while proving nothing about them. The lane found this by extending the harness to dump the draft keys directly, turning 0 into 6/1/7/1. Any future byte-identity demonstration over this layer must dump the keys, not only the identities.
+
+Confirmed by the coordinator: `INDEX_REGION_DOMAIN` has **0** occurrences in the diff, no golden or pinned identity file is in the commit, and `git grep` for `drift_probe` and `regionenc_harness` at the landed commit both return nothing.
