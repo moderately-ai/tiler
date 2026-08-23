@@ -1,7 +1,7 @@
 ---
 id: lower-the-indirect-gather-read-through-the-structured-kernel-body
 title: Lower the indirect gather read through the structured kernel body
-status: in-progress
+status: review
 priority: p2
 dependencies: [thread-resolved-lowering-into-the-governed-spelling-path]
 related: []
@@ -51,3 +51,17 @@ That lane wrote the sentence **conditionally on purpose**, naming this ticket as
 **When this ticket lands, that paragraph needs a further dated correction.** The scope is `contracts/optimizer`, which this ticket does **not** hold, so it is a follow-up to file at merge rather than something to reach for from this lane. This is the third link in that chain — `27fa3043`, then `0b51531f` — and each one flagged its own successor rather than leaving a stale sentence, which is the pattern to continue.
 
 **Also verified by the coordinator at `db8ae185`, so you need not re-derive it:** `GATHER_KERNEL_BODY_RULE` is `"gather-kernel-body"` at `crates/tiler-compiler/src/pipeline/planning.rs`, and the classifier reports rather than refuses — it stops being reached once your body lands, which is the intended retirement path for it.
+
+## FORCED HOLD — 2026-08-23: the work is complete and gated RED by design; do not merge yet
+
+**Branch `tkt/lower-the-indirect-gather-read-through-the-structured-kernel-body`, commit `cd3d689a`, base `db8ae185`. Preserved and deliberately unmerged.** `worker-gatherbody` completed the lowering and told the coordinator not to merge. That instruction is correct and is being honoured.
+
+**Why main must not take it yet.** One workspace test fails: `tiler-compiler request::tests::a_statically_proved_gather_is_declined_for_its_missing_kernel_body`, `left: None  right: Some(("kernel-lowering", "gather-kernel-body"))`. That is not a defect in the lowering — it is the **predicted** consequence of it. The classifier `pipeline::planning::kernel_lowering_failure` exists only to report the missing body; once the body lands its arm is unreachable, so `planning_capability_rule` answers `None` and the test asserting the classification fails. The gate is red **because the lane succeeded**.
+
+**Why the lane did not fix it, and was right not to.** The fix lives in `implementation/compiler`, which this ticket does not declare, which the brief made a non-goal, and which was held at the time by a **live exclusive claim**. Reaching across a live claim to green a gate is exactly the shortcut that produces an unreviewed merge.
+
+**RELEASE TRIGGER — merge this branch only after [`retire-the-gather-kernel-lowering-classification-after-the-body-landed`](retire-the-gather-kernel-lowering-classification-after-the-body-landed.md) lands, and gate the two together.** That ticket is `p1`, scoped `implementation/compiler`, depends on this one, and is filed **on this branch** rather than on `main` — so it becomes visible to the board only when this merges. The coordinator must therefore dispatch it from this branch's content or re-file it on `main`; it will not appear on the ready board by itself. `implementation/compiler` is currently held by `split-the-compiler-pipeline-test-monolith-by-orchestration-phase`.
+
+**Known next wall, probed but not landed.** The lane patched the test to print, ran it, reverted, and confirmed a clean tree. The outcome after the classifier retires is `InvalidCompilerOutput(Program(CoreConstruction(StageElementType { position: 1, expected: U32, actual: F32 })))`: `BoundedCarrier::of` in `crates/tiler-compiler/src/program.rs` materializes every boundary value at the program's arithmetic carrier, so a `tiler::u32@1` index input is declared `f32`. `tiler_ir::program::StorageScalar::U32` already exists — the missing half is the compiler's per-input carrier selection, not an IR carrier.
+
+**Also outside that lane's scopes, for a coordinator pass:** `docs/roadmap.md`'s gather row still reads that `LogicalAccess` has no indirect relation and no lowering capability, which three landed commits have falsified.
