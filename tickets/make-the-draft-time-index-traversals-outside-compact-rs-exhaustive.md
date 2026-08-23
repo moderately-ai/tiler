@@ -1,7 +1,7 @@
 ---
 id: make-the-draft-time-index-traversals-outside-compact-rs-exhaustive
 title: Make the draft-time index traversals outside compact.rs exhaustive
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing]
+claimed_from: todo
+assignee: worker-drafttrav
+lease_expires_at: 1787469687
 ---
 ## User-visible outcome
 
