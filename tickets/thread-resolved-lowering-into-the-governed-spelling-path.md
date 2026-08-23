@@ -3,7 +3,7 @@ id: thread-resolved-lowering-into-the-governed-spelling-path
 title: Thread resolved lowering into the governed spelling path
 status: in-progress
 priority: p1
-dependencies: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence]
+dependencies: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence, lower-a-recognized-gather-through-a-governed-capability]
 related: [decide-whether-refinement-evidence-may-reach-a-physical-provider, emit-the-indirect-gather-on-metal]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
@@ -42,3 +42,42 @@ Widening `ImplementationContext`; the Metal emission, which depends on this; and
 ## Closes when
 
 A gather region is spelled from its own occurrence's proof, the wall is retired because the argument arrived, the verifier still re-derives independently, each behaviour is watched failing on its own subject, and the workspace gate is green.
+
+## Exact-base Fact audit — 2026-08-23, `9b61b563f66112b49a65b652990bc414e8a6fbb5`, `worker-thread`
+
+Read in full at this base before any edit: this ticket; root `AGENTS.md`; `crates/tiler-compiler/src/physical.rs` around the wall, the spelling path, and the gather binding; `crates/tiler-compiler/src/pipeline/verify.rs`; `crates/tiler-compiler/src/pipeline/planning.rs`'s plan-enumeration transaction; `crates/tiler-compiler/src/frontier.rs`'s `ImplementationContext`, `enumerate_frontier`, and `govern_spelling`; `crates/tiler-compiler/src/lowering.rs`; `crates/tiler-compiler/src/capability.rs`'s lowering facade; and the complete parent tickets [`carry-the-gather-relation-through-the-compiler-vertical`](carry-the-gather-relation-through-the-compiler-vertical.md) and [`decide-whether-refinement-evidence-may-reach-a-physical-provider`](decide-whether-refinement-evidence-may-reach-a-physical-provider.md).
+
+| Fact as filed | Verdict | Evidence re-derived at this base |
+|---|---|---|
+| This adds no public surface: all eight named items are `pub(crate)` or private | **verified**, list re-derived rather than inherited | `enumerate_frontier` `pub(crate) fn` (`frontier.rs`); `govern_spelling` bare `fn` (`frontier.rs`); `spell_region` `pub(crate) fn`, `spell_output` bare `fn`, `verify_schedule_with_feasibility` `pub(crate) fn`, `verify_region_output_binding` bare `fn`, `gather_accesses_match` bare `fn` (all `physical.rs`); `ResolvedLowering` `pub(crate) struct` (`lowering.rs`). **None is `pub`.** One near-miss worth naming so a re-auditor does not trip on it: `crates/tiler-compiler/src/capability.rs` declares `pub struct ResolvedLoweringCapability`, a *different* type whose name shares a prefix — a bare grep for `ResolvedLowering` hits it and reads as a public item on this list. |
+| Verifier independence holds; `verify_portfolio` calls `resolve_lowering` itself | **verified** | `crates/tiler-compiler/src/pipeline/verify.rs`, anchor `let lowering = resolve_lowering(semantic, request).map_err(|_| {`, at line 83 as filed. Its own module header states the property positively: `**Nothing here may reuse a planning intermediate.**` Planning's own call is a separate one in `pipeline/planning.rs`, anchor `let lowering = match resolve_lowering(semantic, verified) {`. The two derivations are independent and nothing threaded here would make the verifier borrow planning's. |
+| The proof "sits in `ResolvedLowering` in the same `plan_target` scope — the value exists at the right time and no seam carries it" | **FALSE, and it is the reason this ticket cannot be delivered at this base.** See below. | — |
+
+## Blocking discovery — the argument cannot arrive, because no gather ever lowers
+
+**The wall is not only a missing argument. Behind it is a missing capability row, and that row is unfiled work.**
+
+- `IndexAccessLoweringContext` — the compiler-side lowering facade in `crates/tiler-compiler/src/capability.rs` — exposes `dimension`, `input_tensor`, `output_tensor`, `constant`, `dimension_expr`, `linear_combination`, `floor_div`, `modulo`, `read`, `write`, `apply`, `apply_in`, `reduce`, `output`, and **no `gather_read`**. `git log -S "gather_read" -- crates/tiler-compiler/src/capability.rs` is empty: it was drafted and withdrawn inside the parent lane, never landed. No lowering provider, governed or installed, can emit a gather region.
+- The governed registry holds no gather row: `grep -rn -i "gather" crates/tiler-compiler/src/governed.rs` returns one comment about a reindex that is *not* a gather, and the same grep over `capability.rs` returns zero. `GOVERNED_INDEX_ACCESS_CAPABILITIES` is still `21`.
+- So `resolve_lowering` refuses every gather. `a_gather_occurrence_resolves_no_lowering_at_this_base` pins exactly that with reason `missing-capability`, carries a negative control showing the same call answers `Ok` for an elementwise fixture, and **passes at this base**.
+- That refusal happens *above* physical planning. `enumerate_complete_plans` opens with `let lowering = match resolve_lowering(semantic, verified) {` and returns on the error arm before `enumerate_covers`, `enumerate_frontier`, `govern_spelling`, or `spell_region`. **No gather member set reaches the region-vocabulary check through the pipeline at all.** The one live caller of `spell_region` with gather members is a unit test that constructs the request directly.
+
+`ResolvedLowering::unresolved_for_test`'s own documentation states the same fact from the other side. Its sentence wraps across two `///` lines and carries an inline link, so the anchor is the single-line tail `because this one refuses every gather` in `crates/tiler-compiler/src/lowering.rs` — quoting the whole sentence greps to zero there and would read as false absence.
+
+**Consequence for each of this ticket's three deliverables.**
+
+1. *Thread `&ResolvedLowering` into the spelling path.* Mechanically possible, but every reachable call site would pass a value no reachable path reads, because the only arm that would read it is unreachable. No check on it could fail — the defect this repository keeps finding.
+2. *Land `physical::gather_region`.* It can only build a region by cloning the occurrence's statically proved bounds resolution out of `refinement.single_region()`'s gather access view. No gather has a refinement, so the function would have zero reachable callers, produce zero regions, and need `#[allow(dead_code)]`. This is verbatim the state the parent lane withdrew `IndexAccessLoweringContext::gather_read` to avoid.
+3. *Retire the wall because the argument arrived.* Not achievable. The argument arrives empty for 100% of the population. Retiring the wall would either relax the check or rename the refusal — both of which the ticket's own Outcome forbids: *"a repair that merely stops refusing is a defect, not a fix."* The brief's required occupancy-refusal control would be the **only** reachable case, so the lane could produce the negative control and never the positive one.
+
+**A test in the tree already names the ordering this ticket was dispatched against.** `a_governed_gather_refuses_at_dispatch_before_governed_lowering` says two named authorities stand between its refusal and one that could grant a gather a schedule: the governed capability row itself, and `RegionVocabularyWall::GatherProofUnavailable`, *"which is what physical planning answers once a row exists"*. The row is first. This ticket is second. Its doc comment wraps, so the anchor is the single-line fragment `authorities stand between this refusal and one that could` in `crates/tiler-compiler/src/request/tests.rs`; the sentence spanning the wrap greps to zero.
+
+**Provenance of the false Fact, since it is worth not re-making.** It is not the coordinator's invention; it entered at [`carry-the-gather-relation-through-the-compiler-vertical`](carry-the-gather-relation-through-the-compiler-vertical.md)'s blocking discovery ("The value does exist at the right time"), was carried verbatim into [`decide-whether-refinement-evidence-may-reach-a-physical-provider`](decide-whether-refinement-evidence-may-reach-a-physical-provider.md)'s option table as B2, and reached this ticket third-hand. It was true of the *scope* — `resolve_lowering` and `enumerate_frontier` are in one function with the value live — and false of the *population*, because that value never contains a gather. Both prior lanes correctly listed the capability row as remainder item 2 and described it as "independent"; what neither did was file it as a ticket or make it an edge, so the dependency was invisible to dispatch.
+
+**Nothing was edited under `crates/`.** No code change was landed, because every available one is either untestable plumbing or a relaxation of the check this ticket exists to strengthen.
+
+## Repair — the missing prerequisite is now filed and linked
+
+[`lower-a-recognized-gather-through-a-governed-capability`](lower-a-recognized-gather-through-a-governed-capability.md) owns the facade method, the `GovernedGatherF32` provider, the capability row 21 to 22, and the refinement evidence, and is now a hard dependency of this ticket. It carries one consequence this ticket does not, which is why it is a lane of its own: `CanonicalLoweringRegistryIdentity` folds the capability list and `crates/tiler-compiler/src/request/subject.rs` writes it into every request subject (`push_slice(&mut bytes, self.lowering_registry.as_bytes());`), so adding a row **steps the request-subject identity domain for every program in the repository**, not only for gathers.
+
+This ticket's own Facts, its Outcome, and its Closes-when survive unchanged once that lands. The coordinator owns whether to move this ticket to `blocked` and whether to re-dispatch it behind the new one.
