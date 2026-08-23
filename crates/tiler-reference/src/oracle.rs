@@ -2597,12 +2597,38 @@ impl<'a> RegionEvaluation<'a> {
     /// element read. No scalar SSA value is created for the loaded index, which
     /// is what keeps the address read from becoming a value input.
     ///
-    /// Bounds are checked here regardless of the retained resolution. A
-    /// requirement resolution validates the observed value and mints nothing; a
-    /// static resolution is *also* checked defensively, because a reference
-    /// oracle that trusted a proof would stop being an independent check of it.
-    /// Evaluating either is an oracle result only and creates no compiler
-    /// executable coverage, cache identity, or dispatch permission.
+    /// Bounds are checked here regardless of the retained resolution, and the
+    /// mechanism is that this function never reads the resolution at all:
+    /// `decide_gather_index` runs on the loaded value unconditionally, so there
+    /// is no arm in which a proof could exempt the read. That is the property a
+    /// reference oracle needs, because one that trusted a proof would stop
+    /// being an independent check of it. Evaluating a gather is an oracle
+    /// result only and creates no compiler executable coverage, cache identity,
+    /// or dispatch permission.
+    ///
+    /// **Every gather that reaches this function carries an outstanding
+    /// requirement, never a static proof**, so the unconditional check is not
+    /// merely policy here — the proved case is unreachable, for two independent
+    /// reasons that between them exhaust `GatherIndexBoundsProofKind`.
+    /// `VacuousEmptyResultDomain` excludes itself: it is minted exactly when a
+    /// derived result extent is zero, `gather_read` requires the access domain's
+    /// extents to equal the derived result extents as a multiset, and a root
+    /// consuming the gathered value must cover that domain — so the zero extent
+    /// reaches the walk and no point is ever visited.
+    /// `U32RangeContainedBySourceExtent` needs a gathered axis of at least
+    /// `2^32`, while `MAX_REFERENCE_TENSOR_ELEMENTS` caps a whole bound tensor
+    /// at `2^24` — so that one axis alone overruns the entire payload budget by
+    /// at least a factor of 256, and no binding for such a region can be
+    /// constructed to evaluate.
+    ///
+    /// Both legs and the kind census are pinned by
+    /// `a_static_gather_proof_cannot_reach_the_evaluator`, which is where to
+    /// look if a third proof kind, a larger tensor budget, or a weaker domain
+    /// rule ever makes the proved case reachable. Reading the resolution to
+    /// re-check what the proof binds is deliberately **not** done: the retained
+    /// record is derived in `finish_compaction` from the same access this
+    /// function reads, through the region's only constructor, so the comparison
+    /// could not fail and would be a check that cannot say no.
     fn gather(
         &mut self,
         frame: &mut Frame,
