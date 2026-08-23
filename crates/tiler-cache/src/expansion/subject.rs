@@ -107,7 +107,22 @@ pub enum SubjectFacet {
     BackendCompilations,
     /// The canonical subject of the artifact program wrapped around those
     /// payloads: its plan portfolio, ABI bindings, routing, declared target
-    /// requirements, and selected capability providers.
+    /// requirements, the selected lowering-capability providers, and each
+    /// variant's run of selected physical implementations — which physical
+    /// authority implemented each cover-region occurrence.
+    ///
+    /// That list illustrates the role and is **not** an enumeration this crate
+    /// keeps in step with the artifact layer. These bytes are `tiler-artifact`'s
+    /// canonical artifact identity, wrapped exactly as the driver's compilation
+    /// subject is wrapped above: the orchestrator fills the facet from
+    /// [`tiler_artifact::program::VerifiedArtifactProgram::canonical_identity`],
+    /// and that crate's identity encoder is the only constructor of a
+    /// [`tiler_artifact::program::CanonicalArtifactProgramIdentity`]. A subject
+    /// that encoder begins folding therefore reaches this facet on the step it
+    /// lands, with no edit here — the per-variant physical-selection run did at
+    /// `tiler.artifact-program.v22`, which is why the sentence above went stale
+    /// without any key ever under-naming an envelope. Completeness *within* the
+    /// facet stays the supplying authority's obligation, as the module doc says.
     ArtifactProgram,
 }
 
