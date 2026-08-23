@@ -343,6 +343,16 @@ fn verify_gather_address_reads(
     // relation, and the retained static proof's own subject must agree with it.
     // The proof is read through its public accessors rather than re-derived, so
     // this compares two independently produced accounts.
+    //
+    // What this cannot check: that the retained proof is the one this
+    // occurrence's own realized region produced, rather than a same-shaped
+    // proof minted for a different region. `GatherIndexBoundsProof::region()`
+    // answers that, but there is nothing on this side to compare it against —
+    // `IndexRegion` holds no `CanonicalIndexRegionIdentity` counterpart, so the
+    // comparison is unavailable at this layer, not merely unchecked here. It
+    // lives in `tiler-compiler`'s `gather_accesses_match`, under the
+    // `request-binding` rule, where the occurrence's own resolved lowering
+    // supplies the identity to compare against.
     for (position, read) in reads.iter().enumerate() {
         let LogicalAccess::GatherSource {
             source_shape,
