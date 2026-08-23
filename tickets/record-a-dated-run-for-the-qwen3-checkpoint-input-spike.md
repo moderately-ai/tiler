@@ -1,7 +1,7 @@
 ---
 id: record-a-dated-run-for-the-qwen3-checkpoint-input-spike
 title: Record a dated run for the Qwen3 checkpoint input spike
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/program-planning, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [spikes, documentation]
-claimed_from: todo
-assignee: worker-qwen
-lease_expires_at: 1787459513
 ---
 ## User-visible outcome
 
