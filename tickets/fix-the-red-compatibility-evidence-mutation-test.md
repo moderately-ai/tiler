@@ -24,7 +24,9 @@ fails with `AssertionError: validator accepted missing provenance field: probe.p
 
 ## Why it went unnoticed
 
-No `make` target reaches `spikes/`, by the deliberate design `AGENTS.md` records: a spike is a retained measurement, run by hand when someone is working on it. The stated cost of that trade is exactly this — a retained assertion drifts from the source beside it and only running the spike says so. This is the first observed instance, so it is worth keeping the concrete case beside the rule.
+No `make` target **builds or runs** `spikes/`, by the deliberate design `Makefile:7` states — `Spikes deliberately have no target.` — and which `AGENTS.md` explains the reason for: spikes are run "manually from documented commands so exploratory dependencies do not silently become repository gates". A spike is a retained measurement, run by hand when someone is working on it. The stated cost of that trade is exactly this — a retained assertion drifts from the source beside it and only running the spike says so. This is the first observed instance, so it is worth keeping the concrete case beside the rule.
+
+**Corrected 2026-08-22 by [`retire-the-spikes-are-ungated-claim-across-the-repository`](retire-the-spikes-are-ungated-claim-across-the-repository.md) — the explanation stands; the claim it was attributed to does not.** The paragraph above previously opened "No `make` target reaches `spikes/`, by the deliberate design `AGENTS.md` records", and the retired wording is quoted here so a search lands in this note. `AGENTS.md` records no such design. It states the *reason* spikes are run by hand, and at its "Documentation and durable records" section it says the opposite of "reaches": `make citations` resolves every local markdown link in "an open ticket, a live document, **or a retained spike record**". The word that had to change is *reaches* → *builds or runs*, which is the claim `Makefile:7` actually makes and the only one this ticket's explanation needs. A drifting assertion inside a Python probe is invisible to the citation gate; a deleted file this record links to is not.
 
 ## What the test is checking
 

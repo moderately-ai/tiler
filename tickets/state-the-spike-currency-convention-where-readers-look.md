@@ -12,7 +12,9 @@ tags: [documentation, spikes, navigation]
 ---
 ## User-visible outcome
 
-`spikes/README.md` states the convention a reader needs before trusting any spike: spikes are outside every gate, they are repaired on demand rather than kept green, and each spike's own README carries a dated currency claim. A reader arriving at the spikes entry point learns this without having to open an individual spike and infer it.
+`spikes/README.md` states the convention a reader needs before trusting any spike: nothing builds or runs one, they are repaired on demand rather than kept green, and each spike's own README carries a dated currency claim. A reader arriving at the spikes entry point learns this without having to open an individual spike and infer it.
+
+**Corrected 2026-08-22 by [`retire-the-spikes-are-ungated-claim-across-the-repository`](retire-the-spikes-are-ungated-claim-across-the-repository.md) — the outcome is unchanged; one of its three clauses was too wide.** The sentence above, and the deliverable bullet below, both said "spikes are outside every gate" / "spikes sit outside every gate by design", and the retired wording is quoted here so a search lands in this note. That is false as of `04d5eae9`: `make citations` resolves every local markdown link in all 68 retained spike records, so a link pointing at nothing fails the gate. The true statement, and the one this ticket's currency convention actually needs, is that nothing **builds or runs** a spike — which is why a spike can compile-break or stop running while every gate stays green, and why a dated currency claim is the only thing that tells a reader whether it still does. `spikes/README.md` itself was repaired on 2026-08-22 and now separates the two questions explicitly; this ticket's record is repaired here so it does not read as authority for the retired form.
 
 ## Why this exists
 
@@ -26,7 +28,9 @@ Filed 2026-08-19 by the coordinator, from `keep-the-ungated-spikes-compiling-aga
 
 **Fact — the breakage was wider than one accessor, which is why the convention matters.** The originating ticket named one API change; the real cause was **six changes across four landings** (`79dc05a1`, `c77aab39`, `bc0b7c0e`, plus the undeclared numerics), producing 5 and 9 compiler errors in the two spikes. A reader who assumes a spike still runs because it once did is making an unsupported assumption, and the entry point should say so.
 
-**Fact — AGENTS.md already carries the adjacent rule and does not carry this one.** It states spikes are run "manually from documented commands so exploratory dependencies do not silently become repository gates". That is the *reason* spikes are ungated; it does not tell a reader what to expect of a spike's current state.
+**Fact — AGENTS.md already carries the adjacent rule and does not carry this one.** It states spikes are run "manually from documented commands so exploratory dependencies do not silently become repository gates". That is the *reason* nothing builds or runs a spike; it does not tell a reader what to expect of a spike's current state.
+
+**Corrected 2026-08-22 by [`retire-the-spikes-are-ungated-claim-across-the-repository`](retire-the-spikes-are-ungated-claim-across-the-repository.md) — this Fact was right about AGENTS.md and wrong in its last clause.** The sentence above previously ended "That is the *reason* spikes are ungated", and the retired wording is quoted here so a search lands in this note. The Fact's own point stands and is worth keeping: AGENTS.md carries the adjacent rule, not the currency convention. But *ungated* overstates what that rule produces. Since `04d5eae9` one gate does read every record — `make citations` resolves all local markdown links under `spikes/**` while deliberately declining the pinned line citations — so what the quoted rule explains is that nothing **builds or runs** a spike. That distinction strengthens this ticket rather than weakening it: a link checker cannot tell a reader whether a spike still runs, which is exactly the gap the currency convention exists to fill.
 
 ## Correction — 2026-08-22, `worker-spikedoc` at base `ba46f2b2`
 
@@ -47,7 +51,7 @@ That distinction changed what the entry point had to say, and is the reason it s
 ## Required work
 
 - Re-audit each Fact above at your actual base and report a per-Fact verdict before editing; re-run the counts rather than trusting them.
-- Add the convention to `spikes/README.md` in that document's own voice and convention: spikes sit outside every gate by design, are repaired on demand, and each carries a dated currency claim; a spike is evidence about the base its record names, not about `main`.
+- Add the convention to `spikes/README.md` in that document's own voice and convention: nothing builds or runs a spike by design, they are repaired on demand, and each carries a dated currency claim; a spike is evidence about the base its record names, not about `main`. (This bullet read "spikes sit outside every gate by design" until the 2026-08-22 correction above.)
 - Say what a reader should **do** — run the spike's documented command and read its dated claim — rather than only what is true. An entry-point statement a reader cannot act on is decoration.
 - Check whether `docs/README.md` or `docs/research/README.md` (both `contracts/navigation`) route readers at spikes in a way that now needs the same caveat. Report what you found **and what you found clean**.
 

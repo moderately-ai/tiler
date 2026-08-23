@@ -10,7 +10,9 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, evidence, gate]
 ---
-## Two accepted ADRs assert that the repository gate runs a spike harness, and no gate reaches `spikes/`
+## Two accepted ADRs assert that the repository gate runs a spike harness, and no gate builds or runs `spikes/`
+
+**Corrected 2026-08-22 by [`retire-the-spikes-are-ungated-claim-across-the-repository`](retire-the-spikes-are-ungated-claim-across-the-repository.md).** This heading read "and no gate reaches `spikes/`", and the retired wording is quoted here so a search lands in this note. The word *reaches* was too wide even in 2026-08-07 terms and is plainly false since `04d5eae9`: `make citations`, which `make full` reaches through `check`, resolves every local markdown link in every retained spike record. This ticket's actual subject is unchanged — two accepted ADRs claimed the gate *ran* a Python harness, and nothing builds or runs a spike — so the correction is to the heading's scope, not to the defect it names or to any verdict below.
 
 Verified 2026-08-07 at base `7c371155` by `verify-and-file-the-remaining-maturity-audit-leads`. Both ADRs are in `contracts/decisions`, share one root cause, and are filed together so a second worker does not re-derive the same gate fact against the same exclusive scope.
 
