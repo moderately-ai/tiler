@@ -5,7 +5,7 @@ status: in-progress
 priority: p3
 dependencies: []
 related: [state-the-spike-currency-convention-where-readers-look, keep-the-ungated-spikes-compiling-against-the-workspace-api]
-scopes: [contracts/navigation]
+scopes: [contracts/navigation, research/apple-targets, research/extensions, research/indexing, research/reference, research/scheduling]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, spikes, navigation]
