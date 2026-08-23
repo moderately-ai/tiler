@@ -1418,7 +1418,41 @@ fn declared_input_for_verified_access(
                 } => (position == 0)
                     .then(|| serial.contributor_input())
                     .flatten(),
-                _ => None,
+                // Every remaining program names no declared input, and the two
+                // groups reach that answer by different routes.
+                //
+                // The six other scalar programs bind no part of a serial-sum
+                // subject. `verify_region_output_binding`'s own `SerialSum` arm
+                // enumerates these same six and answers `false` for each, with a
+                // reason per variant: the strict-affine program is refused
+                // upstream; the `bf16` program cannot reach a subject whose
+                // contributor tensor is binary32; the squaring folds belong to
+                // `tiler::rms-norm-f32@1` and the extrema fold to
+                // `tiler::softmax-f32@1`, neither of which this recognizer
+                // admits; and a contraction binds its own subject variant.
+                //
+                // A copy region is excluded a step earlier and for a stronger
+                // reason: it carries no scalar program at all, and
+                // `verify_region_output_binding` refuses it under
+                // `request-binding` before any subject arm is reached.
+                //
+                // Both groups are therefore unreachable rather than merely
+                // unbound — `declared_input_for_region_access` selects the
+                // normalized output by that very binding — so `None` is the
+                // fail-closed answer for a state the caller's own precondition
+                // excludes, and it reaches `frontier.rs` as the typed
+                // `UnknownParameter` refusal rather than as a guessed ordinal.
+                RegionProgram::Numerical {
+                    scalar:
+                        ScalarProgram::PointwiseBf16(_)
+                        | ScalarProgram::StrictAffineU4Dequantize { .. }
+                        | ScalarProgram::SquaredSerialSum { .. }
+                        | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                        | ScalarProgram::StrictTensorContraction { .. }
+                        | ScalarProgram::StrictSerialMaximum { .. },
+                    ..
+                }
+                | RegionProgram::PartitionedCopy(_) => None,
             }
         }
     }
@@ -4302,7 +4336,30 @@ fn verify_region_output_binding(
                     RecognizedPointwise::Bf16(recognized),
                     ScalarProgram::PointwiseBf16(expression),
                 ) => expression == recognized,
-                _ => false,
+                // Every remaining pairing is refused, and naming the programs
+                // rather than reaching a wildcard is what keeps a program added
+                // later from answering here unchecked.
+                //
+                // A pointwise program of the *other* width answers `false` here
+                // rather than falling through, which is what lets the one arm
+                // above bind two widths without either claiming the other's
+                // subject. No remaining program is a pointwise expression at all
+                // — each is a reduction, a contraction, or a decode — and a
+                // recognized pointwise subject is carried only by the pointwise
+                // program its own recognizer produced, so every such pairing is
+                // forged.
+                (
+                    _,
+                    ScalarProgram::PointwiseF32(_)
+                    | ScalarProgram::PointwiseBf16(_)
+                    | ScalarProgram::StrictAffineU4Dequantize { .. }
+                    | ScalarProgram::StrictSerialSum { .. }
+                    | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                    | ScalarProgram::SquaredSerialSum { .. }
+                    | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                    | ScalarProgram::StrictTensorContraction { .. }
+                    | ScalarProgram::StrictSerialMaximum { .. },
+                ) => false,
             };
             carries
                 && semantic_members == normalized.members
@@ -4440,7 +4497,35 @@ fn verify_region_output_binding(
                         && expression == &plan.pass_expression
                         && staged_pass_reads_match(&region.index.accesses, &plan)
                 }
-                _ => false,
+                // Every remaining pairing is refused, for one of two reasons.
+                //
+                // A region spelling one of the two stages for an occurrence with
+                // no plan is reached only from a forged proposal —
+                // `spell_staged` declines an occurrence it cannot plan — and
+                // there is nothing to compare against, so `false` refuses rather
+                // than skipping the comparison.
+                //
+                // No remaining program spells either stage, planned or not. The
+                // fold is the squaring fold *with* an epilogue and the pass is a
+                // pointwise `f32` chain, so `SquaredSerialSum` is the sharp near
+                // miss — the same fold without the epilogue, which would claim
+                // the fold's atom while leaving the law's epilogue unattributed;
+                // `PointwiseBf16` cannot carry a stage of a law that is binary32
+                // throughout; and the strict and fused sums, the contraction,
+                // the extrema fold, and the decode each perform arithmetic
+                // neither stage names.
+                (
+                    _,
+                    ScalarProgram::PointwiseF32(_)
+                    | ScalarProgram::PointwiseBf16(_)
+                    | ScalarProgram::StrictAffineU4Dequantize { .. }
+                    | ScalarProgram::StrictSerialSum { .. }
+                    | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                    | ScalarProgram::SquaredSerialSum { .. }
+                    | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                    | ScalarProgram::StrictTensorContraction { .. }
+                    | ScalarProgram::StrictSerialMaximum { .. },
+                ) => false,
             }
         }
         // The fail-closed answer for a contraction or gather subject paired with
