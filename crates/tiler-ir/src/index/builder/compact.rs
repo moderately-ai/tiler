@@ -278,8 +278,13 @@ impl IndexRegionBuilder {
         let reachable_ops: BTreeSet<_> = reachable_values
             .iter()
             .filter_map(|v| match self.values[*v as usize].definition {
-                ScalarValueDefinition::OperationResult { operation, .. } => Some(operation),
-                ScalarValueDefinition::AccessRead { .. } => None,
+                // `result` selects which of the operation's results this value
+                // is; the compaction order only needs the operation ordinal.
+                ScalarValueDefinition::OperationResult {
+                    operation,
+                    result: _,
+                } => Some(operation),
+                ScalarValueDefinition::AccessRead { access: _ } => None,
             })
             .collect();
         let alpha_operation_keys = self.alpha_operation_keys(&dimension_map);
@@ -519,8 +524,13 @@ impl IndexRegionBuilder {
             if !reached.insert(v) {
                 continue;
             }
-            if let ScalarValueDefinition::OperationResult { operation, .. } =
-                self.values[v as usize].definition
+            // `result` selects which of the operation's results this value is;
+            // reachability needs only the operation, whose full operand and
+            // result lists are pushed below regardless of which result named it.
+            if let ScalarValueDefinition::OperationResult {
+                operation,
+                result: _,
+            } = self.values[v as usize].definition
             {
                 let occurrence = &self.operations[operation as usize];
                 stack.extend(&occurrence.operands);
@@ -536,10 +546,22 @@ impl IndexRegionBuilder {
                 continue;
             }
             match &*self.expressions[index as usize].node {
-                IndexNode::LinearCombination { terms, .. } => {
+                // `constant` is a plain `IndexInteger`, never a reference into
+                // `self.expressions`, so marking it reachable is meaningless.
+                IndexNode::LinearCombination { constant: _, terms } => {
                     pending.extend(terms.iter().map(|term| term.value));
                 }
-                IndexNode::FloorDiv { dividend, .. } | IndexNode::Modulo { dividend, .. } => {
+                // `divisor` is a `SourcedExtent`, resolved against the shape
+                // environment rather than this region's expression ordinals, so
+                // it names nothing here to mark reachable.
+                IndexNode::FloorDiv {
+                    dividend,
+                    divisor: _,
+                }
+                | IndexNode::Modulo {
+                    dividend,
+                    divisor: _,
+                } => {
                     pending.push(*dividend);
                 }
                 IndexNode::Constant(_) | IndexNode::Dimension(_) => {}
@@ -606,10 +628,30 @@ impl IndexRegionBuilder {
                 visited_accesses,
                 visited_expressions,
             ),
-            ScalarValueDefinition::OperationResult { operation, .. } => {
+            // `result` selects which of the operation's results this value is;
+            // dimension order is a property of the operation's own operands and
+            // reduction dimensions, not of which result named it.
+            ScalarValueDefinition::OperationResult {
+                operation,
+                result: _,
+            } => {
                 if visited_operations.insert(operation) {
                     let occurrence = &self.operations[operation as usize];
-                    if let ScalarOperationKindData::Reduce { dimensions, .. } = &occurrence.kind {
+                    // `traversal` carries no dimension reference. `init` and
+                    // `contributors` are the same value ordinals folded into
+                    // `operands` at construction (`IndexRegionBuilder::reduce`
+                    // builds `operands` as `init` followed by `contributors`),
+                    // so walking `operands` below already visits them. `body`
+                    // is a reducer body canonicalized on its own index space
+                    // and never names one of this region's outer dimensions.
+                    if let ScalarOperationKindData::Reduce {
+                        dimensions,
+                        traversal: _,
+                        init: _,
+                        contributors: _,
+                        body: _,
+                    } = &occurrence.kind
+                    {
                         for dimension in dimensions {
                             assign_dimension(*dimension, order, assigned);
                         }
@@ -677,7 +719,9 @@ impl IndexRegionBuilder {
         }
         match &*self.expressions[expression as usize].node {
             IndexNode::Dimension(dimension) => assign_dimension(*dimension, order, assigned),
-            IndexNode::LinearCombination { terms, .. } => {
+            // `constant` is a plain `IndexInteger`, never a reference into
+            // `self.expressions`, so there is nothing here to visit.
+            IndexNode::LinearCombination { constant: _, terms } => {
                 let mut terms: Vec<_> = terms.iter().collect();
                 terms.sort_by_key(|term| {
                     (
@@ -689,7 +733,17 @@ impl IndexRegionBuilder {
                     self.visit_expression_dimensions(term.value, order, assigned, visited);
                 }
             }
-            IndexNode::FloorDiv { dividend, .. } | IndexNode::Modulo { dividend, .. } => {
+            // `divisor` is a `SourcedExtent`, resolved against the shape
+            // environment rather than this region's expression ordinals, so it
+            // names nothing here to visit.
+            IndexNode::FloorDiv {
+                dividend,
+                divisor: _,
+            }
+            | IndexNode::Modulo {
+                dividend,
+                divisor: _,
+            } => {
                 self.visit_expression_dimensions(*dividend, order, assigned, visited);
             }
             IndexNode::Constant(_) => {}
