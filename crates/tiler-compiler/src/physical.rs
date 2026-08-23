@@ -2583,6 +2583,32 @@ pub(crate) fn contraction_region(
 /// identifiers exist.
 const COOPERATIVE_CONTRACTION_REGION: RegionId = RegionId::new(9);
 
+/// Stable strategy name of the contiguous contracted-axis split.
+///
+/// The L3 elimination's `ksplit_contiguous`: the contracted axis partitioned
+/// into contiguous intervals merged in order, attributed uniquely to the
+/// contiguous-interval split. It consumes ordered reassociation and nothing
+/// else, which is exactly what separates it from [`STRIDED_K_SPLIT_STRATEGY`].
+pub(crate) const CONTIGUOUS_K_SPLIT_STRATEGY: &str = "tiler.contraction.contiguous-k-split";
+
+/// Stable strategy name of the strided contracted-axis split.
+///
+/// The L3 elimination's `ksplit_strided`: the contracted axis partitioned into
+/// strided subsets, whose leaves are reordered. It consumes reassociation *and*
+/// contributor permutation. The realization record measures the two splits as
+/// distinct topologies — `contiguous_split+ftz` and `strided_split+ftz`, each
+/// uniquely attributed and each refuted by the case that attributes the other —
+/// so a plan holding reassociation alone never reaches this one.
+pub(crate) const STRIDED_K_SPLIT_STRATEGY: &str = "tiler.contraction.strided-k-split";
+
+/// Stable strategy name of the `simdgroup_float8x8` matrix realization.
+///
+/// The L3 elimination's `simdgroup`: a matrix-multiply-accumulate instruction
+/// whose fusion *is* the instruction rather than a compiler liberty, so it
+/// delivers a contracted product under every `-ffp-contract` setting and no
+/// flag in the qualified matrix reports it.
+pub(crate) const SIMDGROUP_MATRIX_STRATEGY: &str = "tiler.contraction.simdgroup-matrix";
+
 /// Builds the canonical reduction scheduled region for one request.
 ///
 /// **It is the whole plan for a fold with no prologue, and the fold half of a

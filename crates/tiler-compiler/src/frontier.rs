@@ -3583,7 +3583,12 @@ struct GovernedSpelling {
     /// The applicability predicate every proposal for this request carries.
     applicability: TargetApplicability,
     /// The additive parallel strategies the subject admits, each offered or
-    /// withheld with its typed reason. Empty for every subject but a reduction.
+    /// withheld with its typed reason.
+    ///
+    /// Empty for every subject but a reduction and a contraction. The reduction
+    /// contributes two entries that may be either; the contraction contributes
+    /// only withheld ones, because none of the alternatives the L3 elimination
+    /// measured is offered by this build — see [`contraction_declines`].
     parallel: Vec<Result<ImplementationProposal, DeclinedStrategy>>,
 }
 
@@ -3645,6 +3650,10 @@ fn govern_spelling(
         };
         let mut split = None;
         let mut tree = None;
+        // The contraction alternatives the L3 elimination measured. Three
+        // rather than two, and all of them withheld, so they need their own
+        // sequence beside the reduction's pair.
+        let mut contraction_alternatives = Vec::new();
         // The recognized output whose partition this region belongs to. The
         // spelling resolved it from the cover's own occurrences, so every shape,
         // expression, and member set below is that output's rather than a
@@ -3728,13 +3737,18 @@ fn govern_spelling(
                     PhysicalCostEstimate::structural(1, output_elements, 0),
                 )
             }
-            // No split: a contraction's fold is the declared contributor
-            // sequence, and splitting it would consume the reassociation this
-            // family declares forbidden.
-            crate::physical::RegionSpellingKind::Contraction => (
-                crate::physical::contraction_region(request, producer, subject.write()).0,
-                PhysicalCostEstimate::structural(1, output_elements, 0),
-            ),
+            // The direct fold, offered alone. A contraction's fold *is* the
+            // declared contributor sequence, so every alternative the L3
+            // elimination measured consumes a freedom this family or this
+            // contract withholds — and each is recorded by name beside the
+            // offer rather than left as an absence a reader has to guess at.
+            crate::physical::RegionSpellingKind::Contraction => {
+                contraction_alternatives = contraction_declines(request);
+                (
+                    crate::physical::contraction_region(request, producer, subject.write()).0,
+                    PhysicalCostEstimate::structural(1, output_elements, 0),
+                )
+            }
             // Whether the whole-program region may be *fused* belongs to the
             // numerical-legality authority and whether it *fits* belongs to this
             // target; neither is a capability question. Every occurrence the
@@ -3829,7 +3843,11 @@ fn govern_spelling(
             region,
             cost,
             applicability,
-            parallel: [split, tree].into_iter().flatten().collect(),
+            parallel: [split, tree]
+                .into_iter()
+                .flatten()
+                .chain(contraction_alternatives)
+                .collect(),
         })
     }
 }
@@ -4052,6 +4070,88 @@ fn propose_workgroup_tree(
         applicability.clone(),
         PhysicalCostEstimate::structural(1, launched, 0),
     ))
+}
+
+/// The contraction realizations considered beside the direct fold, and the fact
+/// that withheld each.
+///
+/// The direct fold is offered unconditionally; these are the alternatives the L3
+/// elimination measured and rejected, recorded so that choosing the fold is an
+/// answer rather than a silence. **Three declines and not one**, because a
+/// caller told only that a permission was refused cannot tell a contiguous split
+/// from a strided one from a matrix instruction, and the record attributes those
+/// to three different reduction topologies.
+///
+/// Which cause each carries is ADR 0014's two-fact rule deciding *which of the
+/// two facts is missing*. The two sources are never collapsed:
+///
+/// - **The contiguous split** consumes ordered reassociation alone. This
+///   family's own maximum for reassociation is `permission-gated`, so the
+///   operation grants it and only the caller's resolved ceiling can withhold it:
+///   [`StrategyDeclineCause::NumericalPermissionRefused`]. The decline is
+///   therefore *a function of the contract* — a ceiling permitting reassociation
+///   withholds nothing here and no decline is recorded. Whether the split is
+///   then offered belongs to
+///   `admit-reassociated-contraction-schedule-alternatives`, not to this site.
+/// - **The strided split** additionally permutes its leaves. This family's
+///   permutation maximum is `unsupported`, and a ceiling cannot grant a freedom
+///   the operation withholds, so the missing fact is the algebraic one and the
+///   decline is recorded under *every* contract. That asymmetry is the point:
+///   granting reassociation retires the contiguous decline and leaves this one
+///   standing, which is the distinction the record measured rather than assumed.
+/// - **The matrix instruction** delivers a fused multiply-add. ADR 0015
+///   contraction is likewise an operation maximum this family declares `false`,
+///   so the registered relaxed contract — which permits contraction at the
+///   *ceiling* — still does not reach it, and the decline again names the
+///   algebraic source rather than the caller's.
+///
+/// **Two grounds the elimination states are deliberately absent here, and
+/// neither is a silence this function should fill.** The matrix realization also
+/// seeds its accumulator at `+0.0` where this family's registered seed fact is
+/// `none-the-accumulator-starts-at-the-first-product`; that is a claim about
+/// which operation a node declares rather than about a freedom a strategy
+/// consumes, and `qualify-the-simdgroup-matrix-contraction-realization` owns it.
+/// And the opaque library realization is refuted against every named topology,
+/// which is a missing *provider guarantee* rather than a withheld dimension —
+/// this provider names no opaque call, and [`ImplementationContext`] hands it no
+/// registry to name one from, so a decline here would report considering a
+/// strategy it cannot consider.
+///
+/// The two algebraic maxima are this build's registered constants rather than a
+/// per-request decode, because [`VerifiedTargetRequest`] carries no frozen
+/// semantic registry to decode from. `tiler-ir` states them the same way —
+/// `EffectiveContractionF32Profile::permits_permutation` and
+/// `permits_arithmetic_contraction` are `const fn`s answering `false` whatever
+/// the ceiling holds — and `the_algebraic_maxima_these_declines_assume_are_the_registered_ones`
+/// ties this site to the registered descriptor, so a later key generation that
+/// declared fold permutation fails that check instead of leaving a stale decline
+/// standing.
+fn contraction_declines(
+    request: &VerifiedTargetRequest,
+) -> Vec<Result<ImplementationProposal, DeclinedStrategy>> {
+    let mut declined = Vec::with_capacity(3);
+    if request.numerical_contract().reassociation == crate::request::NumericalPermission::Forbidden
+    {
+        declined.push(Err(DeclinedStrategy::new(
+            crate::physical::CONTIGUOUS_K_SPLIT_STRATEGY,
+            StrategyDeclineCause::NumericalPermissionRefused {
+                dimension: crate::target::honourability::NumericalDimension::Reassociation.key(),
+            },
+        )));
+    }
+    declined.push(Err(DeclinedStrategy::new(
+        crate::physical::STRIDED_K_SPLIT_STRATEGY,
+        StrategyDeclineCause::AlgebraicCapabilityUnsupported {
+            dimension: crate::target::honourability::NumericalDimension::Permutation.key(),
+        },
+    )));
+    declined.push(Err(DeclinedStrategy::new(
+        crate::physical::SIMDGROUP_MATRIX_STRATEGY,
+        StrategyDeclineCause::AlgebraicCapabilityUnsupported {
+            dimension: crate::target::honourability::NumericalDimension::Contraction.key(),
+        },
+    )));
+    declined
 }
 
 fn encode_proposal_identity(
