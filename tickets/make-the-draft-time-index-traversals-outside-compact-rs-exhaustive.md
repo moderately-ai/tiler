@@ -1,7 +1,7 @@
 ---
 id: make-the-draft-time-index-traversals-outside-compact-rs-exhaustive
 title: Make the draft-time index traversals outside compact.rs exhaustive
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing]
-claimed_from: todo
-assignee: worker-drafttrav
-lease_expires_at: 1787469687
 ---
 ## User-visible outcome
 
@@ -46,3 +43,21 @@ Filed 2026-08-23 by the coordinator as the reported remainder of [`make-the-inde
 ## Closes when
 
 Every draft-time traversal under `crates/tiler-ir/src/index/builder/` either visits its record exhaustively or records why a rest pattern is correct there, the census states its vocabulary and why it is complete, no identity value has moved, and a widening perturbation is watched failing at a traversal span with its base-tree negative control quoted.
+
+## Coordinator accountability — 2026-08-23: the false Fact was mine, and my census undercounted three ways
+
+`worker-drafttrav` repaired this ticket's Fact and was right. Recording the coordinator's side of it, because the ticket text was mine.
+
+**The false Fact.** I wrote that *"`crates/tiler-ir/src/index/builder/gather.rs:205` compiles clean through a widened `FloorDiv` today."* Retired wording preserved. Verified at `a0fd5af2`, the base I filed against: line 205 reads `IndexNode::FloorDiv { dividend, divisor } | IndexNode::Modulo { dividend, divisor } =>` — **both fields bound, no rest pattern** — so widening `FloorDiv` raises `E0027` there rather than compiling through. The file's single rest pattern is the **preceding** arm, `LinearCombination { terms, .. }` at line **201**, and reaching it requires widening `LinearCombination`, a different perturbation. A worker trusting me would have opened an already-exhaustive arm, found nothing wrong, and concluded the site was fine.
+
+**I relayed it rather than checking it.** It came from the delivering lane's out-of-scope report and I carried it into a ticket without opening the file — the same failure as three anchor citations earlier in this session, and the coordinator obligation is explicit: *"run it yourself first — a supplied command that has never been executed is a claim, not a check."*
+
+**The census undercounted three ways, each in the direction that reads as clean.** All three verified at `a0fd5af2`:
+
+- **`grep -c` counts lines, not occurrences.** `proof.rs` shows **18** lines but **22** occurrences, because four arms pair `FloorDiv` and `Modulo` on one line. This is the hazard AGENTS.md records at `grep -c` counts **lines**, not occurrences — committed by the coordinator while citing it to workers.
+- **The pattern needed the brace on the rest's own line**, missing `IntervalVerdict { definitely_outside, .. }` whose `}` wraps. True figure 19 lines / 23 occurrences.
+- **Anchoring on the `builder/` directory excluded the parent module file.** `crates/tiler-ir/src/index/builder.rs` carries **3** more lines / 5 occurrences, in two draft-time walks — one of which is the twin of the `gather.rs` walk this ticket named, with the two doc comments cross-referencing each other. Repairing one and leaving the other would have split a single question across two spellings.
+
+The lane widened its own vocabulary to a bare `\.\.` scan classified by reading, which is what made the set complete. That is the correct response to a census whose anchor is the coordinator's guess.
+
+**End state verified by the coordinator on the merged tree:** zero rest patterns remain in non-test code across `index/builder.rs`, `proof.rs`, `reduction.rs`, `gather.rs`, and `compact.rs`. The single residual is `proof.rs:1807`, inside `#[cfg(test)] mod tests` (which opens at line 1737) — deliberately left, and correctly.
