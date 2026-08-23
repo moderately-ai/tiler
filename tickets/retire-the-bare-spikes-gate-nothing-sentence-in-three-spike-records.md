@@ -5,7 +5,7 @@ status: in-progress
 priority: p2
 dependencies: []
 related: []
-scopes: []
+scopes: [research/runtime, research/extensions, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, spikes, falsified-evidence]
@@ -54,3 +54,8 @@ The four sites `e139baee` already repaired. `docs/**`, `tickets/**`, and `docs/d
 ## Closes when
 
 No spike record carries `Spikes gate nothing.` or a paraphrase of it, each repair states what is and is not reached, the retired wording is preserved, and the perturbation showing a spike link failing the gate has been rerun and quoted.
+
+
+## Scheduling metadata
+
+Added scopes `research/runtime`, `research/extensions`, and `research/program-planning`, required for the three edited paths (`spikes/runtime/backend-provider-portfolio/README.md`, `spikes/extensions/forkless-physical-provider/README.md`, `spikes/program-planning/physical-frontier-budget-calibration/README.md`), per `ticketsplease.toml`'s scope map. This is scheduling metadata for authorized work, not a new authority.
