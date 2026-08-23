@@ -9,9 +9,6 @@ scopes: [implementation/conformance, contracts/foundation, contracts/decisions, 
 shared_scopes: [project/tickets]
 paths: [.ticketsplease/decision-queue.md]
 tags: [decision, needs-tom, public-boundary, backend-providers, conformance]
-claimed_from: todo
-assignee: worker-packet
-lease_expires_at: 1787455299
 ---
 ## User-visible outcome
 
