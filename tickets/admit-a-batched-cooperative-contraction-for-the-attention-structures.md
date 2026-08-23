@@ -1,7 +1,7 @@
 ---
 id: admit-a-batched-cooperative-contraction-for-the-attention-structures
 title: Admit a batched cooperative contraction for the attention structures
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [realize-the-attention-contractions-on-metal, realize-the-tiled-contraction-schedule-and-its-metal-emission, offer-the-tiled-contraction-alternative-once-a-width-authority-exists]
