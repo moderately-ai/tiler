@@ -25,7 +25,7 @@ Filed 2026-08-22 by the coordinator from the sibling sweep of [`destructure-the-
 
 **Why this is worse than the case already closed.** The gather bounds subject was one encoder over one struct. This is a **paired encoder and length invariant** that must stay in agreement, across nine per-element loops, on `tiler.index-region.v11` — the index crate's central identity. A repair that moves a byte here moves far more than a repair there did.
 
-**Fact — the convention already exists in this repository and is documented.** `crates/tiler-ir/src/numerics.rs` carries it with a rationale at the anchor `a field added to a provenance record is then a build error at the encoder`, with thirteen `let Self { … }` encoders below it. `encode_region` and `encoded_region_len` in the same `identity.rs` **already** destructure `CompactedRegion` exhaustively with no rest pattern. So this is applying an established local convention to the arms that have not adopted it, not inventing one.
+**Fact — the convention already exists in this repository and is documented.** `crates/tiler-ir/src/numerics.rs` carries it with a rationale at the anchor `a field added to a provenance record is then a build error at` — the sentence continues `the encoder` on the next line, so the longer anchor first written here returned **0** and read as absence. Thirteen `let Self { … }` sites follow the convention in that file; twelve sit below the anchor and seven of the thirteen are inside `pub fn encode(&self, bytes: &mut Vec<u8>)`, the other six being `render`. `encode_region` and `encoded_region_len` in the same `identity.rs` **already** destructure `CompactedRegion` exhaustively with no rest pattern. So this is applying an established local convention to the arms that have not adopted it, not inventing one.
 
 ## Required work
 
@@ -43,3 +43,21 @@ Changing what any identity encodes, its field order, or its domain tag. Any publ
 ## Closes when
 
 Every framed record in the index-region identity encoders is destructured exhaustively, the paired length invariant is shown to hold, the emitted bytes are demonstrated unchanged over a discriminating population, no identity value has moved, and a field-addition perturbation is watched failing at an encoder span.
+
+## Worker Fact audit at `eaab762d`, 2026-08-22 — `worker-regionenc`
+
+Each verdict rests on the file read at this base, not on the brief.
+
+**Verified.** `crates/tiler-ir/src/index/builder/identity.rs` reached the gather access record entirely by field access at the three named sites, and `GatherReadAccessData` and `CompactedGatherReadAccess` in `crates/tiler-ir/src/index/model.rs` each declare exactly six fields.
+
+**Verified — the unverified fourth site is real.** `alpha_access_key` in `crates/tiler-ir/src/index/builder/compact.rs` frames the same `GatherReadAccessData` by field, under `tiler.index.access-read.alpha.v1`. Its `AccessData::Direct` arm additionally elided `mode` entirely, which is correct — only an `AccessRead` value reaches that key — but was not stated anywhere.
+
+**Verified.** `encode_region` and `encoded_region_len` already destructured `CompactedRegion` exhaustively with no rest pattern.
+
+**Imprecise — the `numerics.rs` anchor as written could not be found.** Repaired above: a line break falls inside it, so `grep` for the full sentence returns 0 while the shorter clause returns 1. The count was also loose; the corrected numbers are above.
+
+**Imprecise — "nine per-element loops."** `encode_region` has **eight** `for` loops (dimensions, tensors, expressions, accesses, assessments, operations, values, outputs); `encoded_region_len` has **seven**, with the assessments folded through an iterator and the outputs previously sized by `outputs.len().saturating_mul(8)`. Nine is neither count. The substance — that the pairing spans many per-element sites and a moved byte travels far — stands.
+
+**One more rest pattern than the record census.** `encoded_index_domain_subject_predicate_len` sized `IndexDomainPredicate` and `IndexExtentRef` through three `..` patterns. Those are variants rather than records, so they fall outside the census below, but they are the same defect on the same pair: a widened variant would have been a build error at `encode_index_domain_subject_predicate`, which binds every field, and a silently stale count here. Closed with the rest; `identity.rs` now carries no rest pattern at all.
+
+**Wider than three sites.** The census below is by record rather than by grep string, because a search vocabulary over spellings like `gather.` would have missed `t.role`, `d.extent`, `v.definition`, and `o.access` — single-letter binders that frame four more records in the same two functions. Sixteen records are framed by these encoders; every one is now destructured with no `..`, and a field added to each is an `E0027` at an encoder span.

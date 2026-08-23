@@ -146,12 +146,9 @@ pub(super) fn structural_index_key(node: &IndexNode, expressions: &[DraftIndexEx
             output.push(3);
             constant.encode(&mut output);
             push_len(&mut output, terms.len());
-            for term in terms {
-                term.coefficient.encode(&mut output);
-                push_slice(
-                    &mut output,
-                    &expressions[term.value as usize].structural_key,
-                );
+            for LinearTermData { coefficient, value } in terms {
+                coefficient.encode(&mut output);
+                push_slice(&mut output, &expressions[*value as usize].structural_key);
             }
         }
         IndexNode::FloorDiv { dividend, divisor } => {
@@ -172,13 +169,26 @@ pub(super) fn access_read_key(
     tensors: &[TensorData],
     expressions: &[DraftIndexExpr],
 ) -> Vec<u8> {
+    // Destructured with no rest pattern, here and in every encoder below, for
+    // the reason `crate::numerics` gives for the same convention: a field added
+    // to a framed record is then a build error at the encoder that would
+    // otherwise have silently omitted it, leaving a narrower identity that
+    // nothing fails on. A field bound to `_` is a field this encoder has
+    // decided not to write; the comment beside it says who writes it instead.
     let boundary = |output: &mut Vec<u8>, ordinal: u32| {
-        let tensor = &tensors[ordinal as usize];
+        // The value type and the shape belong to the region's own tensor list,
+        // which encodes them once; an access names only which boundary it
+        // crosses and in what role order.
+        let TensorData {
+            role,
+            value_type: _,
+            shape: _,
+        } = &tensors[ordinal as usize];
         let role_ordinal = tensors[..ordinal as usize]
             .iter()
-            .filter(|candidate| candidate.role == tensor.role)
+            .filter(|candidate| candidate.role == *role)
             .count();
-        output.push(match tensor.role {
+        output.push(match role {
             TensorRole::Input => 1,
             TensorRole::Output => 2,
         });
@@ -197,21 +207,35 @@ pub(super) fn access_read_key(
     // keeps a gather's F32 result from interning against a direct read of the
     // same source at the same coordinates.
     match data {
-        AccessData::Direct(direct) => {
+        AccessData::Direct(DirectAccessData {
+            tensor,
+            // Every construction site of this key passes `AccessMode::Read`;
+            // the mode is fixed by the caller rather than written here.
+            mode: _,
+            domain,
+            coordinates: run,
+        }) => {
             let mut output = b"tiler.index.access-read.v1\0".to_vec();
-            boundary(&mut output, direct.tensor);
-            encode_u32s(&mut output, &direct.domain);
-            coordinates(&mut output, &direct.coordinates);
+            boundary(&mut output, *tensor);
+            encode_u32s(&mut output, domain);
+            coordinates(&mut output, run);
             output
         }
-        AccessData::GatherRead(gather) => {
+        AccessData::GatherRead(GatherReadAccessData {
+            source,
+            index,
+            axis,
+            domain,
+            source_coordinates,
+            index_coordinates,
+        }) => {
             let mut output = b"tiler.index.access-gather-read.v1\0".to_vec();
-            boundary(&mut output, gather.source);
-            boundary(&mut output, gather.index);
-            output.extend_from_slice(&gather.axis.to_be_bytes());
-            encode_u32s(&mut output, &gather.domain);
-            coordinates(&mut output, &gather.source_coordinates);
-            coordinates(&mut output, &gather.index_coordinates);
+            boundary(&mut output, *source);
+            boundary(&mut output, *index);
+            output.extend_from_slice(&axis.to_be_bytes());
+            encode_u32s(&mut output, domain);
+            coordinates(&mut output, source_coordinates);
+            coordinates(&mut output, index_coordinates);
             output
         }
     }
@@ -293,9 +317,14 @@ pub(super) fn operation_structural_key(
     output
 }
 pub(super) fn encode_reducer_body(output: &mut Vec<u8>, body: &ScalarReducerBodyData) {
-    push_len(output, body.values.len());
-    for value in &body.values {
-        match value.source {
+    let ScalarReducerBodyData {
+        values,
+        operations,
+        yields,
+    } = body;
+    push_len(output, values.len());
+    for ReducerBodyValueData { source, value_type } in values {
+        match source {
             ReducerBodyValueSource::StateParameter(index) => {
                 output.push(1);
                 output.extend_from_slice(&index.to_be_bytes());
@@ -310,16 +339,22 @@ pub(super) fn encode_reducer_body(output: &mut Vec<u8>, body: &ScalarReducerBody
                 output.extend_from_slice(&result.get().to_be_bytes());
             }
         }
-        push_slice(output, value.value_type.canonical_encoding().as_bytes());
+        push_slice(output, value_type.canonical_encoding().as_bytes());
     }
-    push_len(output, body.operations.len());
-    for operation in &body.operations {
-        encode_key(output, &operation.key);
-        encode_canonical(output, operation.attributes.value());
-        encode_u32s(output, &operation.operands);
-        encode_u32s(output, &operation.results);
+    push_len(output, operations.len());
+    for ReducerBodyOperationData {
+        key,
+        attributes,
+        operands,
+        results,
+    } in operations
+    {
+        encode_key(output, key);
+        encode_canonical(output, attributes.value());
+        encode_u32s(output, operands);
+        encode_u32s(output, results);
     }
-    encode_u32s(output, &body.yields);
+    encode_u32s(output, yields);
 }
 pub(super) fn assign_dimension(dimension: u32, order: &mut Vec<u32>, assigned: &mut BTreeSet<u32>) {
     if assigned.insert(dimension) {
@@ -344,12 +379,12 @@ pub(super) fn alpha_expr_key_impl(
             if let Some(dimension_map) = dimension_map {
                 output.extend_from_slice(&dimension_map[dimension].to_be_bytes());
             } else {
-                let data = &dimensions[*dimension as usize];
-                output.push(match data.role {
+                let DimensionData { role, extent } = &dimensions[*dimension as usize];
+                output.push(match role {
                     DomainRole::Parallel => 1,
                     DomainRole::Reduction => 2,
                 });
-                data.extent.encode(&mut output);
+                extent.encode(&mut output);
             }
         }
         IndexNode::LinearCombination { constant, terms } => {
@@ -357,12 +392,12 @@ pub(super) fn alpha_expr_key_impl(
             constant.encode(&mut output);
             let mut encoded_terms = terms
                 .iter()
-                .map(|term| {
+                .map(|LinearTermData { coefficient, value }| {
                     let mut encoded = Vec::new();
-                    term.coefficient.encode(&mut encoded);
+                    coefficient.encode(&mut encoded);
                     push_slice(
                         &mut encoded,
-                        &alpha_expr_key_impl(term.value, expressions, dimension_map, dimensions),
+                        &alpha_expr_key_impl(*value, expressions, dimension_map, dimensions),
                     );
                     encoded
                 })
@@ -492,25 +527,34 @@ pub(super) fn encode_region(
         None => out.push(0),
     }
     push_len(&mut out, dimensions.len());
-    for d in dimensions {
-        out.push(match d.role {
+    for DimensionData { role, extent } in dimensions {
+        out.push(match role {
             DomainRole::Parallel => 1,
             DomainRole::Reduction => 2,
         });
-        d.extent.encode(&mut out);
+        extent.encode(&mut out);
     }
     push_len(&mut out, tensors.len());
-    for t in tensors {
-        out.push(match t.role {
+    for TensorData {
+        role,
+        value_type,
+        shape,
+    } in tensors
+    {
+        out.push(match role {
             TensorRole::Input => 1,
             TensorRole::Output => 2,
         });
-        push_slice(&mut out, t.value_type.canonical_encoding().as_bytes());
-        t.shape.encode(&mut out);
+        push_slice(&mut out, value_type.canonical_encoding().as_bytes());
+        shape.encode(&mut out);
     }
     push_len(&mut out, expressions.len());
-    for e in expressions {
-        encode_index_node(&mut out, &e.node);
+    // `class` is derived from the node graph and the environment a symbolic
+    // divisor or coefficient resolves against — `join`ed up from the children
+    // in `assemble_linear_combination` and `div_mod` — and both of those are
+    // already in these bytes, so it is not independent content.
+    for IndexExprData { node, class: _ } in expressions {
+        encode_index_node(&mut out, node);
     }
     push_len(&mut out, accesses.len());
     for a in accesses {
@@ -518,14 +562,27 @@ pub(super) fn encode_region(
             // `0x01` and `0x02` keep their tags and their exact field layouts,
             // so no previously encodable region's bytes move and
             // `tiler.index-region.v11` deliberately does not step.
-            CompactedAccess::Direct(direct) => {
-                out.push(match direct.mode {
+            CompactedAccess::Direct(VerifiedDirectAccessData {
+                tensor,
+                mode,
+                domain,
+                coordinates,
+                // Retained analysis metadata rather than region content: the
+                // discharged and unresolved predicates are encoded once, in
+                // the assessment sequence below, and
+                // `retained_ownership_proof_metadata_does_not_enter_region_identity`
+                // pins that these three stay out of the bytes.
+                bounds_proof: _,
+                bounds_facts: _,
+                ownership_proof: _,
+            }) => {
+                out.push(match mode {
                     AccessMode::Read => 1,
                     AccessMode::Write => 2,
                 });
-                out.extend_from_slice(&direct.tensor.to_be_bytes());
-                encode_u32s(&mut out, &direct.domain);
-                encode_u32s(&mut out, &direct.coordinates);
+                out.extend_from_slice(&tensor.to_be_bytes());
+                encode_u32s(&mut out, domain);
+                encode_u32s(&mut out, coordinates);
             }
             // Appended at the next free value. A reader that reaches `0x03` is
             // reading an access the earlier vocabulary could not express, never
@@ -534,13 +591,21 @@ pub(super) fn encode_region(
             // order, each run length-framed, so swapping a source for an index
             // or dropping the axis frame changes the bytes.
             CompactedAccess::GatherRead(gather) => {
+                let CompactedGatherReadAccess {
+                    source,
+                    index,
+                    axis,
+                    domain,
+                    source_coordinates,
+                    index_coordinates,
+                } = &**gather;
                 out.push(3);
-                out.extend_from_slice(&gather.source.to_be_bytes());
-                out.extend_from_slice(&gather.index.to_be_bytes());
-                out.extend_from_slice(&gather.axis.to_be_bytes());
-                encode_u32s(&mut out, &gather.domain);
-                encode_u32s(&mut out, &gather.source_coordinates);
-                encode_u32s(&mut out, &gather.index_coordinates);
+                out.extend_from_slice(&source.to_be_bytes());
+                out.extend_from_slice(&index.to_be_bytes());
+                out.extend_from_slice(&axis.to_be_bytes());
+                encode_u32s(&mut out, domain);
+                encode_u32s(&mut out, source_coordinates);
+                encode_u32s(&mut out, index_coordinates);
             }
         }
     }
@@ -561,14 +626,29 @@ pub(super) fn encode_region(
         encode_index_domain_assessment(&mut out, assessment);
     }
     push_len(&mut out, operations.len());
-    for op in operations {
-        encode_operation_kind(&mut out, &op.kind);
-        encode_u32s(&mut out, &op.operands);
-        encode_u32s(&mut out, &op.results);
+    // `depth`, here and on a value below, is `max(operand depth) + 1`, kept so
+    // the builder can enforce `MAX_SCALAR_EXPRESSION_DEPTH` without a walk. It
+    // is a function of the operand graph these bytes already carry.
+    for ScalarOperationData {
+        kind,
+        operands,
+        results,
+        depth: _,
+    } in operations
+    {
+        encode_operation_kind(&mut out, kind);
+        encode_u32s(&mut out, operands);
+        encode_u32s(&mut out, results);
     }
     push_len(&mut out, values.len());
-    for v in values {
-        match v.definition {
+    for ScalarValueData {
+        definition,
+        value_type,
+        free_dimensions,
+        depth: _,
+    } in values
+    {
+        match definition {
             ScalarValueDefinition::AccessRead { access } => {
                 out.push(1);
                 out.extend_from_slice(&access.to_be_bytes());
@@ -579,16 +659,16 @@ pub(super) fn encode_region(
                 out.extend_from_slice(&result.get().to_be_bytes());
             }
         }
-        push_slice(&mut out, v.value_type.canonical_encoding().as_bytes());
+        push_slice(&mut out, value_type.canonical_encoding().as_bytes());
         encode_u32s(
             &mut out,
-            &v.free_dimensions.iter().copied().collect::<Vec<_>>(),
+            &free_dimensions.iter().copied().collect::<Vec<_>>(),
         );
     }
     push_len(&mut out, outputs.len());
-    for o in outputs {
-        out.extend_from_slice(&o.access.to_be_bytes());
-        out.extend_from_slice(&o.value.to_be_bytes());
+    for OutputData { access, value } in outputs {
+        out.extend_from_slice(&access.to_be_bytes());
+        out.extend_from_slice(&value.to_be_bytes());
     }
     debug_assert_eq!(out.len(), exact_capacity);
     CanonicalIndexRegionIdentity(out)
@@ -615,38 +695,65 @@ pub(super) fn encoded_region_len(
             sources.environment_identity().as_bytes().len(),
         ));
     }
+    // Every loop below destructures the same record its `encode_region` twin
+    // frames, and binds the same fields to `_`, so the two halves of the pair
+    // are forced to change together: a field added to one of these records is
+    // a build error in both functions, not just the one that writes bytes.
     bytes = bytes.saturating_add(8);
-    for dimension in dimensions {
-        bytes = bytes
-            .saturating_add(1)
-            .saturating_add(dimension.extent.encoded_len());
+    for DimensionData { role: _, extent } in dimensions {
+        // The role is the one tag byte.
+        bytes = bytes.saturating_add(1).saturating_add(extent.encoded_len());
     }
     bytes = bytes.saturating_add(8);
-    for tensor in tensors {
+    for TensorData {
+        role: _,
+        value_type,
+        shape,
+    } in tensors
+    {
         bytes = bytes
             .saturating_add(1)
             .saturating_add(encoded_bytes_len(
-                tensor.value_type.canonical_encoding().as_bytes().len(),
+                value_type.canonical_encoding().as_bytes().len(),
             ))
-            .saturating_add(tensor.shape.encoded_len());
+            .saturating_add(shape.encoded_len());
     }
     bytes = bytes.saturating_add(8);
-    for expression in expressions {
-        bytes = bytes.saturating_add(encoded_index_node_len(&expression.node));
+    for IndexExprData { node, class: _ } in expressions {
+        bytes = bytes.saturating_add(encoded_index_node_len(node));
     }
     bytes = bytes.saturating_add(8);
     for access in accesses {
         bytes = match access {
-            CompactedAccess::Direct(direct) => bytes
+            // The mode tag and the tensor ordinal are the fixed five.
+            CompactedAccess::Direct(VerifiedDirectAccessData {
+                tensor: _,
+                mode: _,
+                domain,
+                coordinates,
+                bounds_proof: _,
+                bounds_facts: _,
+                ownership_proof: _,
+            }) => bytes
                 .saturating_add(5)
-                .saturating_add(encoded_u32s_len(direct.domain.len()))
-                .saturating_add(encoded_u32s_len(direct.coordinates.len())),
+                .saturating_add(encoded_u32s_len(domain.len()))
+                .saturating_add(encoded_u32s_len(coordinates.len())),
             // Tag, two tensor ordinals, and the axis, then three framed runs.
-            CompactedAccess::GatherRead(gather) => bytes
-                .saturating_add(13)
-                .saturating_add(encoded_u32s_len(gather.domain.len()))
-                .saturating_add(encoded_u32s_len(gather.source_coordinates.len()))
-                .saturating_add(encoded_u32s_len(gather.index_coordinates.len())),
+            CompactedAccess::GatherRead(gather) => {
+                let CompactedGatherReadAccess {
+                    source: _,
+                    index: _,
+                    axis: _,
+                    domain,
+                    source_coordinates,
+                    index_coordinates,
+                } = &**gather;
+                bytes
+                    .saturating_add(13)
+                    .saturating_add(encoded_u32s_len(domain.len()))
+                    .saturating_add(encoded_u32s_len(source_coordinates.len()))
+                    .saturating_add(encoded_u32s_len(index_coordinates.len()))
+            }
         };
     }
     bytes = bytes.saturating_add(8).saturating_add(
@@ -664,44 +771,87 @@ pub(super) fn encoded_region_len(
             .fold(0_usize, usize::saturating_add),
     );
     bytes = bytes.saturating_add(8);
-    for operation in operations {
+    for ScalarOperationData {
+        kind,
+        operands,
+        results,
+        depth: _,
+    } in operations
+    {
         bytes = bytes
-            .saturating_add(encoded_operation_kind_len(&operation.kind))
-            .saturating_add(encoded_u32s_len(operation.operands.len()))
-            .saturating_add(encoded_u32s_len(operation.results.len()));
+            .saturating_add(encoded_operation_kind_len(kind))
+            .saturating_add(encoded_u32s_len(operands.len()))
+            .saturating_add(encoded_u32s_len(results.len()));
     }
     bytes = bytes.saturating_add(8);
-    for value in values {
+    for ScalarValueData {
+        definition,
+        value_type,
+        free_dimensions,
+        depth: _,
+    } in values
+    {
         bytes = bytes
-            .saturating_add(match value.definition {
-                ScalarValueDefinition::AccessRead { .. } => 5,
-                ScalarValueDefinition::OperationResult { .. } => 9,
+            .saturating_add(match definition {
+                // Tag plus the access ordinal; tag, operation ordinal and
+                // result index.
+                ScalarValueDefinition::AccessRead { access: _ } => 5,
+                ScalarValueDefinition::OperationResult {
+                    operation: _,
+                    result: _,
+                } => 9,
             })
             .saturating_add(encoded_bytes_len(
-                value.value_type.canonical_encoding().as_bytes().len(),
+                value_type.canonical_encoding().as_bytes().len(),
             ))
-            .saturating_add(encoded_u32s_len(value.free_dimensions.len()));
+            .saturating_add(encoded_u32s_len(free_dimensions.len()));
     }
-    bytes
-        .saturating_add(8)
-        .saturating_add(outputs.len().saturating_mul(8))
+    // Walked rather than multiplied by a hand-written width, so that a field
+    // added to `OutputData` is a build error on this side of the pair too.
+    outputs
+        .iter()
+        .map(
+            |OutputData {
+                 access: _,
+                 value: _,
+             }| 8_usize,
+        )
+        .fold(bytes.saturating_add(8), usize::saturating_add)
 }
 
 fn index_domain_assessment_key(
     assessment: &IndexDomainAssessment,
 ) -> (VerifiedTensorAccessId, IndexDomainPredicate) {
+    // The sort key is the subject and the predicate, which together name the
+    // obligation; the evidence and the reason say how it was answered and must
+    // not reorder it. Bound explicitly so a widened record has to say here
+    // whether it participates in the canonical order.
     match assessment {
-        IndexDomainAssessment::Discharged(record) => (record.subject, record.predicate),
-        IndexDomainAssessment::Unknown(record) => (record.subject, record.predicate),
+        IndexDomainAssessment::Discharged(DischargedIndexDomainPredicate {
+            subject,
+            predicate,
+            evidence: _,
+            facts: _,
+        })
+        | IndexDomainAssessment::Unknown(UnknownIndexDomainPredicate {
+            subject,
+            predicate,
+            reason: _,
+        }) => (*subject, *predicate),
     }
 }
 
 fn encode_index_domain_assessment(output: &mut Vec<u8>, assessment: IndexDomainAssessment) {
     match assessment {
-        IndexDomainAssessment::Discharged(record) => {
-            encode_index_domain_subject_predicate(output, record.subject, record.predicate);
+        IndexDomainAssessment::Discharged(DischargedIndexDomainPredicate {
+            subject,
+            predicate,
+            evidence,
+            facts,
+        }) => {
+            encode_index_domain_subject_predicate(output, subject, predicate);
             output.push(1);
-            match record.evidence {
+            match evidence {
                 IndexDomainEvidence::SoundProof(proof) => {
                     output.push(1);
                     output.push(match proof {
@@ -721,48 +871,76 @@ fn encode_index_domain_assessment(output: &mut Vec<u8>, assessment: IndexDomainA
             // every discharged record rather than only the environment-reading
             // ones, so the slot is fixed-width and a reader never has to know
             // the evidence to know how many bytes follow it.
-            output.push(record.facts.tag());
+            output.push(facts.tag());
         }
-        IndexDomainAssessment::Unknown(record) => {
-            encode_index_domain_subject_predicate(output, record.subject, record.predicate);
+        IndexDomainAssessment::Unknown(UnknownIndexDomainPredicate {
+            subject,
+            predicate,
+            reason,
+        }) => {
+            encode_index_domain_subject_predicate(output, subject, predicate);
             output.push(2);
-            encode_index_domain_unknown_reason(output, record.reason);
+            encode_index_domain_unknown_reason(output, reason);
         }
     }
 }
 
 fn encoded_index_domain_subject_predicate_len(predicate: IndexDomainPredicate) -> usize {
+    // A tag byte plus the constrained expression's four, then the extent
+    // reference's own tag and the one or two ids under it. Bound with no rest
+    // pattern for the same reason as the records above: a widened variant must
+    // be a build error on the sizing side, not a count that silently stops
+    // matching what `encode_index_domain_subject_predicate` writes.
     let predicate = match predicate {
-        IndexDomainPredicate::NonNegative { .. } => 5,
-        IndexDomainPredicate::LessThanExtent { extent, .. } => match extent {
+        IndexDomainPredicate::NonNegative { expression: _ } => 5,
+        IndexDomainPredicate::LessThanExtent {
+            expression: _,
+            extent,
+        } => match extent {
             IndexExtentRef::Dimension(_) => 10,
-            IndexExtentRef::TensorAxis { .. } => 14,
+            IndexExtentRef::TensorAxis { tensor: _, axis: _ } => 14,
         },
     };
     4_usize.saturating_add(predicate)
 }
 
 fn encoded_index_domain_assessment_len(assessment: IndexDomainAssessment) -> usize {
+    // The subject is the fixed four bytes inside
+    // `encoded_index_domain_subject_predicate_len`, and the fact-source tag is
+    // the trailing one; both are accounted for without being read here.
     match assessment {
-        IndexDomainAssessment::Discharged(record) => {
-            let evidence = match record.evidence {
+        IndexDomainAssessment::Discharged(DischargedIndexDomainPredicate {
+            subject: _,
+            predicate,
+            evidence,
+            facts: _,
+        }) => {
+            let evidence = match evidence {
                 IndexDomainEvidence::SoundProof(_) => 2,
-                IndexDomainEvidence::ExhaustiveFinite { .. } => 9,
+                IndexDomainEvidence::ExhaustiveFinite { points: _ } => 9,
                 IndexDomainEvidence::Empirical | IndexDomainEvidence::Unknown => 1,
             };
-            encoded_index_domain_subject_predicate_len(record.predicate)
+            encoded_index_domain_subject_predicate_len(predicate)
                 .saturating_add(1)
                 .saturating_add(evidence)
                 // The fact-source tag `encode_index_domain_assessment` appends.
                 .saturating_add(1)
         }
-        IndexDomainAssessment::Unknown(record) => {
-            let reason = match record.reason {
+        IndexDomainAssessment::Unknown(UnknownIndexDomainPredicate {
+            subject: _,
+            predicate,
+            reason,
+        }) => {
+            let reason = match reason {
                 IndexDomainUnknownReason::InsufficientFacts
                 | IndexDomainUnknownReason::UnsupportedFragment => 1,
-                IndexDomainUnknownReason::ResourceLimit { .. } => 26,
+                IndexDomainUnknownReason::ResourceLimit {
+                    resource: _,
+                    required: _,
+                    limit: _,
+                } => 26,
             };
-            encoded_index_domain_subject_predicate_len(record.predicate)
+            encoded_index_domain_subject_predicate_len(predicate)
                 .saturating_add(1)
                 .saturating_add(reason)
         }
@@ -782,15 +960,25 @@ pub(super) fn encoded_index_node_len(node: &IndexNode) -> usize {
                     // Read from the coefficient rather than fixed at an
                     // integer's width, for the reason the divisor's own length
                     // gives: a symbolic one carries its scope and name.
-                    .map(|term| term.coefficient.encoded_len().saturating_add(4))
+                    .map(
+                        |LinearTermData {
+                             coefficient,
+                             value: _,
+                         }| { coefficient.encoded_len().saturating_add(4) },
+                    )
                     .fold(0_usize, usize::saturating_add),
             ),
         // One tag byte, the dividend's index, and the divisor's own tagged
         // encoding — read from the divisor rather than fixed at eight bytes,
         // because a symbolic one carries its scope and name.
-        IndexNode::FloorDiv { divisor, .. } | IndexNode::Modulo { divisor, .. } => {
-            5_usize.saturating_add(divisor.encoded_len())
+        IndexNode::FloorDiv {
+            dividend: _,
+            divisor,
         }
+        | IndexNode::Modulo {
+            dividend: _,
+            divisor,
+        } => 5_usize.saturating_add(divisor.encoded_len()),
     }
 }
 
@@ -803,12 +991,13 @@ pub(super) fn encoded_operation_kind_len(kind: &ScalarOperationKindData) -> usiz
         ScalarOperationKindData::Apply { key, attributes } => 1_usize
             .saturating_add(encoded_key_len(key))
             .saturating_add(attributes.value().encoded_len()),
+        // The tag and the traversal tag are the fixed two.
         ScalarOperationKindData::Reduce {
             dimensions,
+            traversal: _,
             init,
             contributors,
             body,
-            ..
         } => 2_usize
             .saturating_add(encoded_u32s_len(dimensions.len()))
             .saturating_add(encoded_u32s_len(init.len()))
@@ -818,15 +1007,20 @@ pub(super) fn encoded_operation_kind_len(kind: &ScalarOperationKindData) -> usiz
 }
 
 pub(super) fn encoded_reducer_body_len(body: &ScalarReducerBodyData) -> usize {
+    let ScalarReducerBodyData {
+        values,
+        operations,
+        yields,
+    } = body;
     let mut bytes = 8_usize;
-    for value in &body.values {
+    for value in values {
         bytes = bytes.saturating_add(encoded_reducer_value_len(value));
     }
     bytes = bytes.saturating_add(8);
-    for operation in &body.operations {
+    for operation in operations {
         bytes = bytes.saturating_add(encoded_reducer_operation_len(operation));
     }
-    bytes.saturating_add(encoded_u32s_len(body.yields.len()))
+    bytes.saturating_add(encoded_u32s_len(yields.len()))
 }
 
 pub(super) fn encoded_reducer_parameter_len(value_type: &ResolvedValueType) -> usize {
@@ -836,15 +1030,17 @@ pub(super) fn encoded_reducer_parameter_len(value_type: &ResolvedValueType) -> u
 }
 
 pub(super) fn encoded_reducer_value_len(value: &ReducerBodyValueData) -> usize {
-    let source_bytes: usize = match value.source {
+    let ReducerBodyValueData { source, value_type } = value;
+    let source_bytes: usize = match source {
         ReducerBodyValueSource::StateParameter(_)
         | ReducerBodyValueSource::ContributorParameter(_) => encoded_reducer_parameter_source_len(),
-        ReducerBodyValueSource::OperationResult { .. } => {
-            encoded_reducer_operation_result_source_len()
-        }
+        ReducerBodyValueSource::OperationResult {
+            operation: _,
+            result: _,
+        } => encoded_reducer_operation_result_source_len(),
     };
     source_bytes.saturating_add(encoded_bytes_len(
-        value.value_type.canonical_encoding().as_bytes().len(),
+        value_type.canonical_encoding().as_bytes().len(),
     ))
 }
 
@@ -860,12 +1056,14 @@ pub(super) fn encoded_reducer_operation_base_len(
 }
 
 pub(super) fn encoded_reducer_operation_len(operation: &ReducerBodyOperationData) -> usize {
-    encoded_reducer_operation_base_len(
-        &operation.key,
-        &operation.attributes,
-        operation.operands.len(),
-    )
-    .saturating_add(operation.results.len().saturating_mul(4))
+    let ReducerBodyOperationData {
+        key,
+        attributes,
+        operands,
+        results,
+    } = operation;
+    encoded_reducer_operation_base_len(key, attributes, operands.len())
+        .saturating_add(results.len().saturating_mul(4))
 }
 
 pub(super) const fn encoded_reducer_operation_result_overhead() -> usize {
@@ -918,9 +1116,9 @@ pub(super) fn encode_index_node(out: &mut Vec<u8>, node: &IndexNode) {
             out.push(3);
             constant.encode(out);
             push_len(out, terms.len());
-            for t in terms {
-                t.coefficient.encode(out);
-                out.extend_from_slice(&t.value.to_be_bytes());
+            for LinearTermData { coefficient, value } in terms {
+                coefficient.encode(out);
+                out.extend_from_slice(&value.to_be_bytes());
             }
         }
         IndexNode::FloorDiv { dividend, divisor } => {
@@ -956,9 +1154,14 @@ pub(super) fn encode_operation_kind(out: &mut Vec<u8>, kind: &ScalarOperationKin
             });
             encode_u32s(out, init);
             encode_u32s(out, contributors);
-            push_len(out, body.values.len());
-            for value in &body.values {
-                match value.source {
+            let ScalarReducerBodyData {
+                values,
+                operations,
+                yields,
+            } = body;
+            push_len(out, values.len());
+            for ReducerBodyValueData { source, value_type } in values {
+                match source {
                     ReducerBodyValueSource::StateParameter(i) => {
                         out.push(1);
                         out.extend_from_slice(&i.to_be_bytes());
@@ -973,16 +1176,22 @@ pub(super) fn encode_operation_kind(out: &mut Vec<u8>, kind: &ScalarOperationKin
                         out.extend_from_slice(&result.get().to_be_bytes());
                     }
                 }
-                push_slice(out, value.value_type.canonical_encoding().as_bytes());
+                push_slice(out, value_type.canonical_encoding().as_bytes());
             }
-            push_len(out, body.operations.len());
-            for op in &body.operations {
-                encode_key(out, &op.key);
-                encode_canonical(out, op.attributes.value());
-                encode_u32s(out, &op.operands);
-                encode_u32s(out, &op.results);
+            push_len(out, operations.len());
+            for ReducerBodyOperationData {
+                key,
+                attributes,
+                operands,
+                results,
+            } in operations
+            {
+                encode_key(out, key);
+                encode_canonical(out, attributes.value());
+                encode_u32s(out, operands);
+                encode_u32s(out, results);
             }
-            encode_u32s(out, &body.yields);
+            encode_u32s(out, yields);
         }
     }
 }
