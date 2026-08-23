@@ -3,7 +3,7 @@ id: emit-the-indirect-gather-on-metal
 title: Emit the indirect gather on Metal
 status: blocked
 priority: p3
-dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-selected-data-dependent-index-representation, admit-a-storage-carrier-for-integer-program-inputs, admit-an-invocation-scoped-gather-index-validation-receipt, accept-the-invocation-scoped-gather-validation-public-surface, resolve-gather-bounds-proofs-positionally-or-prove-read-witness-ids-distinct, decide-whether-refinement-evidence-may-reach-a-physical-provider, thread-resolved-lowering-into-the-governed-spelling-path]
+dependencies: [accept-adr-0108-data-dependent-index-coordinate-siting, admit-the-selected-data-dependent-index-representation, admit-a-storage-carrier-for-integer-program-inputs, admit-an-invocation-scoped-gather-index-validation-receipt, accept-the-invocation-scoped-gather-validation-public-surface, resolve-gather-bounds-proofs-positionally-or-prove-read-witness-ids-distinct, decide-whether-refinement-evidence-may-reach-a-physical-provider, thread-resolved-lowering-into-the-governed-spelling-path, lower-the-indirect-gather-read-through-the-structured-kernel-body]
 related: [admit-an-indirect-gather-family-for-tied-embedding-lookup, admit-a-storage-carrier-for-integer-program-inputs, validate-device-resident-gather-indices-before-dispatch, admit-a-zero-copy-exclusive-lease-for-validated-gather-indices]
 scopes: [implementation/metal, implementation/compiler]
 shared_scopes: [project/tickets]
@@ -115,3 +115,11 @@ imply that a check happened merely because an address was formed.
 
 Scatter. Selecting or admitting the logical representation. Inventing an integer
 carrier or a host-validation boundary inside the backend.
+
+## Coordinator edge repair — 2026-08-23: this ticket cannot reach a kernel body from its own scopes
+
+`thread-resolved-lowering-into-the-governed-spelling-path` landed as `0326745a` and, in doing so, surfaced a wall below it that nothing owned. **A hard `depends_on` edge on [`lower-the-indirect-gather-read-through-the-structured-kernel-body`](lower-the-indirect-gather-read-through-the-structured-kernel-body.md) is now recorded**, because this ticket declares `implementation/metal` and `implementation/compiler` and the body lives in `implementation/ir` — so it structurally could not land the prerequisite even if a worker noticed the need mid-lane.
+
+**The wall, verified by the coordinator at `41c0d55f`.** `crates/tiler-ir/src/kernel/lower.rs` answers `LogicalAccess::GatherSource { .. } => Err(KernelDiagnostic::BodyRefinement)`. Now that physical planning spells a gather region, a **proved** gather reaches that refusal and it surfaces as `PhysicalError::Refinement` → `InvalidCompilerOutput` — a false claim about a region the schedule layer admits.
+
+**It is cheaply reachable, not exotic.** `gather_program_over([4, 0], [2], 0)` has an empty result domain, so its bounds obligation discharges **vacuously** — no `2^32` extent is needed to get there. That is why the delivering lane classified rather than ignored it: `pipeline::planning::kernel_lowering_failure` now reports the already-taken refusal as `("kernel-lowering", "gather-kernel-body")` instead of as invalid compiler output. It **never refuses on its own**, so there is no second copy of `tiler-ir`'s unsupported set to drift, and it stops being reached the moment the body lands.
