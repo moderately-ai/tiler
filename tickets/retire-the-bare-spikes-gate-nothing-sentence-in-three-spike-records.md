@@ -1,7 +1,7 @@
 ---
 id: retire-the-bare-spikes-gate-nothing-sentence-in-three-spike-records
 title: Retire the bare Spikes-gate-nothing sentence in three spike records
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/runtime, research/extensions, research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, spikes, falsified-evidence]
-claimed_from: todo
-assignee: worker-gatenothing
-lease_expires_at: 1787454809
 ---
 ## User-visible outcome
 
