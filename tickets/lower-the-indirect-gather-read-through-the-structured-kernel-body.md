@@ -1,7 +1,7 @@
 ---
 id: lower-the-indirect-gather-read-through-the-structured-kernel-body
 title: Lower the indirect gather read through the structured kernel body
-status: in-progress
+status: review
 priority: p2
 dependencies: [thread-resolved-lowering-into-the-governed-spelling-path]
 related: []
@@ -63,3 +63,41 @@ Every Fact above was re-read at the dispatched base before any edit. Each verdic
 **Identity.** `tiler.kernel.v9` does **not** step: `ConvertOp::U32ToIndex` takes tag `0x05` by appending, every earlier tag and field position is byte-identical, and no kernel the earlier vocabulary could express contains `0x05` in that position. Nothing else steps either — no new domain literal, so `crates/tiler-ir/src/domains.rs` is untouched; `KernelType::U32` and `StorageScalar::U32` already carried tags `0x07` and `0x04`; `tiler-artifact` encodes no `ConvertOp`; `tiler.schedule.v7`, `tiler.index-region.v11`, and `tiler.kernel-program.v13` see no vocabulary change. Verified by the whole `tiler-ir` and workspace suites, which carry the identity goldens.
 
 **What is still open.** The vacuously proved fixture now reaches `StageElementType { position: 1, expected: U32, actual: F32 }` in kernel-program assembly, because `tiler-compiler` materializes every boundary value at the program's arithmetic carrier. That, the classifier removal, and the fixture's disposition are the follow-up ticket above; `emit-the-indirect-gather-on-metal` remains behind both.
+## Coordinator note — 2026-08-23: one contract paragraph expires when this lane lands
+
+`restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired` landed as `0b51531f` and repaired `docs/compiler/optimizer.md` to the standing true at that moment: the retired `GatherProofUnavailable`, the narrower `GatherIndexBoundsUnproved` for the undischarged population, a proved gather reaching `RegionSpellingKind::Gather`, and — as the reason a gather still does not compile end to end — the kernel-body wall **this ticket owns**.
+
+That lane wrote the sentence **conditionally on purpose**, naming this ticket as in progress and saying the boundary "may itself move next", rather than asserting a permanent state. So this is a known expiry, not drift it left behind.
+
+**When this ticket lands, that paragraph needs a further dated correction.** The scope is `contracts/optimizer`, which this ticket does **not** hold, so it is a follow-up to file at merge rather than something to reach for from this lane. This is the third link in that chain — `27fa3043`, then `0b51531f` — and each one flagged its own successor rather than leaving a stale sentence, which is the pattern to continue.
+
+**Also verified by the coordinator at `db8ae185`, so you need not re-derive it:** `GATHER_KERNEL_BODY_RULE` is `"gather-kernel-body"` at `crates/tiler-compiler/src/pipeline/planning.rs`, and the classifier reports rather than refuses — it stops being reached once your body lands, which is the intended retirement path for it.
+
+## FORCED HOLD — 2026-08-23: the work is complete and gated RED by design; do not merge yet
+
+**Branch `tkt/lower-the-indirect-gather-read-through-the-structured-kernel-body`, commit `cd3d689a`, base `db8ae185`. Preserved and deliberately unmerged.** `worker-gatherbody` completed the lowering and told the coordinator not to merge. That instruction is correct and is being honoured.
+
+**Why main must not take it yet.** One workspace test fails: `tiler-compiler request::tests::a_statically_proved_gather_is_declined_for_its_missing_kernel_body`, `left: None  right: Some(("kernel-lowering", "gather-kernel-body"))`. That is not a defect in the lowering — it is the **predicted** consequence of it. The classifier `pipeline::planning::kernel_lowering_failure` exists only to report the missing body; once the body lands its arm is unreachable, so `planning_capability_rule` answers `None` and the test asserting the classification fails. The gate is red **because the lane succeeded**.
+
+**Why the lane did not fix it, and was right not to.** The fix lives in `implementation/compiler`, which this ticket does not declare, which the brief made a non-goal, and which was held at the time by a **live exclusive claim**. Reaching across a live claim to green a gate is exactly the shortcut that produces an unreviewed merge.
+
+**RELEASE TRIGGER — merge this branch only after [`retire-the-gather-kernel-lowering-classification-after-the-body-landed`](retire-the-gather-kernel-lowering-classification-after-the-body-landed.md) lands, and gate the two together.** That ticket is `p1`, scoped `implementation/compiler`, depends on this one, and is filed **on this branch** rather than on `main` — so it becomes visible to the board only when this merges. The coordinator must therefore dispatch it from this branch's content or re-file it on `main`; it will not appear on the ready board by itself. `implementation/compiler` is currently held by `split-the-compiler-pipeline-test-monolith-by-orchestration-phase`.
+
+**Known next wall, probed but not landed.** The lane patched the test to print, ran it, reverted, and confirmed a clean tree. The outcome after the classifier retires is `InvalidCompilerOutput(Program(CoreConstruction(StageElementType { position: 1, expected: U32, actual: F32 })))`: `BoundedCarrier::of` in `crates/tiler-compiler/src/program.rs` materializes every boundary value at the program's arithmetic carrier, so a `tiler::u32@1` index input is declared `f32`. `tiler_ir::program::StorageScalar::U32` already exists — the missing half is the compiler's per-input carrier selection, not an IR carrier.
+
+**Also outside that lane's scopes, for a coordinator pass:** `docs/roadmap.md`'s gather row still reads that `LogicalAccess` has no indirect relation and no lowering capability, which three landed commits have falsified.
+
+### Sequencing, made explicit — the dependent lane must branch from `cd3d689a`, not from `main`
+
+The release trigger above is correct but under-specified, and the under-specification is a trap. `retire-the-gather-kernel-lowering-classification-after-the-body-landed` declares `depends_on: [lower-the-indirect-gather-read-through-the-structured-kernel-body]`, and that ticket cannot reach `done` until its branch merges — which is precisely what the hold forbids. **So the dependent ticket will never surface on the ready board on its own.** Waiting for it to appear is waiting forever.
+
+It is also not work that can be done on `main`: retiring a classifier whose arm is still reachable would make `main` refuse a gather it can no longer classify, turning a correct report into an absent one.
+
+**The correct sequence, for whoever picks this up:**
+
+1. Wait for `implementation/compiler` to free — currently held by `split-the-compiler-pipeline-test-monolith-by-orchestration-phase`.
+2. Create the dependent lane's worktree from **`cd3d689a`** (this branch's tip), not from `main`, so the body is present and the classifier's arm is genuinely unreachable in its tree.
+3. Land the classifier retirement there, over the body.
+4. Merge the combined result into `main` **once**, and gate the merged tree. The expected baseline is 4060 workspace / 1350 release **plus** this lane's +5 new tests, minus whatever the retirement removes — derive it, do not assume it.
+
+**Do not merge this branch alone at any point in that sequence.** The single red test is the whole reason the hold exists, and greening it by any route other than the dependent lane means editing a test to match code rather than fixing the code the test is about.
