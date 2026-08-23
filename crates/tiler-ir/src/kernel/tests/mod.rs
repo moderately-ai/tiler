@@ -29,6 +29,7 @@ mod cooperative_synchronization;
 mod cooperative_tiles;
 mod extent_operands;
 mod extrema_reduction;
+mod gather;
 mod guarded_loads_predicated;
 mod kernel_identity;
 mod live_contraction;

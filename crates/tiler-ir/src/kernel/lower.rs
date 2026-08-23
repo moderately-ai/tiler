@@ -21,7 +21,7 @@ use crate::schedule::{
     PointwiseBf16Expression, PointwiseBf16Node, PointwiseF32Expression, PointwiseF32Node,
     ReductionPass, ReductionTopology, RegionProgram, ResourceRequirements, ScalarProgram,
     ScheduledRegion, TailPolicy, TensorRole, VerifiedScheduledRegion, contributor_count,
-    element_count, live_input_extents, live_source_axis,
+    element_count, gather_index_read_map, live_input_extents, live_source_axis,
 };
 use crate::shape::Shape;
 
@@ -34,7 +34,7 @@ use super::model::{
     KernelType, MemoryScope, PackedExtractOp, SerialLoopSpec, StagingParameter, UnaryOp,
     VerifiedKernel, region_element_type,
 };
-use super::verify::{access_elements, boundary_accesses};
+use super::verify::{access_elements, boundary_accesses, gather_address_reads};
 
 /// Which root index a linearization term extracts its coordinate from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -145,6 +145,55 @@ enum ReadAddressing {
         /// Contributors each partition combines.
         contributors_per_partition: u64,
     },
+    /// The data-dependent read, addressed by direct coordinates and one
+    /// coordinate loaded from the region's index operand.
+    ///
+    /// The one form that reads memory to build an address, which is why it is a
+    /// form of its own rather than a term inside [`Self::Linearized`]: every
+    /// other term here is arithmetic on a linear root the body already holds,
+    /// and this one has to emit a load, a widening conversion, and the scale
+    /// before the sum exists at all.
+    ///
+    /// Boxed because it is far the widest arm and every read of every region
+    /// carries a `ReadAddressing`; the indirection costs a pointer chase in the
+    /// one family that takes it and keeps the other seven at their old size.
+    Gather(Box<GatherAddressing>),
+    /// A gather's address-only index operand.
+    ///
+    /// Fieldless deliberately. This read supplies coordinates rather than a
+    /// value, it is never loaded on its own, and how it computes its own offset
+    /// is stated once — in the owning [`GatherAddressing::index`] — so a field
+    /// here would be a second account of the same addressing that the two could
+    /// disagree in. What this form carries is the fact that the read *is* an
+    /// address operand, which is what keeps it out of the scalar leaves.
+    GatherAddress,
+}
+
+/// How one data-dependent read builds the element offset it loads from.
+///
+/// The direct half and the indirect half, kept apart because they come from
+/// different places: `direct` is arithmetic on the invocation index alone, and
+/// the gathered coordinate exists only after a load. A single term list could
+/// not state that ordering.
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct GatherAddressing {
+    /// Row-major terms for every source axis other than the gathered one.
+    direct: Vec<OffsetTerm>,
+    /// The source tensor's own row-major stride on the gathered axis.
+    ///
+    /// Carried rather than recomputed at emission for the reason
+    /// [`OffsetTerm::mirror`] carries its extent: the scale is stated against
+    /// this source shape, and an emission that looked it up elsewhere could
+    /// apply the wrong one.
+    gathered_stride: u64,
+    /// Region-local position of the address-supplying read.
+    index_read: usize,
+    /// How that read computes its own element offset.
+    ///
+    /// Derived from [`gather_index_read_map`] rather than read off the address
+    /// access, so the offset this body emits is the relation the schedule
+    /// layer's single authority states and not a second account of it.
+    index: ReadAddressing,
 }
 
 /// The one cooperative tile shape this lowering has a canonical body for.
@@ -394,14 +443,43 @@ fn plan(schedule: &ScheduledRegion) -> Result<CanonicalPlan<'_>, KernelDiagnosti
     // containing region's, exactly the contextual interpretation the accepted
     // fieldless-marker surface states.
     let live = live_source_axis(schedule);
+    // Which reads carry addresses rather than values, from the one derivation
+    // `verify_signature` also reads. An address operand is classified before any
+    // of them is addressed, because a gather's own form has to name the position
+    // of its operand and the operand's own form has to say it is not a leaf.
+    let address_reads = gather_address_reads(reads);
     let addressing = if matches!(scalar, ScalarProgram::StrictAffineU4Dequantize { .. }) {
         vec![ReadAddressing::Identity; reads.len()]
     } else {
         reads
             .iter()
-            .map(|read| addressing(read, &schedule.schedule.reduction, live))
+            .enumerate()
+            .map(|(position, read)| {
+                if address_reads.get(position).copied().unwrap_or(false) {
+                    Ok(ReadAddressing::GatherAddress)
+                } else {
+                    addressing(read, reads, &schedule.schedule.reduction, live)
+                }
+            })
             .collect::<Result<Vec<_>, _>>()?
     };
+    // A live loop and a data-dependent read do not compose in this profile. The
+    // live body loads every read at one row-major offset it computes itself, so
+    // a gather reaching it would be addressed by the loop's coordinate instead
+    // of by its own relation and would return a wrong element silently. The
+    // schedule verifier already refuses the pair — its addressing-regime rule
+    // admits an all-static region or an all-`LiveRowMajor` one and nothing
+    // between — so this is the fail-closed backstop for a body derived outside
+    // that gate rather than a reachable refusal.
+    if addressing
+        .iter()
+        .any(|addressing| matches!(addressing, ReadAddressing::Gather(_)))
+        && addressing
+            .iter()
+            .any(|addressing| matches!(addressing, ReadAddressing::LiveRowMajor { .. }))
+    {
+        return Err(KernelDiagnostic::BodyRefinement);
+    }
     Ok(CanonicalPlan {
         scalar,
         reads,
@@ -792,8 +870,14 @@ fn barrier_spelling(point: &crate::schedule::SynchronizationPoint) -> Option<Bar
 /// through a default: a consumer with no marker to consume is a region the
 /// intrinsic verifier refuses, so the refusal here is the fail-closed backstop
 /// for a body derived outside that gate rather than a reachable lowering.
+///
+/// `reads` is the region's whole read run, which only the gather arm consults:
+/// a data-dependent read names its address operand by region-local ordinal, so
+/// resolving it needs the list the ordinal indexes. Every other arm answers
+/// from `read` alone.
 fn addressing(
     read: &Access,
+    reads: &[Access],
     reduction: &ReductionTopology,
     live: Option<crate::shape::Axis>,
 ) -> Result<ReadAddressing, KernelDiagnostic> {
@@ -907,32 +991,190 @@ fn addressing(
         // refuses rather than inventing a second language or selecting a
         // concrete neighbour.
         LogicalAccess::ParametricBroadcast { .. } => Err(KernelDiagnostic::BodyRefinement),
-        // The `body-refinement` wall for the data-dependent read. A statically
-        // proved literal gather may reach verified schedule formation, but it
-        // has no indirect kernel or backend route: emitting one needs an
-        // address *load* inside the body, and no `ReadAddressing` form has one.
+        // The data-dependent read. Its address is a sum of two halves: the
+        // source coordinates the result domain carries directly, and the one
+        // coordinate the loaded U32 supplies on the gathered axis.
         //
-        // Refused by name rather than by selecting a neighbouring relation.
-        // `LinearIdentity` would read the source at the invocation index and
-        // `BroadcastReplication` at a derived static coordinate; both return a
-        // wrong element silently, which is exactly the typed, explainable
-        // failure this arm exists to keep. There is no backend fallback.
-        //
-        // Kept a separate arm from the parametric refusal above, which shares
-        // its result: the two are different unsupported languages — a sourced
-        // mapping that would have to bind an extent, against an address that
-        // would have to be loaded — and merging them would leave one comment
-        // standing for both.
-        #[expect(
-            clippy::match_same_arms,
-            reason = "distinct unsupported relations that share one diagnostic"
-        )]
-        LogicalAccess::GatherSource { .. } => Err(KernelDiagnostic::BodyRefinement),
+        // The relation is checked against its own derivations before an address
+        // is built from it, rather than trusted. `gather_result_shape` and
+        // `gather_index_read_map` are the schedule layer's single authorities
+        // for the result domain and the address relation, and the schedule
+        // verifier compared the stated members against both before this region
+        // could be verified. Re-deriving here is what keeps that comparison
+        // from being the only thing between a self-inconsistent relation and an
+        // address computed off the wrong shape — the failure that stays in
+        // bounds and returns a wrong element.
+        LogicalAccess::GatherSource {
+            source_shape,
+            result_shape,
+            axis,
+            index_access,
+            index_shape,
+        } => {
+            let derived = crate::semantic::gather_result_shape(*axis, source_shape, index_shape)
+                .map_err(|_| KernelDiagnostic::BodyRefinement)?;
+            if derived.1 != *result_shape {
+                return Err(KernelDiagnostic::BodyRefinement);
+            }
+            let index_read = usize::try_from(index_access.get())
+                .map_err(|_| KernelDiagnostic::BodyRefinement)?;
+            let operand = reads
+                .get(index_read)
+                .ok_or(KernelDiagnostic::BodyRefinement)?;
+            let expected = gather_index_read_map(source_shape, *axis, index_shape)
+                .ok_or(KernelDiagnostic::BodyRefinement)?;
+            if operand.map != expected {
+                return Err(KernelDiagnostic::BodyRefinement);
+            }
+            let (direct, gathered_stride) = gather_direct_terms(source_shape, result_shape, *axis)?;
+            Ok(ReadAddressing::Gather(Box::new(GatherAddressing {
+                direct,
+                gathered_stride,
+                index_read,
+                index: gather_address_addressing(&expected)?,
+            })))
+        }
         // Unreachable through `plan`, which refuses the copy region program
         // before any read is addressed; refused by name so a reachable path
         // added later names the missing carrier rather than a body defect.
         LogicalAccess::PartitionedCopySource => Err(KernelDiagnostic::UnloweredRegionProgram),
     }
+}
+
+/// Resolves how a gather's address-only index operand computes its own offset.
+///
+/// Deliberately narrower than [`addressing`], and deliberately not a call into
+/// it: it admits exactly the three relations [`gather_index_read_map`] derives
+/// and refuses every other, so an address operand can never be addressed by a
+/// relation the schedule layer's authority does not produce.
+///
+/// [`LogicalAccess::ScalarBroadcast`] is admitted here and refused there, which
+/// is the same asymmetry the schedule verifier keeps: one address read by every
+/// invocation is a coordinate, and a rank-zero *value* leaf belongs to the
+/// decode program instead. Its offset is element zero, which is the empty term
+/// list rather than [`ReadAddressing::Identity`] — the invocation index would
+/// address a different element per invocation of a tensor that holds one.
+///
+/// Written out arm by arm with no wildcard, so a widened [`LogicalAccess`] is a
+/// build error here rather than a relation silently inheriting the refusal.
+fn gather_address_addressing(map: &LogicalAccess) -> Result<ReadAddressing, KernelDiagnostic> {
+    match map {
+        LogicalAccess::LinearIdentity => Ok(ReadAddressing::Identity),
+        LogicalAccess::ScalarBroadcast => Ok(ReadAddressing::Linearized(Vec::new())),
+        LogicalAccess::BroadcastReplication {
+            operand_shape,
+            result_shape,
+            axes,
+        } => Ok(ReadAddressing::Linearized(linearize_axis_decodes(
+            operand_shape,
+            result_shape,
+            axes,
+        )?)),
+        LogicalAccess::PackedU4LsbZeroTail { .. }
+        | LogicalAccess::ReductionContributor { .. }
+        | LogicalAccess::ContractionOperand { .. }
+        | LogicalAccess::ReindexBijection { .. }
+        | LogicalAccess::ParametricBroadcast { .. }
+        | LogicalAccess::LiveRowMajorSource { .. }
+        | LogicalAccess::LiveRowMajor
+        | LogicalAccess::PartitionedCopySource
+        | LogicalAccess::GatherSource { .. } => Err(KernelDiagnostic::BodyRefinement),
+    }
+}
+
+/// Builds the direct half of one data-dependent read's address.
+///
+/// Every source axis other than the gathered one takes its coordinate from the
+/// result axis carrying it. The result domain is
+/// `source[..axis] ++ index ++ source[axis + 1..]`, so a source axis before the
+/// gathered one keeps its position and a source axis after it sits
+/// `index_rank - 1` positions further along. The gathered axis receives no
+/// result coordinate at all — that is precisely what the loaded U32 supplies —
+/// so it contributes no term and its stride is returned instead, for the caller
+/// to scale the loaded coordinate by.
+///
+/// The conventions are [`linearize_axis_decodes`]'s, shared for the reason the
+/// two structural relations share theirs: a coordinate that is constantly zero
+/// or a stride that is zero contributes nothing and is dropped, and the wrap is
+/// omitted exactly where the decode names the leading window of the result's
+/// linear coordinate, so the quotient is already below the modulus.
+///
+/// Each axis's result extent is compared against the source extent it claims to
+/// carry. That comparison is what separates this from an arithmetic that merely
+/// type-checks: a relation whose result domain does not match the composition
+/// would otherwise yield an address that stays inside the source buffer and
+/// names a different element.
+fn gather_direct_terms(
+    source_shape: &Shape,
+    result_shape: &Shape,
+    axis: crate::shape::Axis,
+) -> Result<(Vec<OffsetTerm>, u64), KernelDiagnostic> {
+    let source_extents: Vec<u64> = source_shape
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    let gathered = usize::try_from(axis.get())
+        .ok()
+        .filter(|position| *position < source_extents.len())
+        .ok_or(KernelDiagnostic::BodyRefinement)?;
+    let result_extents: Vec<u64> = result_shape
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    // `result_rank = source_rank - 1 + index_rank`, solved for the index run.
+    let index_rank = result_extents
+        .len()
+        .checked_add(1)
+        .and_then(|rank| rank.checked_sub(source_extents.len()))
+        .ok_or(KernelDiagnostic::BodyRefinement)?;
+    let source_strides = suffix_products(&source_extents);
+    let result_strides = suffix_products(&result_extents);
+    let result_elements =
+        element_count(result_shape).map_err(|_| KernelDiagnostic::ElementCountOverflow)?;
+
+    let mut terms = Vec::with_capacity(source_extents.len());
+    for (position, extent) in source_extents.iter().copied().enumerate() {
+        if position == gathered {
+            continue;
+        }
+        let carrier = if position < gathered {
+            position
+        } else {
+            position
+                .checked_add(index_rank)
+                .and_then(|shifted| shifted.checked_sub(1))
+                .ok_or(KernelDiagnostic::BodyRefinement)?
+        };
+        let (Some(divisor), Some(result_extent)) = (
+            result_strides.get(carrier).copied(),
+            result_extents.get(carrier).copied(),
+        ) else {
+            return Err(KernelDiagnostic::BodyRefinement);
+        };
+        if result_extent != extent {
+            return Err(KernelDiagnostic::BodyRefinement);
+        }
+        let stride = source_strides[position];
+        if extent == 1 || divisor == 0 || stride == 0 {
+            continue;
+        }
+        let leading = divisor
+            .checked_mul(result_extent)
+            .is_some_and(|window| window == result_elements);
+        terms.push(OffsetTerm {
+            root: OffsetRoot::Output,
+            divisor,
+            modulus: (!leading).then_some(result_extent),
+            // No source axis of a gather mirrors: the relation states a
+            // reversal of no axis, and the gathered coordinate is a loaded
+            // value rather than a decode a mirror could apply to.
+            mirror: None,
+            stride,
+        });
+    }
+    Ok((terms, source_strides[gathered]))
 }
 
 /// Builds the row-major linearization terms of one structural access.
@@ -1262,12 +1504,23 @@ fn emit(
     // same authority `verify_signature` reads, so a widened dtype cannot declare
     // one type here and be checked against another there.
     let element_type = region_element_type(plan.scalar);
+    // A gather's address operand is the one read that is not a dense boundary
+    // value, so it is the one buffer that is not declared at the region's
+    // element type: it carries the exact-width U32 coordinates the body loads.
+    // Read from `gather_address_reads`, which is also what `verify_signature`
+    // checks these declarations against, so the two cannot drift into declaring
+    // one type and verifying another.
+    let address_reads = gather_address_reads(plan.reads);
     let mut read_buffers = Vec::with_capacity(plan.reads.len());
-    for (read, elements) in plan.reads.iter().zip(&plan.read_elements) {
+    for (position, (read, elements)) in plan.reads.iter().zip(&plan.read_elements).enumerate() {
         read_buffers.push(builder.declare_buffer(BufferParameter {
             tensor: read.tensor,
             component_role: None,
-            element_type,
+            element_type: if address_reads.get(position).copied().unwrap_or(false) {
+                KernelType::U32
+            } else {
+                element_type
+            },
             address_space: AddressSpace::Device,
             access: BufferAccess::Read,
             element_count: *elements,
@@ -1358,9 +1611,13 @@ fn emit_live_row_major(
         let col = parameters.induction();
         let stride = builder.binary(BinaryOp::IndexMultiply, row, columns)?;
         let offset = builder.binary(BinaryOp::IndexAdd, stride, col)?;
+        // Every read at the loop's own row-major offset, which is correct
+        // exactly because `plan` admits a live region only when every access is
+        // live on the same inner axis — and refuses a live region carrying a
+        // data-dependent read, whose address is its own rather than this one.
         let mut inputs = Vec::with_capacity(read_buffers.len());
         for (buffer, read) in read_buffers.iter().zip(plan.reads) {
-            inputs.push(builder.load(*buffer, offset, read.bounds)?);
+            inputs.push(Some(builder.load(*buffer, offset, read.bounds)?));
         }
         let mapped = match plan.scalar {
             ScalarProgram::PointwiseF32(expression) => {
@@ -1420,25 +1677,7 @@ fn emit_guarded(
     };
     match plan.scalar {
         ScalarProgram::PointwiseF32(expression) => {
-            let mut inputs = Vec::with_capacity(read_buffers.len());
-            for (position, (buffer, read)) in read_buffers.iter().zip(plan.reads).enumerate() {
-                // Through the read's own addressing rather than at the
-                // invocation index. Loading at the invocation directly was
-                // correct while every pointwise read was `LinearIdentity`, and
-                // it is exactly the check that keeps passing for the wrong
-                // reason once a second relation exists: a structural read would
-                // have addressed its operand densely and returned a plausible
-                // tensor that is the wrong one. `Identity` still emits the
-                // invocation itself, so every dense region's body is unchanged.
-                let addressing =
-                    plan.addressing
-                        .get(position)
-                        .ok_or(KernelBuildError::InvalidHandle {
-                            entity: super::error::KernelEntityKind::Buffer,
-                        })?;
-                let offset = emit_offset(builder, addressing, invocation, None)?;
-                inputs.push(builder.load(*buffer, offset, read.bounds)?);
-            }
+            let inputs = emit_pointwise_loads(builder, plan, read_buffers, invocation)?;
             let mapped = emit_pointwise(builder, expression, &inputs)?;
             builder.store(
                 write_buffer,
@@ -1451,24 +1690,11 @@ fn emit_guarded(
         // The same shape at the other width, and deliberately a separate arm
         // rather than a shared one parameterized by an operation table: the two
         // node vocabularies are different sets, so one emitter would have to
-        // decide what an `f32`-only node means at `bf16`.
+        // decide what an `f32`-only node means at `bf16`. The *loads* are shared
+        // because they read no element type at all — a load takes the type its
+        // buffer declares — so one loader cannot make that decision.
         ScalarProgram::PointwiseBf16(expression) => {
-            let mut inputs = Vec::with_capacity(read_buffers.len());
-            for (position, (buffer, read)) in read_buffers.iter().zip(plan.reads).enumerate() {
-                // Through the read's addressing for the reason the `f32` arm is,
-                // and not because a `bf16` region can carry a structural map
-                // today: the recognizer builds none. It is the same derivation
-                // either way, and an arm that addressed densely "because nothing
-                // reaches it yet" is one a later widening silently breaks.
-                let addressing =
-                    plan.addressing
-                        .get(position)
-                        .ok_or(KernelBuildError::InvalidHandle {
-                            entity: super::error::KernelEntityKind::Buffer,
-                        })?;
-                let offset = emit_offset(builder, addressing, invocation, None)?;
-                inputs.push(builder.load(*buffer, offset, read.bounds)?);
-            }
+            let inputs = emit_pointwise_loads(builder, plan, read_buffers, invocation)?;
             let mapped = emit_pointwise_bf16(builder, expression, &inputs)?;
             builder.store(
                 write_buffer,
@@ -2737,6 +2963,109 @@ fn emit_strict_affine_u4_dequantize(
     Ok(())
 }
 
+/// Loads one boundary value per read, through each read's own addressing.
+///
+/// Through the read's own relation rather than at the invocation index.
+/// Loading at the invocation directly was correct while every pointwise read
+/// was `LinearIdentity`, and it is exactly the check that keeps passing for the
+/// wrong reason once a second relation exists: a structural read would have
+/// addressed its operand densely and returned a plausible tensor that is the
+/// wrong one. [`ReadAddressing::Identity`] still emits the invocation itself,
+/// so every dense region's body is unchanged.
+///
+/// **One slot per access position, and `None` at a gather's address operand.**
+/// A scalar leaf names its read by region-local ordinal, so the ordinal indexes
+/// this list directly; compacting it would shift every later leaf onto its
+/// neighbour the moment an address operand appeared before one. The address
+/// operand yields no value because it is not one — it is loaded inside the
+/// offset of the gather that owns it, at the U32 type its buffer declares, and
+/// an expression naming it is a typed refusal here rather than a `u32` reaching
+/// `f32` arithmetic.
+fn emit_pointwise_loads(
+    builder: &mut KernelBuilder,
+    plan: &CanonicalPlan<'_>,
+    read_buffers: &[KernelBufferId],
+    invocation: KernelValueId,
+) -> Result<Vec<Option<KernelValueId>>, KernelBuildError> {
+    let missing = || KernelBuildError::InvalidHandle {
+        entity: super::error::KernelEntityKind::Buffer,
+    };
+    let mut inputs = Vec::with_capacity(read_buffers.len());
+    for (position, (buffer, read)) in read_buffers.iter().zip(plan.reads).enumerate() {
+        let addressing = plan.addressing.get(position).ok_or_else(missing)?;
+        let value = match addressing {
+            ReadAddressing::GatherAddress => None,
+            ReadAddressing::Gather(gather) => {
+                let operand = read_buffers.get(gather.index_read).ok_or_else(missing)?;
+                let bounds = plan
+                    .reads
+                    .get(gather.index_read)
+                    .ok_or_else(missing)?
+                    .bounds;
+                let offset = emit_gather_offset(builder, gather, *operand, bounds, invocation)?;
+                Some(builder.load(*buffer, offset, read.bounds)?)
+            }
+            ReadAddressing::Identity
+            | ReadAddressing::LiveRowMajor { .. }
+            | ReadAddressing::LiveContracted { .. }
+            | ReadAddressing::BlockedContraction(_)
+            | ReadAddressing::Linearized(_)
+            | ReadAddressing::Partitioned { .. } => {
+                let offset = emit_offset(builder, addressing, invocation, None)?;
+                Some(builder.load(*buffer, offset, read.bounds)?)
+            }
+        };
+        inputs.push(value);
+    }
+    Ok(inputs)
+}
+
+/// Emits the element offset of one data-dependent read.
+///
+/// The address is `direct + coordinate * stride`, where `coordinate` is the U32
+/// this invocation loads from the gather's own index operand, widened to the
+/// index role by the one named conversion that does it. The load comes first
+/// because the indirection *is* the relation: a reader of the emitted body
+/// meets the coordinate it depends on before the direct terms that surround it.
+///
+/// **The scale is emitted whenever the stride is not one, including zero.** A
+/// zero stride is the exact row-major contribution of a gathered axis whose
+/// source carries a later empty axis, so multiplying by it is arithmetic rather
+/// than a special case; skipping it — the shape the `> 1` guard elsewhere would
+/// take — would leave the raw loaded coordinate standing in the sum.
+///
+/// The direct sum is folded in only when there is one. A gather whose source is
+/// rank one has no direct coordinate at all, and adding a constant zero to its
+/// address would put an operation in the canonical body that a structurally
+/// compared producer kernel would have to reproduce exactly.
+fn emit_gather_offset(
+    builder: &mut KernelBuilder,
+    gather: &GatherAddressing,
+    operand: KernelBufferId,
+    bounds: BoundsWitnessId,
+    invocation: KernelValueId,
+) -> Result<KernelValueId, KernelBuildError> {
+    let coordinate_offset = emit_offset(builder, &gather.index, invocation, None)?;
+    let address = builder.load(operand, coordinate_offset, bounds)?;
+    let coordinate = builder.convert(ConvertOp::U32ToIndex, address)?;
+    let mut total = if gather.gathered_stride == 1 {
+        coordinate
+    } else {
+        let stride = builder.constant(KernelConstant::Index(gather.gathered_stride))?;
+        builder.binary(BinaryOp::IndexMultiply, coordinate, stride)?
+    };
+    if !gather.direct.is_empty() {
+        let direct = emit_offset(
+            builder,
+            &ReadAddressing::Linearized(gather.direct.clone()),
+            invocation,
+            None,
+        )?;
+        total = builder.binary(BinaryOp::IndexAdd, total, direct)?;
+    }
+    Ok(total)
+}
+
 /// Emits the scalar body of a pointwise expression over its loaded inputs.
 ///
 /// `inputs` is indexed by the leaf's own ordinal, not by the order the leaves
@@ -2745,17 +3074,22 @@ fn emit_strict_affine_u4_dequantize(
 /// with no loaded value is a region whose reads and expression disagree, which
 /// the schedule verifier rejects — this reports it as an invalid handle rather
 /// than reading whichever value sits at that index.
+///
+/// A slot holding `None` is that same disagreement in its one reachable
+/// spelling: the ordinal names a gather's address operand, which produces
+/// coordinates rather than a value. It is refused on the same rule rather than
+/// resolved to a neighbouring leaf.
 fn emit_pointwise(
     builder: &mut KernelBuilder,
     expression: &PointwiseF32Expression,
-    inputs: &[KernelValueId],
+    inputs: &[Option<KernelValueId>],
 ) -> Result<KernelValueId, KernelBuildError> {
     let mut values = Vec::with_capacity(expression.nodes().len());
     for node in expression.nodes() {
         let value = match node {
             PointwiseF32Node::Input { access } => usize::try_from(access.get())
                 .ok()
-                .and_then(|position| inputs.get(position).copied())
+                .and_then(|position| inputs.get(position).copied().flatten())
                 .ok_or(KernelBuildError::InvalidHandle {
                     entity: super::error::KernelEntityKind::Buffer,
                 })?,
@@ -2821,14 +3155,14 @@ fn emit_pointwise(
 fn emit_pointwise_bf16(
     builder: &mut KernelBuilder,
     expression: &PointwiseBf16Expression,
-    inputs: &[KernelValueId],
+    inputs: &[Option<KernelValueId>],
 ) -> Result<KernelValueId, KernelBuildError> {
     let mut values = Vec::with_capacity(expression.nodes().len());
     for node in expression.nodes() {
         let value = match node {
             PointwiseBf16Node::Input { access } => usize::try_from(access.get())
                 .ok()
-                .and_then(|position| inputs.get(position).copied())
+                .and_then(|position| inputs.get(position).copied().flatten())
                 .ok_or(KernelBuildError::InvalidHandle {
                     entity: super::error::KernelEntityKind::Buffer,
                 })?,
@@ -3033,7 +3367,7 @@ fn emit_fold_epilogue(
     epilogue: Option<&PointwiseF32Expression>,
 ) -> Result<KernelValueId, KernelBuildError> {
     match epilogue {
-        Some(expression) => emit_pointwise(builder, expression, &[value]),
+        Some(expression) => emit_pointwise(builder, expression, &[Some(value)]),
         None => Ok(value),
     }
 }
@@ -3245,9 +3579,19 @@ fn emit_offset(
         // here for a reason worth stating: routing it through this function would
         // silently emit the divide and modulo it exists to avoid, so the refusal
         // is what keeps that cost out of a kernel with a retained timing.
+        //
+        // The two gather forms are here for a different reason. A gather's
+        // address needs the builder to emit a load before any sum exists, which
+        // this function's signature cannot express, so it is built by
+        // `emit_gather_offset` instead; and an address operand has no offset of
+        // its own at all — the gather that owns it holds one. Reaching either
+        // here means a caller addressed a data-dependent read as though it were
+        // arithmetic, which is a refusal rather than an approximation.
         ReadAddressing::LiveRowMajor { .. }
         | ReadAddressing::LiveContracted { .. }
-        | ReadAddressing::BlockedContraction(_) => {
+        | ReadAddressing::BlockedContraction(_)
+        | ReadAddressing::Gather(_)
+        | ReadAddressing::GatherAddress => {
             return Err(KernelBuildError::InvalidHandle {
                 entity: super::error::KernelEntityKind::Value,
             });

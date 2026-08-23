@@ -156,8 +156,15 @@ pub enum KernelType {
     /// An unsigned 32-bit storage access and SSA value.
     ///
     /// This exact-width type prevents a four-byte unsigned program input from
-    /// being reinterpreted as signed [`Self::I32`] or widened to [`Self::Index`].
-    /// It currently has no arithmetic, conversion, or backend producer.
+    /// being reinterpreted as signed [`Self::I32`] or silently widened to
+    /// [`Self::Index`].
+    ///
+    /// It is produced: the canonical lowering of a `GatherSource` read declares
+    /// its address-only index operand at this type and loads the gathered
+    /// coordinate from it. The widening to the index role is the named
+    /// [`ConvertOp::U32ToIndex`] and nothing else — this type still has no
+    /// arithmetic of its own, and `crates/tiler-metal` refuses it at
+    /// `msl_type`, so the backend half is a separate boundary.
     U32,
 }
 
@@ -772,6 +779,29 @@ pub enum ConvertOp {
     /// owns the directional BF16/binary32 conversion families, and neither is
     /// registered or spellable in this vocabulary.
     CanonicalizeBf16Nan,
+    /// Exactly widens an unsigned 32-bit storage value into the index role.
+    ///
+    /// The one conversion the data-dependent read needs: a gather loads its
+    /// coordinate out of a [`KernelType::U32`] program input and has to use it
+    /// as an element offset, which is [`KernelType::Index`]. Every `u32` value
+    /// is representable in unsigned 64 bits, so the widening is exact for the
+    /// whole source domain and states no rounding, overflow, or exceptional
+    /// behaviour — which is what lets it sit in a profile whose other
+    /// conversions each name one.
+    ///
+    /// **Deliberately not a reinterpretation and deliberately not implicit.**
+    /// The U32 storage type exists to stop a four-byte unsigned input from
+    /// being widened silently; a body that used the loaded value as an offset
+    /// without naming this conversion would be doing exactly that, and a
+    /// backend reading the kernel would have to infer the widening from the
+    /// operand types instead of being told.
+    ///
+    /// It converts a *storage* value into a *coordinate*, and it states
+    /// nothing about whether that coordinate is in range. The gathered axis's
+    /// bounds are the paired
+    /// [`BoundsProofKind::GatherSource`](crate::schedule::BoundsProofKind::GatherSource)'s
+    /// subject, discharged before a schedule carrying the read can exist.
+    U32ToIndex,
 }
 
 impl ConvertOp {
@@ -785,6 +815,12 @@ impl ConvertOp {
             // previously encodable kernel's bytes move and the kernel identity
             // domain does not step.
             Self::CanonicalizeBf16Nan => 0x04,
+            // Appended for the same reason: `0x01` through `0x04` keep their
+            // meanings, and no kernel the earlier vocabulary could express
+            // contains `0x05` in this position, so `tiler.kernel.v9` stays put
+            // and a gather kernel is a new subject rather than a reinterpreted
+            // one.
+            Self::U32ToIndex => 0x05,
         }
     }
 
@@ -796,6 +832,7 @@ impl ConvertOp {
             Self::U8ToI32 => KernelType::U8,
             Self::I32ToF32 => KernelType::I32,
             Self::CanonicalizeBf16Nan => KernelType::Bf16,
+            Self::U32ToIndex => KernelType::U32,
         }
     }
 
@@ -806,6 +843,7 @@ impl ConvertOp {
             Self::U8ToI32 => KernelType::I32,
             Self::CanonicalizeF32Nan | Self::I32ToF32 => KernelType::F32,
             Self::CanonicalizeBf16Nan => KernelType::Bf16,
+            Self::U32ToIndex => KernelType::Index,
         }
     }
 }
@@ -2775,6 +2813,7 @@ mod injectivity_tests {
             ConvertOp::U8ToI32,
             ConvertOp::I32ToF32,
             ConvertOp::CanonicalizeBf16Nan,
+            ConvertOp::U32ToIndex,
         ];
         const EXTRACTS: [PackedExtractOp; variant_count::<PackedExtractOp>()] =
             [PackedExtractOp::U4LsbZeroTail];

@@ -77,6 +77,43 @@ pub(super) fn access_elements(
     }
 }
 
+/// Marks which of a region's reads are a gather's address-only index operand.
+///
+/// **The one derivation of that fact**, read by the canonical lowering when it
+/// declares buffers and by [`verify_signature`] when it checks them, so a
+/// gather kernel cannot declare its index operand at one type and be verified
+/// against another. It is the reason those two do not each classify reads for
+/// themselves; `region_element_type` is the same arrangement for the dense
+/// element type.
+///
+/// A marked read is *addressing*, not a value: it carries the U32 coordinates
+/// the owning gather loads, and it is deliberately not one of the scalar
+/// program's leaves. The marks come from the relations themselves — each
+/// [`crate::schedule::LogicalAccess::GatherSource`] names its own address read
+/// by region-local ordinal — rather than from the leaf count, which this layer
+/// does not carry.
+///
+/// Every named ordinal in range is marked, including one a malformed region
+/// points at its own source or at an earlier leaf. Marking it is the
+/// fail-closed direction: the lowering refuses such a region by name, and the
+/// signature check compares a U32 expectation against an `f32` leaf and
+/// refuses too. Silently declining to mark it would instead lower the gather
+/// against a buffer whose element type the region never stated.
+pub(super) fn gather_address_reads(reads: &[Access]) -> Vec<bool> {
+    let mut address = vec![false; reads.len()];
+    for read in reads {
+        let crate::schedule::LogicalAccess::GatherSource { index_access, .. } = &read.map else {
+            continue;
+        };
+        if let Ok(named) = usize::try_from(index_access.get())
+            && let Some(slot) = address.get_mut(named)
+        {
+            *slot = true;
+        }
+    }
+    address
+}
+
 /// Returns the ordered read and write accesses of a bounded scheduled region.
 pub(super) fn boundary_accesses(
     schedule: &ScheduledRegion,
@@ -461,8 +498,23 @@ fn verify_signature(
         crate::schedule::ScalarProgram::StrictAffineU4Dequantize { .. } => {
             vec![KernelType::U8, KernelType::F32, KernelType::U8]
         }
+        // One dense element type per expression leaf, and the exact-width U32
+        // storage type at every address-only index operand. Derived from
+        // `gather_address_reads` rather than from a leaf count, so an index
+        // operand cannot be declared at the region's element type and pass:
+        // reading a four-byte unsigned input as `f32` is exactly the silent
+        // reinterpretation `KernelType::U32` exists to make unstatable.
         crate::schedule::ScalarProgram::PointwiseF32(_)
-        | crate::schedule::ScalarProgram::PointwiseBf16(_) => vec![element_type; reads.len()],
+        | crate::schedule::ScalarProgram::PointwiseBf16(_) => gather_address_reads(reads)
+            .into_iter()
+            .map(|address| {
+                if address {
+                    KernelType::U32
+                } else {
+                    element_type
+                }
+            })
+            .collect(),
         crate::schedule::ScalarProgram::StrictSerialSum { .. }
         | crate::schedule::ScalarProgram::SquaredSerialSum { .. }
         // One read, like every other fold: the epilogue's leaf is the folded
