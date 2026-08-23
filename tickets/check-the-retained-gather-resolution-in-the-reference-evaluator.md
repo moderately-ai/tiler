@@ -4,7 +4,7 @@ title: Check the retained gather resolution in the reference evaluator
 status: todo
 priority: p2
 dependencies: []
-related: [decide-how-the-oracle-independently-checks-a-gather-proof-identity, admit-the-selected-data-dependent-index-representation]
+related: [decide-how-the-oracle-independently-checks-a-gather-proof-identity, admit-the-selected-data-dependent-index-representation, bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence]
 scopes: [implementation/reference]
 shared_scopes: [project/tickets]
 paths: []
@@ -23,6 +23,8 @@ Filed 2026-08-22 by `worker-oracleid2` out of the readiness gate on [`decide-how
 **Fact — no new public surface is needed, and this was proved by compiling it.** Every component the proof identity binds is comparable from outside `tiler-ir` by typed value: `GatherIndexBoundsProof` exposes `region()`, `access()`, `source()`, `index()`, `source_type()`, `index_type()`, `source_shape()`, `index_shape()`, `result_shape()`, `axis()`, `source_extent()`, `domain()`, `kind()`, and `facts()`, all `pub`; `VerifiedIndexRegion::canonical_identity()` is `pub`; and `CanonicalIndexRegionIdentity`, the three verified handle types, `Shape`, `Extent`, `Axis`, `ResolvedValueType`, and `IndexDomainFactSource` all derive `Eq`. The parent packet records the out-of-workspace probe that compiles this comparison.
 
 **Fact — the identity bytes are deliberately not re-derived.** They cannot be, and should not be. Three of the encoder's inputs are unreachable downstream (`E0624`, recorded in the parent packet), and re-deriving content would weaken what makes holding an identity evidence: its provenance, not its content. Comparing the components against the evaluator's own reading of the region is the stronger check and names the field that disagreed.
+
+**Boundary against the compiler lane — read this before starting.** [`bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence`](bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence.md) is repairing the *same class* of gap one layer down: `gather_accesses_match` in `crates/tiler-compiler/src/physical.rs` elides the `proof` field, so a proof minted for one region can be attached to a shape-compatible different occurrence. That lane owns the compiler-side refusal, and [`record-that-schedule-rule-8-cannot-check-the-proofs-region-identity`](record-that-schedule-rule-8-cannot-check-the-proofs-region-identity.md) records why schedule rule 8 structurally cannot do it. **This ticket is not a duplicate and must not repair either site**: it is the independent oracle's own check, which exists precisely so a compiler-side refusal is not the only thing standing between a transplanted proof and a trusted result. Coordinate on ordering, and if that lane's work makes any part of this one unreachable, say so rather than asserting coverage.
 
 ## Required work
 
