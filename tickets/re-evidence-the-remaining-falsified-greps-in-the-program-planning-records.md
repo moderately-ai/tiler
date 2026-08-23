@@ -1,7 +1,7 @@
 ---
 id: re-evidence-the-remaining-falsified-greps-in-the-program-planning-records
 title: Re-evidence the remaining falsified greps in the program-planning records
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: []
@@ -9,9 +9,6 @@ scopes: [research/program-planning]
 shared_scopes: [project/tickets]
 paths: []
 tags: [doc-drift, falsified-evidence]
-claimed_from: todo
-assignee: worker-greps
-lease_expires_at: 1787455299
 ---
 ## User-visible outcome
 
