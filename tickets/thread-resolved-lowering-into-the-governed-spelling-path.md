@@ -1,7 +1,7 @@
 ---
 id: thread-resolved-lowering-into-the-governed-spelling-path
 title: Thread resolved lowering into the governed spelling path
-status: blocked
+status: todo
 priority: p1
 dependencies: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence, lower-a-recognized-gather-through-a-governed-capability]
 related: [decide-whether-refinement-evidence-may-reach-a-physical-provider, emit-the-indirect-gather-on-metal]

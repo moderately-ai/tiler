@@ -1,7 +1,7 @@
 ---
 id: lower-a-recognized-gather-through-a-governed-capability
 title: Lower a recognized gather through a governed index-access capability
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [carry-the-gather-relation-through-the-compiler-vertical, thread-resolved-lowering-into-the-governed-spelling-path, decide-the-data-dependent-index-representation-public-surface, emit-the-indirect-gather-on-metal, correct-the-optimizer-contract-capability-count-and-gather-standing]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, gather, lowering, identity, public-boundary]
-claimed_from: todo
-assignee: worker-gathercap
-lease_expires_at: 1787468243
 ---
 ## User-visible outcome
 
