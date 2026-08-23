@@ -1,7 +1,7 @@
 ---
 id: correct-the-optimizer-contract-capability-count-and-gather-standing
 title: Correct the optimizer contract's capability count and gather standing
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [lower-a-recognized-gather-through-a-governed-capability]
@@ -9,9 +9,6 @@ scopes: [contracts/optimizer]
 shared_scopes: [project/tickets]
 paths: []
 tags: [docs, compiler, gather]
-claimed_from: todo
-assignee: worker-optdoc
-lease_expires_at: 1787471310
 ---
 ## User-visible outcome
 
