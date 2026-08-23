@@ -1,7 +1,7 @@
 ---
 id: calibrate-the-physical-provider-count-at-the-installation-seam
 title: Calibrate the physical provider count at the installation seam
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [calibrate-the-physical-frontier-provider-and-outcome-budgets, replace-provider-offer-with-a-host-bounded-frontier-sink]
@@ -9,8 +9,6 @@ scopes: [research/program-planning, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [optimizer, budgets, measurement, public-boundary]
-assignee: worker-provcount
-lease_expires_at: 1787493486
 ---
 ## User-visible outcome
 
@@ -104,3 +102,11 @@ Reopen this decision when **any** of the following fires. Each is a source condi
 ## Trigger check log
 
 - **2026-08-23 — not fired.** All four conditions checked at `c0f70e64`. (1) `pub fn installed(` takes `impl IntoIterator<Item = &'providers dyn PhysicalImplementationProvider>` and nothing else. (2) The sink ticket is `todo` and still carries its zero-outcome bullet; `grep -c 'zero-outcome provider invocations' tickets/replace-provider-offer-with-a-host-bounded-frontier-sink.md` returns 1 line. (3) `MAX_OFFERED_PHYSICAL_PROVIDERS` is 4,096 and `assemble_plan_artifact` still builds `CompilationEnvironment` from the compilation's offered physical providers. (4) No consumer or accepted contract names an installed-provider population; the sibling ticket's own 2026-08-18 log entry is the most recent evaluation and found none.
+
+## Recorded finding — 2026-08-23: installation duplicate detection is quadratic, and the correct outcome is no change
+
+Reported by `worker-provcount` as out of scope and confirmed by the coordinator at `3ea0fdda`: `crates/tiler-compiler/src/physical_provider.rs`, anchor `if identities.contains(&identity) {`, runs a linear scan inside the installation loop, so `installed()` is quadratic in the installed count.
+
+**No ticket is filed, and the reasoning is recorded instead of the work.** The population is bounded above by the packaging authority at 4,096, this is a one-time cost at environment construction rather than a per-enumeration cost, and no measurement exists — none could be taken here, because this host runs agent waves and the ticket's own Non-goals exclude a wall-clock claim taken on a loaded coordination host. Repository priorities put performance last, and an unmeasured rewrite of a correct fail-closed path is not an improvement. The honest remedy, if one is ever wanted, is an ordered set rather than a count refusal — the decision above rejects the latter on its own grounds.
+
+**Reconsideration trigger.** Reopen if a named consumer states an installed-provider population large enough to matter, or if `installed()` moves onto a per-compilation path rather than being called once per environment. Check: read the call sites of `InstalledPhysicalProviders::installed` and confirm each is environment construction, then take a measurement on an idle host before changing anything.

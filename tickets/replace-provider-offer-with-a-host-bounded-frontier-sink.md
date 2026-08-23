@@ -68,3 +68,13 @@ This ticket says **"Resume only after `calibrate-the-physical-frontier-provider-
 **What the calibration actually settled, and what it did not.** It landed the **raw-outcome** axis only. Its own stop condition fired on the **provider-count** axis, which has no accepted value and a different enforcement point — `InstalledPhysicalProviders::installed` runs *before* compile and has no count branch, so a per-request budget field could never enforce it. That axis is [`calibrate-the-physical-provider-count-at-the-installation-seam`](calibrate-the-physical-provider-count-at-the-installation-seam.md), still open. **Do not assume a provider-count limit exists.**
 
 **Scheduling.** Collides with the live gather-vertical lane on `implementation/compiler` and `contracts/decisions`. **Release trigger: that lane merges or stops at a gated boundary.**
+
+## Note — 2026-08-23, by the coordinator: this ticket is now the sole owner of the zero-outcome provider charge
+
+[`calibrate-the-physical-provider-count-at-the-installation-seam`](calibrate-the-physical-provider-count-at-the-installation-seam.md) closed by **eliminating** the provider-count axis rather than siting it, so the "Scheduling" note above is discharged and the dependency edge this ticket carried on it is satisfied rather than pending. Read that ticket's `## Decision` before starting; it narrows this one.
+
+**What it hands you.** Two of the three concerns a provider count could have addressed are already refused elsewhere — emitted outcomes by the accepted request-scoped ceiling and the live explain ceiling, and packaging identity by `MAX_OFFERED_PHYSICAL_PROVIDERS` at 4,096 in `crates/tiler-artifact/src/program/mod.rs`. The third is **not** refused anywhere, and it is yours: `enumerate_frontier` in `crates/tiler-compiler/src/frontier.rs` calls `provenance()` and then `propose` for every provider on every enumeration, before any outcome exists to charge. Verified by the coordinator at `3ea0fdda` — both calls appear in that function.
+
+**Why the count axis could not have taken it.** The cost is `providers × enumerations`, and enumerations is distinct subjects × targets × contract candidates. `installed()` runs before the request is assembled and its signature takes an iterator of providers and nothing else, so a limit there bounds one factor of a product whose other factors it cannot see. Your `Bound zero-outcome provider invocations independently from emitted outcomes` bullet is request-scoped and sees both, which is why it subsumes the axis exactly.
+
+**This does not relax the ticket's own warning.** `Do not assume a provider-count limit exists` still governs: none was added, and the elimination decision is the reason, not an oversight to repair.
