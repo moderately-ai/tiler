@@ -1,14 +1,17 @@
 ---
 id: retire-the-gather-kernel-lowering-classification-after-the-body-landed
 title: Retire the gather kernel-lowering classification after the body landed
-status: todo
+status: in-progress
 priority: p1
-dependencies: [lower-the-indirect-gather-read-through-the-structured-kernel-body]
+dependencies: []
 related: [emit-the-indirect-gather-on-metal, lower-the-indirect-gather-read-through-the-structured-kernel-body]
 scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, gather, compiler]
+claimed_from: todo
+assignee: worker-retireclass
+lease_expires_at: 1787480886
 ---
 ## User-visible outcome
 
@@ -33,3 +36,18 @@ Filed 2026-08-23 by `worker-gatherbody` from [`lower-the-indirect-gather-read-th
 ## Non-goals
 
 The kernel body, which landed. The Metal emission, which is [`emit-the-indirect-gather-on-metal`](emit-the-indirect-gather-on-metal.md) and refuses `KernelType::U32` at `msl_type` today.
+
+## Coordinator graph correction — 2026-08-23: this is a co-landing constraint, not a sequencing one
+
+This ticket was filed with `depends_on: [lower-the-indirect-gather-read-through-the-structured-kernel-body]`. **That edge was semantically wrong and has been changed to `related`.**
+
+`depends_on` asserts *that must land first*. These two must land **together**, and neither ordering is buildable alone:
+
+- The body alone turns `main` red — `a_statically_proved_gather_is_declined_for_its_missing_kernel_body` asserts a classification whose arm the body makes unreachable.
+- The retirement alone would make `main` stop classifying a gather it still cannot lower, replacing a correct report with an absent one.
+
+The `depends_on` edge also made the work **unreachable**: `tkt claim` refused it with `has unfinished dependencies`, because the body ticket sits in `review` — complete work, held for integration — and `review` is not terminal. The body cannot reach `done` until it merges, and it must not merge until this lands. A dependency edge cannot express that; it expresses the opposite.
+
+**So the constraint is recorded where it belongs — in prose and in the branch layout — rather than as an edge that misstates it.** This lane's worktree is branched from `7d1219ec`, the gather-body branch merged up to `main`, so the body is present in its tree and the classifier's arm is genuinely unreachable there. The combined result merges into `main` **once**.
+
+I did **not** reach for `tkt claim --force`: that flag steals a live lease from another agent and has nothing to do with dependency ordering. Using it here would have been misusing a tool to silence a check that was correctly describing a real problem with my own graph edge.
