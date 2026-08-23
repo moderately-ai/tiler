@@ -258,7 +258,7 @@ fn build_with_proofs(
     builder
         .program(RegionProgram::Numerical {
             scalar: ScalarProgram::PointwiseF32(expression),
-            numerical: super::tests::strict_numerical(),
+            numerical: super::tests::support::strict_numerical(),
         })
         .expect("the program is admitted");
     builder

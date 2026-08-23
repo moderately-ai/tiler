@@ -6,7 +6,7 @@ priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-artifact-program-test-monoliths-into-focused-modules]
 scopes: [implementation/ir]
-shared_scopes: []
+shared_scopes: [project/tickets, contracts/decisions, research/reference, research/scheduling]
 paths: []
 tags: [refactor, maintainability, tests]
 claimed_from: todo
