@@ -1,7 +1,7 @@
 ---
 id: retire-the-l4-zero-synchronization-ground-where-other-records-restate-it
 title: Retire the L4 zero-synchronization ground where other records restate it
-status: in-progress
+status: done
 priority: p2
 dependencies: [reconcile-the-l4-records-self-contradicting-softmax-elimination-row]
 related: []
@@ -9,9 +9,6 @@ scopes: [research/scheduling, research/program-planning, research/runtime]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, scheduling]
-claimed_from: todo
-assignee: worker-zerosync
-lease_expires_at: 1787450840
 ---
 ## User-visible outcome
 
