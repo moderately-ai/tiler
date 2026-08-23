@@ -1,7 +1,7 @@
 ---
 id: bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence
 title: Bind a scheduled gather's retained proof to its own occurrence
-status: todo
+status: done
 priority: p1
 dependencies: []
 related: [decide-whether-refinement-evidence-may-reach-a-physical-provider]
