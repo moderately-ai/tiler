@@ -160,6 +160,17 @@ The decisive new fact is Fact 6's principle one layer down: **no producer of a c
 
 The 2026-08-18 ownership move already applied the rule that resolves this. It moved the `ResourceRequirements` sum *out* of this ticket because `derive_requirements` runs inside `ScheduledRegionBuilder::build` and had to be total before a copy region could exist. The same forcing argument runs at each layer above: `KernelData.numerical` must be a sum before a copy *kernel* can exist, and a copy kernel exists only in the lowering ticket; the artifact entry's numerics must be a sum before a copy *entry* can be packaged, and that happens only in the planning ticket. Applied consistently, the rule that emptied this ticket once empties most of what remains.
 
+### The compiler's copy arms, read at this base
+
+Each of these was opened and read rather than inferred from the dependency's delivery record, because two of them change what a producer ticket has to do.
+
+- `region_numerical_requirements` in `crates/tiler-compiler/src/physical.rs` returns `Ok(Vec::new())` for the copy arm, and does so **before** resolving the arithmetic subject — its own comment gives the reason, that a copy names no contract whose subject could be looked up. This is Fact 10 delivered at its site: the empty projection is a proved absence, not target silence.
+- `boundary_carrier` in `crates/tiler-compiler/src/frontier.rs` is total over the sum, taking the copy's carrier from `CopyElement::F32`.
+- `verify_region_output_binding` refuses a copy region under the shared `request-binding` rule, keeping the reachable population empty by construction rather than by absence.
+- **`verify_entry` in `crates/tiler-compiler/src/program.rs` is a fifth wall, and the one that needs care.** It refuses a copy stage by computing `numerical_matches` as `false` — the `None` arm of `program.numerical()` — and then failing the shared `entry-contract` rule. It does **not** name the copy. So when the KIR arm lands, that `None => false` must become an explicit arm comparison; if it is left alone, a copy kernel carrying a copy classification would begin *matching* rather than being refused, and the wall would open silently rather than by an edit anyone reviewed. Naming it here so no producer ticket has to rediscover it.
+
+**One disambiguation, because two different things here are called a copy.** The compiler's *publishing copy* is deliberately **not** a `PartitionedCopy`: `verify_publishing_copy_binding` keeps it a `Numerical` identity-expression region, on the recorded ground that a one-member partitioned copy would be a second spelling of it. A worker migrating "copy" sites who conflates the two would give the publishing copy a bit-preserving classification it never asked for, and change what the publication path claims.
+
 ### Options enumerated
 
 1. **Status quo.** Keep every wall, land nothing, defer with a reconsideration trigger.
