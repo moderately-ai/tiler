@@ -1,7 +1,7 @@
 ---
 id: close-the-refutable-bindings-that-survive-the-physical-planner-build-trap
 title: Close the refutable bindings that survive the physical planner build trap
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: []
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, exhaustiveness, maintainability]
+claimed_from: todo
+assignee: worker-refutable
+lease_expires_at: 1787491945
 ---
 ## User-visible outcome
 
