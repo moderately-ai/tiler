@@ -19,28 +19,42 @@
 //!
 //! The tiled realization's contracted-extent precondition is one reason it may
 //! decline an attention contraction. There is a second, independent one, and
-//! conflating them would misreport what blocks this work: **the cooperative
-//! contraction vocabulary is rank-two-output throughout, and both attention
-//! structures produce a rank-four output.**
+//! conflating them would misreport what blocks this work: the cooperative
+//! contraction's *participant space* is rank two, and both attention structures
+//! produce a rank-four output.
 //!
 //! `blocked_operand_tile` — the one tile shape three layers construct — builds a
 //! rank-two participant space, stating in its own source that this is deliberate
-//! (*"Rank two, deliberately"*). `verify_cooperative_contraction` then couples
-//! that space to the binding's block through `participant_space_matches_block`,
-//! which compares ranks, and `cooperative_contraction_plan` in the kernel
-//! lowering refuses any `iteration_shape` whose rank is not two. So a rank-four
-//! output cannot form the blocked binding at all, whatever its extents.
+//! (*"Rank two, deliberately"*). It stays rank two for a reason no widening
+//! reaches: `MAX_COOPERATIVE_PARTICIPANT_RANK` is three, so a rank-four space is
+//! unrepresentable rather than merely unimplemented.
 //!
-//! That is **not** the `K ≡ 0 (mod 16)` precondition and must not be reported as
-//! it. The contracted-extent refusal is a property of one row's `S`; the rank
-//! wall is a property of the realization's vocabulary and holds at every row of
-//! both structures, including the ones the table below marks admissible.
-//! [`the_accepted_blocked_tile_cannot_cover_a_rank_four_attention_output`]
-//! pins it, so the two reasons stay separately named.
+//! **A rank-four output is nonetheless reachable, by giving the *block* the
+//! output's rank rather than the participants.** `participant_space_matches_block`
+//! couples the space to the block's **trailing two axes** and requires every
+//! leading extent to be one, so one workgroup covers one batch coordinate and a
+//! `16x16` tile of the trailing pair.
+//! [`a_batched_block_covers_every_output_position_of_both_attention_structures`]
+//! is that admission, and it is stated as a cover rather than as an acceptance:
+//! the launch is proved to reach every logical output position.
+//!
+//! **What is still refused, and separately named.** A rank-*two* block against a
+//! rank-four output remains `OutputBlockRankMismatch`, because that pairing is a
+//! genuine mismatch and not a batched block —
+//! [`the_accepted_blocked_tile_cannot_cover_a_rank_four_attention_output`] pins
+//! it. And the kernel lowering's `cooperative_contraction_plan` still refuses any
+//! `iteration_shape` whose rank is not two, so the batched form is admitted by the
+//! schedule layer and not yet lowered or emitted; that remainder is
+//! [`admit-a-batched-cooperative-contraction-for-the-attention-structures`](../../../tickets/admit-a-batched-cooperative-contraction-for-the-attention-structures.md).
+//!
+//! None of this is the `K ≡ 0 (mod 16)` precondition and it must not be reported
+//! as it. The contracted-extent refusal is a property of one row's `S`; the rank
+//! relation is a property of the realization's vocabulary and holds at every row
+//! of both structures, including the ones the table below marks admissible.
 
 use tiler_ir::schedule::{
     CooperativeContractionAdmission, admit_exact_cooperative_contraction,
-    admit_predicated_cooperative_contraction, blocked_operand_tile,
+    admit_predicated_cooperative_contraction, blocked_operand_tile, prove_blocked_predicated_cover,
 };
 use tiler_ir::shape::Shape;
 
@@ -243,5 +257,99 @@ fn the_accepted_blocked_tile_cannot_cover_a_rank_four_attention_output() {
             },
             "{id}: the refusal must name the rank mismatch, not the contracted extent",
         );
+    }
+}
+
+/// A rank-four block whose batch axes are one-wide admits both structures, and
+/// its launch genuinely covers every logical output position.
+///
+/// # Why this is the theorem and the deleted-guard experiment was not
+///
+/// `realize-the-attention-contractions-on-metal` deleted the rank guard from
+/// `ceiling_quotients` and got
+/// `PredicatedCooperativeContraction { work_items: 1600, grid_threads: 256 }`
+/// for structure 2's C1 prefill output — a launch covering 256 of 1,600
+/// positions, admitted as proven. That is what relaxing the rank check buys.
+///
+/// Carrying the batch axes *as batch axes* instead gives the block the output's
+/// own rank, and the quotients are then per-axis: the batch axes get one
+/// workgroup each because their block extent is one, and only the trailing pair
+/// ceilings. The launch is `4,096` threads against `1,600` logical positions,
+/// which is a cover with an inactive remainder rather than a shortfall — and
+/// [`prove_blocked_predicated_cover`] accepts it, where it would refuse the
+/// `256` above on [`MappingGap`](tiler_ir::schedule::BlockedWorkgroupRule).
+///
+/// The rank refusal above is untouched by this: a rank-two block against a
+/// rank-four output is still `OutputBlockRankMismatch`, because that pairing is
+/// a genuine mismatch rather than a batched block.
+#[test]
+fn a_batched_block_covers_every_output_position_of_both_attention_structures() {
+    // One workgroup per `(g, r)` pair, and a `16x16` tile over the trailing two
+    // axes. The leading extents are one, which is what makes the participants'
+    // rank-two space a bijection onto the block's positions.
+    let block = Shape::from_dims([1, 1, MEASURED_TILE, MEASURED_TILE]);
+
+    for (id, output, contracted) in [
+        (
+            "score grtd,gsd->grts",
+            Shape::from_dims([GROUPS, REPEATS, 10, 10]),
+            HEAD_DIM,
+        ),
+        (
+            "value grts,gsd->grtd",
+            Shape::from_dims([GROUPS, REPEATS, 10, HEAD_DIM]),
+            // Structure 3 contracts over `S`, so this row is the admissible
+            // `S = 128` one; `S = 10` stays refused by the contracted-extent
+            // precondition, which the batched block does not touch.
+            128,
+        ),
+    ] {
+        let admitted = admit_predicated_cooperative_contraction(
+            &output,
+            &block,
+            &Shape::from_dims([contracted]),
+            &Shape::from_dims([MEASURED_TILE]),
+        )
+        .unwrap_or_else(|refusal| panic!("{id}: a batched block must admit, got {refusal:?}"));
+
+        let tiler_ir::schedule::ExecutionBinding::BlockedWorkgroup { block, workgroups } =
+            &admitted.binding
+        else {
+            panic!("{id}: the admission returns a blocked binding");
+        };
+
+        // The batch axes take one workgroup per coordinate and the trailing pair
+        // ceilings, which is the whole content of "carried as batch axes".
+        let expected_workgroups: Vec<u64> = output
+            .extents()
+            .iter()
+            .zip(block.extents())
+            .map(|(extent, block)| extent.get().div_ceil(block.get()))
+            .collect();
+        let observed: Vec<u64> = workgroups.extents().iter().map(|e| e.get()).collect();
+        assert_eq!(observed, expected_workgroups, "{id}: per-axis quotients");
+
+        // The launch covers every logical position. Stated as an inequality
+        // against the counted population rather than as a literal, so a changed
+        // tile width moves both sides together instead of leaving a stale number.
+        let logical: u64 = output.extents().iter().map(|e| e.get()).product();
+        assert_eq!(admitted.work_items, logical, "{id}: work items are logical");
+        assert!(
+            admitted.grid_threads >= logical,
+            "{id}: launch {} must cover {logical} positions",
+            admitted.grid_threads,
+        );
+
+        let threads = u32::try_from(block.extents().iter().map(|e| e.get()).product::<u64>())
+            .expect("the block population fits u32");
+        prove_blocked_predicated_cover(
+            &output,
+            block,
+            workgroups,
+            admitted.work_items,
+            threads,
+            admitted.grid_threads,
+        )
+        .unwrap_or_else(|rule| panic!("{id}: the batched cover must prove, got {rule:?}"));
     }
 }

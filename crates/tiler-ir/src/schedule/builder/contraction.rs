@@ -391,6 +391,7 @@ fn verify_cooperative_contraction(
 
     let mut contracted_covered = vec![false; contracted_shape.rank()];
     let mut output_covered = vec![false; region.index.iteration_shape.rank()];
+    let mut operand_reads_output: Vec<Vec<bool>> = Vec::with_capacity(2);
     for access in [left, right] {
         let LogicalAccess::ContractionOperand {
             operand_shape,
@@ -440,6 +441,7 @@ fn verify_cooperative_contraction(
         if seen_contracted.iter().any(|read| !read) {
             return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
         }
+        operand_reads_output.push(seen_output);
     }
     if output_covered.iter().any(|read| !read) || contracted_covered.iter().any(|read| !read) {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
@@ -451,6 +453,7 @@ fn verify_cooperative_contraction(
     if !participant_space_matches_block(&tile.coordinates.participants, block) {
         return Err(blocked(BlockedWorkgroupRule::ParticipantBlockMismatch));
     }
+    verify_blocked_operand_roles(&operand_reads_output, &region.index.iteration_shape)?;
     if contracted_tile.rank() != contracted_shape.rank() {
         return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
     }
@@ -476,4 +479,149 @@ fn verify_cooperative_contraction(
         return Err(cooperative(CooperativeTileRule::ContributorSplit));
     }
     verify_operand_tile(tile)
+}
+
+/// Requires each operand to read exactly one of the block's two participant axes.
+///
+/// The participants occupy the output's **trailing two axes**: participant
+/// `(m, n)` owns the block-local position `(m, n)` on axes `rank - 2` and
+/// `rank - 1`. The staged tile is what forces this rule. Participant `(m, n)`
+/// writes one element of each operand and then every participant of row `m`
+/// reads the same staged left run, so the left operand's address must not vary
+/// with `n` — and symmetrically the right's must not vary with `m`.
+///
+/// **This is a statement about the operand's declared axis sources, and it was
+/// unstated before batching.** The rank-two emission hardcoded `[M, K]` and
+/// `[N, K]` addressing and discarded the declared sources entirely, so a region
+/// whose left operand read output axis `1` verified and lowered to a kernel
+/// addressing it by axis `0`. Deriving the address from the sources is what the
+/// batched form requires — the value structure `grts,gsd->grtd` has a right
+/// operand `[g, s, d]` whose contracted axis sits in the *middle* — and this
+/// rule is the precondition that derivation needs.
+///
+/// Batch axes are deliberately unconstrained: an axis outside the trailing pair
+/// may be read by either operand or by both. That is what makes the grouped
+/// query structure expressible — the score structure's key operand `[g, s, d]`
+/// reads the group and never the repetition, so the key is shared across `r`
+/// rather than broadcast into it — and both operands reading one batch axis is
+/// the ordinary batched matmul rather than a defect.
+fn verify_blocked_operand_roles(
+    operand_reads_output: &[Vec<bool>],
+    iteration_shape: &crate::shape::Shape,
+) -> Result<(), ScheduledRegionDiagnostic> {
+    let Some(row) = iteration_shape.rank().checked_sub(2) else {
+        return Err(blocked(BlockedWorkgroupRule::ParticipantBlockMismatch));
+    };
+    let column = row + 1;
+    let [left_reads, right_reads] = operand_reads_output else {
+        return Err(ScheduledRegionDiagnostic::NumericalOrAccessRefinement);
+    };
+    // Read positionally because the roles are positional: the left operand
+    // carries the block's row axis and the right its column axis, which is the
+    // orientation `blocked_operand_tile`'s transposed staged write states.
+    if !left_reads[row] || left_reads[column] || right_reads[row] || !right_reads[column] {
+        return Err(blocked(BlockedWorkgroupRule::ParticipantBlockMismatch));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verify_blocked_operand_roles;
+    use crate::schedule::error::{BlockedWorkgroupRule, ScheduledRegionDiagnostic};
+    use crate::shape::Shape;
+
+    /// Builds the per-operand output-axis read sets from the axes each reads.
+    fn reads(rank: usize, left: &[usize], right: &[usize]) -> Vec<Vec<bool>> {
+        [left, right]
+            .iter()
+            .map(|axes| {
+                let mut seen = vec![false; rank];
+                for axis in *axes {
+                    seen[*axis] = true;
+                }
+                seen
+            })
+            .collect()
+    }
+
+    fn verdict(
+        rank: usize,
+        left: &[usize],
+        right: &[usize],
+    ) -> Result<(), ScheduledRegionDiagnostic> {
+        let shape = Shape::try_new(vec![crate::shape::Extent::new(4); rank])
+            .expect("a uniform shape of this rank is representable");
+        verify_blocked_operand_roles(&reads(rank, left, right), &shape)
+    }
+
+    const MISMATCH: ScheduledRegionDiagnostic = ScheduledRegionDiagnostic::BlockedWorkgroup {
+        rule: BlockedWorkgroupRule::ParticipantBlockMismatch,
+    };
+
+    /// The rank-two matmul: left carries the row axis, right the column axis.
+    #[test]
+    fn the_unbatched_matmul_orientation_is_admitted() {
+        assert_eq!(verdict(2, &[0], &[1]), Ok(()));
+    }
+
+    /// Both attention structures are admitted, and they differ where they should.
+    ///
+    /// Score `grtd,gsd->grts` has output `[g, r, t, s]`: the query reads
+    /// `{g, r, t}` and the key `{g, s}`. Value `grts,gsd->grtd` has output
+    /// `[g, r, t, d]`: the score reads `{g, r, t}` and the value `{g, s}` — the
+    /// same *sets*, because in both cases the right operand shares the group and
+    /// owns the column axis while never reading the repetition.
+    #[test]
+    fn both_attention_structures_are_admitted() {
+        assert_eq!(verdict(4, &[0, 1, 2], &[0, 3]), Ok(()), "score and value");
+    }
+
+    /// A batch axis read by both operands is the ordinary batched matmul.
+    ///
+    /// The control against over-constraining: the rule governs the trailing pair
+    /// alone, so a shared group axis must stay admitted. Without this, "the roles
+    /// are checked" would be consistent with a rule that also forbade batching.
+    #[test]
+    fn a_batch_axis_read_by_both_operands_is_admitted() {
+        assert_eq!(verdict(3, &[0, 1], &[0, 2]), Ok(()));
+    }
+
+    /// A left operand that also reads the column axis is refused.
+    ///
+    /// The staged left run is shared by every participant of a row, so a left
+    /// address varying with `n` would have each of them fold a different
+    /// operand element than the one staged for it.
+    #[test]
+    fn a_left_operand_reading_the_column_axis_is_refused() {
+        assert_eq!(verdict(4, &[0, 1, 2, 3], &[0, 3]), Err(MISMATCH));
+    }
+
+    /// A right operand that reads the row axis is refused.
+    ///
+    /// This is the *correct-but-materialized* twin at the schedule layer: a key
+    /// operand carrying the repetition computes the same numbers while reading
+    /// per repetition rather than sharing across it, which is precisely what the
+    /// grouped-query structure exists to avoid.
+    #[test]
+    fn a_right_operand_reading_the_row_axis_is_refused() {
+        assert_eq!(verdict(4, &[0, 1, 2], &[0, 2, 3]), Err(MISMATCH));
+    }
+
+    /// An operand that reads neither of its own block axis is refused.
+    #[test]
+    fn an_operand_missing_its_own_block_axis_is_refused() {
+        assert_eq!(verdict(4, &[0, 1], &[0, 3]), Err(MISMATCH), "left lost row");
+        assert_eq!(
+            verdict(4, &[0, 1, 2], &[0]),
+            Err(MISMATCH),
+            "right lost col"
+        );
+    }
+
+    /// A rank-below-two output has no trailing pair to carry the participants.
+    #[test]
+    fn an_output_below_rank_two_is_refused() {
+        assert_eq!(verdict(1, &[0], &[0]), Err(MISMATCH));
+    }
 }
