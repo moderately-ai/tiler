@@ -3,7 +3,7 @@ id: reconsider-the-square-tiles-only-lowering-restriction
 title: Reconsider the square-tiles-only lowering restriction
 status: todo
 priority: p2
-dependencies: []
+dependencies: [calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol]
 related: [realize-the-tiled-contraction-schedule-and-its-metal-emission, calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol]
 scopes: [implementation/ir]
 shared_scopes: [project/tickets]
@@ -40,3 +40,11 @@ Choosing a tile width; offering the alternative in planning; and any performance
 ## Closes when
 
 Either the restriction is lifted with its admissible set stated and refused outside, or it is recorded as deliberate with the reason and a reconsideration trigger — and in both cases the measured attribution above is confirmed or refuted rather than repeated.
+
+## Coordinator graph repair — 2026-08-23: the ordering was prose-only and this ticket read as dispatchable
+
+This ticket's own text says **"Wait for it."** of [`calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol`](calibrate-the-contraction-tile-width-under-a-beneficiary-named-protocol.md), whose rectangular arm exists to refute or confirm the attribution this work rests on, with a registered null control at `M = 128`/`512`. That ordering was stated **only in prose**, so the ticket carried no dependency edge and appeared on the ready board as dispatchable. The coordinator came within one step of dispatching it.
+
+**A hard `depends_on` edge is now recorded**, so the scheduler enforces what the prose asked for.
+
+**The release trigger is inherited and is not this ticket's to satisfy.** The calibration is `blocked` on an operator quiescing the bench host's console session — last checked 2026-08-22 with a `Google Chrome Helper (Renderer)` at 80.0% CPU and load `{ 2.75 2.44 2.26 }`, against a measured idle band of 1.86–2.47. Its trigger check log carries the reproducing command. **This ticket cannot start until that sweep lands**, because the whole point is that the attribution — `16×16` computing "one useful row and fifteen masked ones when `M = 1`" — sits under a `**Measurement —**` heading while no width was swept and no masked-thread count was instrumented. Lifting the restriction on an unmeasured cause is exactly what the ticket warns against.
