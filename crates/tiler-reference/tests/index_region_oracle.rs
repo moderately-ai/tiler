@@ -1,3 +1,7 @@
+// `variant_count` sizes `GATHER_PROOF_KINDS`, so a third closed argument added
+// to the vocabulary is an array-length error at the declaration rather than a
+// two-case exclusion argument that silently stops covering its own domain.
+#![feature(variant_count)]
 //! Public-API integration proof for the verified index-region reference oracle.
 //!
 //! These end-to-end cases drive the oracle exclusively through the crate's
@@ -27,11 +31,12 @@ use tiler_ir::shape::{
     SymbolScope,
 };
 use tiler_reference::{
-    FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry, IndexRegionAuthority,
-    IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
-    ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceSignature,
-    ScalarReferenceOperation, ScalarReferenceOutputs, ScalarReferenceRegistryBuilder,
-    ScalarReferenceRequest, Tensor, TensorPayloadView, UnsupportedRegionFeature,
+    EvaluationError, FloatBitOrder, FrozenReferenceRegistry, FrozenScalarReferenceRegistry,
+    IndexRegionAuthority, IndexRegionEvaluationError, IndexRegionEvaluator, IndexRegionInput,
+    ReferenceCapabilityRevision, ReferenceElement, ReferenceOperationError, ReferenceResource,
+    ReferenceSignature, ScalarReferenceOperation, ScalarReferenceOutputs,
+    ScalarReferenceRegistryBuilder, ScalarReferenceRequest, Tensor, TensorPayloadView,
+    UnsupportedRegionFeature,
 };
 
 const CONSTANT_BITS: AttributeFieldId = AttributeFieldId::new(1);
@@ -2399,4 +2404,96 @@ fn a_retained_gather_proof_agrees_with_an_independent_classification() {
             ),
         }
     }
+}
+
+/// The closed arguments, sized by the type rather than by hand.
+///
+/// The exclusion below is an argument about *every* proof kind, so it stops
+/// being sound the moment a third one is admitted. Sizing the array with
+/// `variant_count` makes that a compile error here instead of a test that keeps
+/// passing while covering two cases out of three.
+const GATHER_PROOF_KINDS: [GatherIndexBoundsProofKind;
+    std::mem::variant_count::<GatherIndexBoundsProofKind>()] = [
+    GatherIndexBoundsProofKind::VacuousEmptyResultDomain,
+    GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent,
+];
+
+/// No statically proved gather can reach the evaluator's gather body.
+///
+/// **Why this is the subject.** `IndexRegionEvaluator::gather` checks the loaded
+/// address against the gathered extent unconditionally and never consults the
+/// retained resolution. Whether that is a gap or a completeness argument turns
+/// entirely on whether the proved case is reachable at all, and it is not — so
+/// this pins the reachability rather than adding a comparison that could never
+/// fail. Each kind is excluded for its own reason and is asserted separately,
+/// because a single case that reddened for both would not say which exclusion
+/// had stopped holding.
+///
+/// The poisoned index operand is what makes the vacuous leg load-bearing. Every
+/// one of its addresses is `u32::MAX`, far outside the gathered extent of five,
+/// so an evaluator that entered the gather body even once must refuse with
+/// [`IndexRegionEvaluationError::GatherIndexOutOfBounds`]. A clean `Ok` is only
+/// available to a walk that visited no point.
+#[test]
+fn a_static_gather_proof_cannot_reach_the_evaluator() {
+    let scalars = scalar_registry(1);
+    for kind in GATHER_PROOF_KINDS {
+        match kind {
+            GatherIndexBoundsProofKind::VacuousEmptyResultDomain => {
+                // Result `[0, 3]`: the emptiness is a property of the composed
+                // domain, and `gather_read` forces that zero extent into the
+                // access domain, so no root consuming the value walks a point.
+                let region = gather_read_region(&scalars, &[0, 5], &[3], 1).unwrap();
+                assert_eq!(
+                    region_proof_kind(&region),
+                    Some(GatherIndexBoundsProofKind::VacuousEmptyResultDomain),
+                    "the fixture must retain the kind whose exclusion it tests",
+                );
+                let source = Tensor::dense(f32_type(), Shape::from_dims([0, 5]), vec![]).unwrap();
+                let poison = u32_tensor(&[3], &[u32::MAX; 3]);
+                let bindings = gather_inputs(&region, &source, &poison);
+                let evaluation = evaluator(&scalars)
+                    .evaluate(&region, IndexRegionAuthority::new(&scalars), &bindings)
+                    .expect("an empty result domain walks no point, so the poison is never read");
+                assert_eq!(
+                    f32_values(&evaluation.into_outputs()[0]).len(),
+                    0,
+                    "the vacuous region's output holds no element",
+                );
+            }
+            GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent => {
+                // The proof needs a gathered axis spanning every U32 value, so
+                // the source payload it would be evaluated against is refused
+                // by the reference tensor budget long before any binding exists.
+                let region = gather_read_region(&scalars, &[1 << 32, 4], &[], 0).unwrap();
+                assert_eq!(
+                    region_proof_kind(&region),
+                    Some(GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent),
+                    "the fixture must retain the kind whose exclusion it tests",
+                );
+                assert!(
+                    matches!(
+                        Tensor::dense(f32_type(), Shape::from_dims([1 << 32, 4]), vec![]),
+                        Err(EvaluationError::ResourceExceeded {
+                            resource: ReferenceResource::TensorElements,
+                            ..
+                        })
+                    ),
+                    "a source spanning the U32 universe exceeds the reference tensor budget",
+                );
+            }
+            other => panic!("an unexcluded closed argument reached the oracle: {other:?}"),
+        }
+    }
+}
+
+/// Returns the retained proof kind of a region's only gather, if it has one.
+fn region_proof_kind(region: &VerifiedIndexRegion) -> Option<GatherIndexBoundsProofKind> {
+    region
+        .accesses()
+        .find_map(|access| access.view().gather_read())
+        .expect("the fixture authors exactly one gather")
+        .bounds_resolution()
+        .statically_proved()
+        .map(tiler_ir::index::GatherIndexBoundsProof::kind)
 }
