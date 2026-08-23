@@ -56,7 +56,6 @@ Run and read by the coordinator at this base before dispatch. Contradict any of 
 
 **On the negative control.** The Required work asks that under a contract granting reassociation, the contiguous split's decline changes or disappears. Before trusting it, state what would make it say *no* and confirm that case is reachable — a control that cannot fail is the recurring defect on this repository. Perturb the subject (the contract, the permission read), never the assertion, and quote the failure text.
 
-<<<<<<< HEAD
 ## Coordinator correction, 2026-08-22 — two errors in my own re-audit above, both caught by `worker-decline`
 
 **Error 1 — I supplied an anchor I never ran, and it fails as false absence.** My re-audit says to quote the enum doc *"at the anchor `it can also say what it deliberately withheld`"*. The retired wording is kept so its count cannot shrink. That anchor returns **0**: a `///` line break splits the sentence, with L1308 ending `…complete only if it` and L1309 beginning `can also say…`, and my fragment straddles the break. The shortest resolving fragment is `can also say what it deliberately withheld`, which returns **1**. This is the exact hazard AGENTS.md records under `An anchor copied from the rendered view fails as absence, which is the dangerous direction` — committed by the coordinator, in a brief, after briefing four separate workers about it this same session. The obligation the coordinator section states is unambiguous: *run the grep yourself before handing it to anyone*. I did not.
@@ -70,7 +69,6 @@ Neither error changed the outcome, because the worker read the source instead of
 The lane recorded **three** declines rather than the ticket's four, on the reading that `opaque_mps` is structurally unreachable by the governed provider rather than a withheld dimension. Corroborated at `dbf1cd98`: `OpaqueCallRegistry` is declared `pub(crate)` in `crates/tiler-compiler/src/call_registry.rs` and appears nowhere in the frontier or physical-provider path, so that strategy is not one the governed provider can consider and decline. Recording a decline for it would have named a ground that does not apply — the outcome this ticket exists to prevent, inverted.
 
 The lane also reports that this ticket's own User-visible outcome is imprecise: *"reassociation, permutation, or absent distributivity"*, preserved verbatim here. Distributivity grounds none of the three; it is consumed by a contraction-order rewrite this build never enumerates. The third ground is ADR 0015 contraction. **Left as written rather than repaired in place**, because it is the outcome sentence and rewriting it is a scope change; the accurate three-ground list is in the lane's own table and in the landed tests.
-=======
 ## Worker audit and repair at `2b179263`, 2026-08-22 — `worker-decline`
 
 Per-Fact verdicts, each from the file read in full at this base.
@@ -120,4 +118,3 @@ The control is `granting_reassociation_retires_only_the_contiguous_split_decline
 - **Decoder widened as well, to admit and return that row.** The same test then failed at the assertion itself, `left: PermissionGated, right: Unsupported`.
 
 **One honest limit on that last check, stated in its own doc comment.** `ContractionF32ReductionDescriptor`'s decoder returns `Unsupported` for permutation and signed-zero as literals rather than from the decoded row, and `arithmetic_contraction_supported` and `distributivity_supported` are `const fn`s answering `false`. So three of that test's four assertions cannot fail on a change to the registered facts alone — the decode is the load-bearing guard today, and the assertions go live only once a key generation widens the decoder too, which is the moment they matter.
->>>>>>> 0f963451
