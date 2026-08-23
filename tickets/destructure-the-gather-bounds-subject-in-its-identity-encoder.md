@@ -1,7 +1,7 @@
 ---
 id: destructure-the-gather-bounds-subject-in-its-identity-encoder
 title: Destructure the gather bounds subject in its identity encoder
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [decide-how-the-oracle-independently-checks-a-gather-proof-identity, check-the-retained-gather-resolution-in-the-reference-evaluator]
@@ -9,9 +9,6 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, indexing, gather, identity]
-claimed_from: todo
-assignee: worker-encoder
-lease_expires_at: 1787454809
 ---
 ## User-visible outcome
 
