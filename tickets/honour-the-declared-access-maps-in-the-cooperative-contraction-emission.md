@@ -1,7 +1,7 @@
 ---
 id: honour-the-declared-access-maps-in-the-cooperative-contraction-emission
 title: Honour the declared access maps in the cooperative contraction emission
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [admit-a-batched-cooperative-contraction-for-the-attention-structures, realize-the-tiled-contraction-schedule-and-its-metal-emission, lower-and-emit-the-batched-cooperative-contraction]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, contraction, lowering, fail-closed]
+claimed_from: todo
+assignee: worker-accessmaps
+lease_expires_at: 1787448544
 ---
 ## User-visible outcome
 

@@ -1,7 +1,7 @@
 ---
 id: repair-the-artifact-identity-prose-the-v22-run-falsified
 title: Repair the artifact identity prose the v22 run falsified
-status: todo
+status: done
 priority: p2
 dependencies: []
 related: []
