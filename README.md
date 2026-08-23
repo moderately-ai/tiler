@@ -45,8 +45,9 @@ a non-mutating dependency diagnosis.
 Verify with `make check` (format, Clippy, tests) while working, and `make full`
 before pushing to `main`. Every target is a single command you can also type
 directly; `rust-toolchain.toml` selects the compiler, so plain `cargo` is
-already the pinned one. Spikes are not covered by either target — run a spike
-from its own directory when you are working on it.
+already the pinned one.
+
+Neither target builds or runs a spike — run one from its own directory when you are working on it. One half of each target does reach `spikes/` and is worth knowing about: `make citations`, which `check` and `full` both include, resolves the markdown links in every record under `spikes/`, so a link naming a path that no longer exists fails the gate. It deliberately declines those records' pinned line citations, which are pinned to the base each record names rather than to the tip. *(Corrected 2026-08-22. This read "Spikes are not covered by either target", which was true until spike markdown links entered the citations gate and false afterwards; the retired wording is kept here so a search for it lands on the correction.)*
 
 Accepted ADRs govern durable architectural choices. A `mixed` contract treats
 unmarked field-level detail as proposed unless an accepted ADR is cited; every
