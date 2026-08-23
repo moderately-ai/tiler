@@ -1,7 +1,7 @@
 ---
 id: test-the-partitioned-copy-refusal-walls
 title: Test the partitioned-copy refusal walls
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [admit-an-explicit-non-arithmetic-region-and-delivery-state, admit-the-partitioned-copy-scheduled-region, lower-the-partitioned-copy-region-through-kernel-ir]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, testing, verification, strict]
-claimed_from: todo
-assignee: worker-copywalls
-lease_expires_at: 1787488807
 ---
 ## Outcome
 
