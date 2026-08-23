@@ -1,7 +1,7 @@
 ---
 id: restate-the-gather-standing-after-the-kernel-body-and-classifier-landed
 title: Restate the gather standing after the kernel body and classifier landed
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [retire-the-gather-kernel-lowering-classification-after-the-body-landed, lower-the-indirect-gather-read-through-the-structured-kernel-body, restate-the-gather-standing-in-the-optimizer-contract-after-the-wall-retired, route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type, emit-the-indirect-gather-on-metal]
@@ -9,9 +9,6 @@ scopes: [contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, gather, contract, roadmap]
-claimed_from: todo
-assignee: worker-optrestate2
-lease_expires_at: 1787482848
 ---
 ## User-visible outcome
 
@@ -40,3 +37,11 @@ Both documents are held together in one ticket because one landing falsified bot
 ## Non-goals
 
 The per-input carrier work itself. The Metal emission. Any claim that a gather compiles end to end, which is false at the time of filing and must be re-derived rather than assumed either way.
+
+## Coordinator correction — 2026-08-23: my brief's statement about `lower.rs` was imprecise, and the lane sharpened it
+
+My brief told this lane that `crates/tiler-ir/src/kernel/lower.rs` "no longer refuses `LogicalAccess::GatherSource`". Retired wording preserved. **That is imprecise, and the lane was right to narrow it.** Verified by the coordinator at `a61995c7`: the file carries **two** `GatherSource` sites. Line 1007 is the new lowering arm, which returns `Ok(ReadAddressing::Gather(..))`. Line 1081 still returns `Err(KernelDiagnostic::BodyRefinement)` — but it sits inside `fn gather_address_addressing`, which refuses a `GatherSource` used as a **nested index-operand address**, i.e. a gather whose own index is itself gathered. That is a different construct and a deliberate refusal, not a leftover of the retired wall.
+
+So the accurate statement is: a gather is no longer refused **as the read being lowered**, while a gather-of-a-gather **address** is still refused by name. A reader who took my wording literally and grepped for `GatherSource.*Err` would have found a hit and concluded the wall survived.
+
+**Two further false claims the lane found by sweeping beyond the brief's named Facts, both verified by the coordinator.** `docs/roadmap.md` said ADR 0108 "remains proposed" — its frontmatter reads `decision_status: "accepted"`. And it said `AccessData` "carries one tensor ordinal", when `AccessData::GatherRead(GatherReadAccessData)` carries `source` and `index` plus axis, domain, and coordinate fields. The lane repaired both rather than leaving them for a fourth ticket, which was the right call: they were in scope, demonstrably false, and found by the full-document sweep the brief mandated.
