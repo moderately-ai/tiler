@@ -1061,3 +1061,152 @@ fn named_output_attribution_can_say_no_in_every_direction() {
         Ok(vec![0, 1]),
     );
 }
+
+/// A declared input's carrier is its own resolved value type's, and a type this
+/// build materializes nothing for is refused by name.
+///
+/// **The three admitted rows are not one table.** Two of them come from
+/// [`crate::request::recognized_arithmetic`], which is where the widths a region
+/// computes at are stated, and the third from
+/// [`tiler_ir::semantic::gather_index_resolved_type`], which is where the one
+/// admitted address identity is. Asserting the widths here rather than the
+/// spellings is deliberate: the width is what sizes and aligns a caller's
+/// buffer, and it is the half a shared literal used to get wrong.
+///
+/// The `i32` row is the refusal, and it is the reason this function returns an
+/// `Option` rather than falling back. `tiler::i32@1` is a registered governed
+/// scalar — `builtin_scalar_value_types` lists it — so it is a type a frontend
+/// can really declare an input at, and the dangerous answer would be to size its
+/// buffer at the program's arithmetic width.
+#[test]
+fn a_declared_inputs_carrier_is_its_own_resolved_types_and_an_unadmitted_one_is_refused() {
+    use tiler_ir::semantic::{Bf16, TypeKey, gather_index_resolved_type};
+
+    let f32_carrier = BoundedCarrier::of_input(&F32::resolved_type())
+        .expect("the arithmetic this build compiles at materializes a carrier");
+    assert_eq!(f32_carrier.storage, StorageScalar::F32);
+    assert_eq!(f32_carrier.element_type, KernelType::F32);
+    assert_eq!(f32_carrier.element_bytes(), 4);
+
+    let bf16_carrier = BoundedCarrier::of_input(&Bf16::resolved_type())
+        .expect("the second recognized arithmetic materializes a carrier");
+    assert_eq!(bf16_carrier.storage, StorageScalar::Bf16);
+    assert_eq!(bf16_carrier.element_type, KernelType::Bf16);
+    assert_eq!(
+        bf16_carrier.element_bytes(),
+        2,
+        "a two-byte boundary was sized by some other carrier's width",
+    );
+
+    let index_carrier = BoundedCarrier::of_input(&gather_index_resolved_type())
+        .expect("the admitted gather address identity materializes a carrier");
+    assert_eq!(index_carrier.storage, StorageScalar::U32);
+    assert_eq!(
+        index_carrier.element_type,
+        KernelType::U32,
+        "the address operand must be read at its exact width, not at the arithmetic",
+    );
+    assert_eq!(index_carrier.element_bytes(), 4);
+
+    let signed = tiler_ir::semantic::ResolvedValueType::nominal(
+        TypeKey::new("tiler", "i32", 1).expect("the governed key grammar admits i32"),
+    );
+    assert!(
+        BoundedCarrier::of_input(&signed).is_none(),
+        "an input type this build materializes no carrier for must refuse rather than \
+default to the program's arithmetic width",
+    );
+}
+
+/// Two inputs of genuinely different widths scale their accessible ranges by
+/// their own, and two of one width still share the node they always shared.
+///
+/// **No program this build can assemble witnesses this, which is why the
+/// subject is reached directly.** Every declared input is output-reachable —
+/// `compact_to_outputs` drops one that is not — so every input is a value
+/// `recognized_program_arithmetic` walks, and that walk admits exactly one
+/// arithmetic plus the gather address exemption. The exempt identity is
+/// `tiler::u32@1`, four bytes, and a gather's source and result must be
+/// `tiler::f32@1` (`GatherError::SourceNotF32`), also four; the only other
+/// arithmetic is `bf16`, whose programs carry no gather at all. So every input
+/// of every assemblable program agrees in width with every other, `4` with `4`
+/// or `2` with `2`, and a shared literal is indistinguishable from a per-input
+/// one everywhere the compile path can go. Waiting for a fixture that
+/// discriminates would mean shipping the routing untested.
+///
+/// **The oracle is the arena's own content deduplication**, which
+/// `KernelProgramBuilder::push_abi_root` states: an identical expression returns
+/// the handle already minted for it. So rebuilding `width * count` by hand and
+/// comparing handles pins the exact literal each input was scaled by, not merely
+/// that the two differ — a `2 * 8` handle cannot equal a `4 * 8` one, and a
+/// shared four-byte literal would return the latter for both.
+///
+/// The equal-width pair is the control. Without it, distinct handles would be
+/// consistent with an arena that simply never shares, and the assertion would
+/// prove nothing about the width.
+#[test]
+fn two_inputs_of_differing_widths_scale_by_their_own_and_equal_ones_still_share() {
+    use tiler_ir::shape::{Extent, SourcedExtent};
+
+    let (semantic, request, _) = fixture();
+    let four = BoundedCarrier::of(ArithmeticType::F32).expect("f32 materializes a carrier");
+    let two = BoundedCarrier::of(ArithmeticType::Bf16).expect("bf16 materializes a carrier");
+    assert_ne!(
+        four.element_bytes(),
+        two.element_bytes(),
+        "the premise of this test is that the two carriers are different widths",
+    );
+    let declared = |name: &str, carrier: BoundedCarrier| DeclaredInput {
+        key: InputKey::new(name).expect("the fixture's input keys are well formed"),
+        shape: Shape::from_dims([8]),
+        extents: vec![SourcedExtent::Static(Extent::new(8))],
+        carrier,
+    };
+
+    let mut builder = open_core_builder(&semantic, &request).expect("the fixture opens a builder");
+    let abi = declare_host_abi(
+        &mut builder,
+        four,
+        &[
+            declared("wide", four),
+            declared("narrow", two),
+            declared("also-wide", four),
+        ],
+        &[],
+        &[],
+    )
+    .expect("three literal boundaries declare their byte formulas");
+
+    let scaled = |builder: &mut KernelProgramBuilder, width: u64| {
+        let element_bytes = builder
+            .push_abi_root(AbiRoot::UnsignedLiteral(width))
+            .expect("a literal width is a well-formed root");
+        let count = builder
+            .push_abi_root(AbiRoot::UnsignedLiteral(8))
+            .expect("a literal count is a well-formed root");
+        builder
+            .push_abi_binary(AbiBinaryOp::CheckedMultiply, element_bytes, count)
+            .expect("a checked product of two unsigned roots is well formed")
+    };
+    let expected_wide = scaled(&mut builder, 4);
+    let expected_narrow = scaled(&mut builder, 2);
+    assert_ne!(
+        expected_wide, expected_narrow,
+        "the arena must distinguish two products that differ in their width factor",
+    );
+
+    assert_eq!(
+        abi.input_bytes[0], expected_wide,
+        "the four-byte input's accessible range must be eight elements at four bytes",
+    );
+    assert_eq!(
+        abi.input_bytes[1], expected_narrow,
+        "the two-byte input's accessible range was scaled by a width that is not its own",
+    );
+    // The control: same width, same count, one node — so the inequality above is
+    // about the width and not about the arena refusing to share.
+    assert_eq!(
+        abi.input_bytes[2], abi.input_bytes[0],
+        "two boundaries of one width and one count must share the node they always shared",
+    );
+}

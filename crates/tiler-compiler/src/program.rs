@@ -32,7 +32,10 @@ use tiler_ir::program::{
     StorageScalar, ValueRole, VerifiedKernelProgram, ViewId,
 };
 use tiler_ir::schedule::ArithmeticType;
-use tiler_ir::semantic::{InputKey, OutputKey, SemanticIdentity, SemanticProgram};
+use tiler_ir::semantic::{
+    InputKey, OutputKey, ResolvedValueType, SemanticIdentity, SemanticProgram,
+    gather_index_resolved_type,
+};
 use tiler_ir::shape::{
     Axis, BindingSource, Shape, ShapeSymbol, SourcedExtent, decode_shape_env_subject,
 };
@@ -94,6 +97,42 @@ impl BoundedCarrier {
             }),
             ArithmeticType::F16 | ArithmeticType::F64 => None,
         }
+    }
+
+    /// The carrier one *declared program input* materializes through, read from
+    /// that input's own resolved value type.
+    ///
+    /// **A program input is not obliged to be a value the program computes
+    /// with.** [`Self::of`] answers for the one arithmetic every region computes
+    /// at, and every value the program materializes for itself is that
+    /// arithmetic by construction. An input is a caller's buffer, and this build
+    /// already admits one whose type is deliberately outside that arithmetic: a
+    /// gather's address operand, which `recognized_program_arithmetic` exempts
+    /// by operand position precisely because no per-point vocabulary spells
+    /// arithmetic on it. Materializing that operand at the arithmetic carrier
+    /// declares an `f32` buffer for a `tiler::u32@1` tensor, and the shared
+    /// builder refuses the stage that reads it at its exact width as
+    /// `StageElementType`.
+    ///
+    /// Both arms are asked of the authority that already states them rather
+    /// than restated here: [`crate::request::recognized_arithmetic`] is the one
+    /// place the recognized arithmetic identities are written, and
+    /// [`gather_index_resolved_type`] is the one place the admitted address
+    /// identity is. A second copy of either is a second place for a caller's
+    /// buffer to be sized by a width nobody stated.
+    ///
+    /// `None` is a refusal by name and never a fall back to the program's
+    /// arithmetic, for the reason [`Self::of`]'s own `None` arm gives: an
+    /// unrecognized input sized by some other type's width hands the runtime a
+    /// byte count and an alignment the caller never stated.
+    fn of_input(resolved: &ResolvedValueType) -> Option<Self> {
+        if let Some(arithmetic) = crate::request::recognized_arithmetic(resolved) {
+            return Self::of(arithmetic);
+        }
+        (*resolved == gather_index_resolved_type()).then_some(Self {
+            storage: StorageScalar::U32,
+            element_type: KernelType::U32,
+        })
     }
 
     /// The byte width of one element, unpacked.
@@ -1618,6 +1657,24 @@ pub(crate) fn build_cover_kernel_program_with_lowering(
     Ok(program)
 }
 
+/// One declared program input, with everything the program layer states about
+/// it derived from the semantic program's own declaration.
+///
+/// The carrier travels beside the shape rather than being recomputed at each of
+/// the four sites that need it — the allocation's capacity, the allocation's
+/// alignment guarantee, the value's storage scalar and element type, and the ABI
+/// byte formula's scale factor. All four are the same fact about one caller's
+/// tensor, and reading it once is what keeps a buffer from being sized by one
+/// width and aligned by another.
+struct DeclaredInput {
+    key: InputKey,
+    /// The dense shape, with a symbolic axis occupying a zero static extent.
+    shape: Shape,
+    /// The declared extents with their sources, which the ABI formula reads.
+    extents: Vec<SourcedExtent>,
+    carrier: BoundedCarrier,
+}
+
 /// Assembles the shared verified program of one cover, of any region count.
 ///
 /// Every structural obligation — complete disjoint coverage of the semantic
@@ -1641,15 +1698,15 @@ fn build_cover_core(
     // subjects retain the association from each regional access to this
     // interface, and stage accesses bind to kernel buffers positionally, so
     // reordering here would silently bind buffers to the wrong tensors.
-    let inputs: Vec<(InputKey, Shape, Vec<SourcedExtent>)> = semantic
+    let inputs: Vec<DeclaredInput> = semantic
         .inputs()
         .map(|input| {
-            let sourced = semantic
-                .shape(input.value())
+            let value = semantic
+                .value(input.value())
                 .map_err(|_| ProgramError::Structure {
                     rule: "program-input-unshaped",
                 })?;
-            let extents: Vec<SourcedExtent> = sourced.extents().collect();
+            let extents: Vec<SourcedExtent> = value.shape().extents().collect();
             // Symbolic axes occupy a zero static extent so the program value
             // does not bake a live binding. The ABI byte formula below names
             // `InputExtent` for those axes instead.
@@ -1660,7 +1717,21 @@ fn build_cover_core(
             let shape = Shape::try_from_dims(dims).map_err(|_| ProgramError::Structure {
                 rule: "program-input-rank",
             })?;
-            Ok((input.key().clone(), shape, extents))
+            // The input's own carrier, asked of the input rather than of the
+            // program. Its byte count, its alignment, and the element type its
+            // reader is checked against all derive from this one answer, so an
+            // input whose type this build materializes nothing for is refused
+            // here rather than sized as the arithmetic it is not.
+            let carrier =
+                BoundedCarrier::of_input(value.resolved_type()).ok_or(ProgramError::Structure {
+                    rule: "program-input-carrier-type",
+                })?;
+            Ok(DeclaredInput {
+                key: input.key().clone(),
+                shape,
+                extents,
+                carrier,
+            })
         })
         .collect::<Result<_, ProgramError>>()?;
     let internal_elements = assembly
@@ -1669,10 +1740,13 @@ fn build_cover_core(
         .map(|value| sourced_element_count(&value.extents))
         .collect::<Result<Vec<_>, ProgramError>>()?;
 
-    // The program's own carrier, taken from the contract this target compiles
-    // under. The request boundary requires that contract's arithmetic to be the
-    // program's own, so this is the width every declared value carries — and a
-    // width with no carrier is refused here rather than sized as some other.
+    // The carrier of every value the program materializes for *itself*, taken
+    // from the contract this target compiles under. The request boundary
+    // requires that contract's arithmetic to be the program's own, and an
+    // internal value is by construction a value some region computes at that
+    // arithmetic — a width with no carrier is refused here rather than sized as
+    // some other. A declared *input* no longer reads this: it carries what the
+    // caller's own tensor is, resolved above.
     let Some(carrier) = BoundedCarrier::of(request.numerical_contract().arithmetic) else {
         return Err(ProgramError::Structure {
             rule: "program-carrier-arithmetic",
@@ -1682,10 +1756,7 @@ fn build_cover_core(
     let abi = declare_host_abi(
         &mut builder,
         carrier,
-        &inputs
-            .iter()
-            .map(|(key, _, extents)| (key.clone(), extents.as_slice()))
-            .collect::<Vec<_>>(),
+        &inputs,
         &assembly
             .internals
             .iter()
@@ -1704,16 +1775,18 @@ fn build_cover_core(
         ))?);
     }
     let mut input_views = Vec::with_capacity(inputs.len());
-    for (key, shape, extents) in &inputs {
-        let elements = sourced_element_count(extents)?;
+    for input in &inputs {
+        let elements = sourced_element_count(&input.extents)?;
         let external = builder.push_allocation(storage(
-            carrier,
-            byte_count(carrier, elements)?,
+            input.carrier,
+            byte_count(input.carrier, elements)?,
             AllocationOwnership::External,
         ))?;
-        let input =
-            builder.push_value(program_input(carrier, key.clone(), shape.clone()), external)?;
-        input_views.push(builder.push_whole_view(input)?);
+        let value = builder.push_value(
+            program_input(input.carrier, input.key.clone(), input.shape.clone()),
+            external,
+        )?;
+        input_views.push(builder.push_whole_view(value)?);
     }
     let mut internal_values = Vec::with_capacity(assembly.internals.len());
     for (value, allocation) in assembly.internals.iter().zip(&internal_storage) {
@@ -1997,25 +2070,40 @@ impl HostAbi {
 /// compiler output rather than a caller error: `CoverAssembly::from_plan`
 /// declines `named-output-unrooted-symbolic` before an unrooted symbol can reach
 /// an assembled value.
+///
+/// **The width is per value, and a shared literal could not have expressed
+/// that.** One `element_bytes` node scaled every accessible range here, which
+/// was true while one carrier reached every declared value; a declared input now
+/// carries its own, so an input's range is scaled by the width of the caller's
+/// tensor rather than by the width of the arithmetic the program computes at.
+/// The arena's content deduplication is what keeps this from being an identity
+/// change for programs whose values happen to agree: `UnsignedLiteral` carries
+/// the *number*, not the carrier, so every value of a program in which one width
+/// reaches everything declares the same node this function used to hoist, at the
+/// same arena position: the first value to be declared still pushes its width
+/// before anything else, and each later one interns to that node. A program
+/// declaring no values at all would be the one exception, and the request
+/// boundary refuses it under `input-arity` before it reaches here.
 fn declare_host_abi(
     builder: &mut KernelProgramBuilder,
-    carrier: BoundedCarrier,
-    inputs: &[(InputKey, &[SourcedExtent])],
+    internal_carrier: BoundedCarrier,
+    inputs: &[DeclaredInput],
     internals: &[&[SourcedExtent]],
     roots: &[(ShapeSymbol, LiveExtentRoot)],
 ) -> Result<HostAbi, ProgramError> {
-    // The element byte width every accessible range scales by, taken from the
-    // program's own carrier: a `bf16` program's accessible byte counts are half
-    // an `f32` program's, and scaling by the wrong width is a range the runtime
-    // would bind past the end of the caller's buffer.
-    let element_bytes = builder.push_abi_root(AbiRoot::UnsignedLiteral(carrier.element_bytes()))?;
     let mut input_bytes = Vec::with_capacity(inputs.len());
-    for (key, extents) in inputs {
+    for input in inputs {
+        // The element byte width this accessible range scales by, taken from the
+        // input's own carrier: a `bf16` boundary's accessible byte counts are
+        // half an `f32` one's, and scaling by the wrong width is a range the
+        // runtime would bind past the end of the caller's buffer.
+        let element_bytes =
+            builder.push_abi_root(AbiRoot::UnsignedLiteral(input.carrier.element_bytes()))?;
         // A symbolic input axis names its *own* declared dimension, which is the
         // fact the runtime binds for that buffer.
-        let count = declare_element_count(builder, extents, |axis, symbol| {
+        let count = declare_element_count(builder, &input.extents, |axis, symbol| {
             let _ = symbol;
-            Some((key.clone(), axis))
+            Some((input.key.clone(), axis))
         })?;
         input_bytes.push(builder.push_abi_binary(
             AbiBinaryOp::CheckedMultiply,
@@ -2025,6 +2113,10 @@ fn declare_host_abi(
     }
     let mut internal_bytes = Vec::with_capacity(internals.len());
     for extents in internals {
+        // Program-owned storage, so the width is the arithmetic's rather than
+        // any caller's: nothing outside the program binds one of these.
+        let element_bytes =
+            builder.push_abi_root(AbiRoot::UnsignedLiteral(internal_carrier.element_bytes()))?;
         let count = declare_element_count(builder, extents, |_, symbol| {
             roots
                 .iter()
