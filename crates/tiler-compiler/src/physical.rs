@@ -1314,13 +1314,7 @@ fn declared_input_for_verified_access(
             .map(|read| read.input_ordinal),
         NormalizedOutputSubject::Epilogue(epilogue) => {
             if semantic_members == epilogue.members()
-                && matches!(
-                    region.index.program,
-                    RegionProgram::Numerical {
-                        scalar: ScalarProgram::PointwiseF32(_),
-                        ..
-                    }
-                )
+                && region_pointwise_f32(&region.index.program).is_some()
             {
                 epilogue
                     .reads()
@@ -4239,13 +4233,8 @@ fn verify_publishing_copy_binding(
         // identity-expression region, not a `PartitionedCopy` — a one-member
         // copy would be a second spelling of it, which the copy vocabulary
         // refuses by its own member-count rule.
-        && matches!(
-            &region.index.program,
-            RegionProgram::Numerical {
-                scalar: ScalarProgram::PointwiseF32(expression),
-                ..
-            } if *expression == identity_expression()
-        )
+        && region_pointwise_f32(&region.index.program)
+            .is_some_and(|expression| *expression == identity_expression())
         && matches!(
             region.index.accesses.as_slice(),
             [
@@ -4299,6 +4288,84 @@ fn published_shape(normalized: &NormalizedOutputSubject) -> Option<&Shape> {
         // shape by construction. The pointwise arm's `None` is the symbolic
         // population this family does not have.
         NormalizedOutputSubject::Gather(normalized) => Some(normalized.result_shape()),
+    }
+}
+
+/// Returns the pointwise binary32 expression a region's program evaluates, or
+/// `None` when it evaluates some other program.
+///
+/// One of this module's total maps over both program vocabularies, and total
+/// deliberately: `RegionProgram` and `ScalarProgram` decline
+/// `#[non_exhaustive]` so that a computation class or scalar program added
+/// later stops this build, and a `matches!` here would carry an implicit false
+/// arm that answers for a program nobody checked. Callers that only need to
+/// know *whether* a region is pointwise ask `is_some`; callers that compare the
+/// expression get it without a second classification.
+fn region_pointwise_f32(program: &RegionProgram) -> Option<&PointwiseF32Expression> {
+    match program {
+        RegionProgram::Numerical {
+            scalar: ScalarProgram::PointwiseF32(expression),
+            ..
+        } => Some(expression),
+        // No other program evaluates a binary32 pointwise chain. The `bf16`
+        // chain is a different node set at a different width; the reductions,
+        // the contraction, and the decode each perform arithmetic a pointwise
+        // expression does not name; and a copy region performs no arithmetic at
+        // all and carries no scalar program to read.
+        RegionProgram::Numerical {
+            scalar:
+                ScalarProgram::PointwiseBf16(_)
+                | ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::StrictSerialSum { .. }
+                | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                | ScalarProgram::StrictTensorContraction { .. }
+                | ScalarProgram::StrictSerialMaximum { .. },
+            ..
+        }
+        | RegionProgram::PartitionedCopy(_) => None,
+    }
+}
+
+/// Returns the reduced axes and canonical arithmetic NaN payload of the strict
+/// serial sum a region's program folds, or `None` when it folds something else.
+///
+/// Total over both program vocabularies for the reason
+/// [`region_pointwise_f32`] states. The three split and cooperative bindings
+/// that classify a region this way each compare a different subset of the
+/// returned pair, so the classification is written once here rather than
+/// re-spelled beside each comparison.
+fn region_strict_serial_sum(program: &RegionProgram) -> Option<(&[Axis], u32)> {
+    match program {
+        RegionProgram::Numerical {
+            scalar:
+                ScalarProgram::StrictSerialSum {
+                    axes,
+                    canonical_nan_bits,
+                    ..
+                },
+            ..
+        } => Some((axes, *canonical_nan_bits)),
+        // No other program is a strict serial sum. The squaring folds apply a
+        // per-contributor prologue and the fused form two constants, so their
+        // contributors are not this fold's; the extrema fold combines under
+        // `Maximum` rather than `Add`; the contraction folds products of two
+        // operands; and the pointwise chains and the decode are not reductions.
+        // A copy region carries no scalar program at all.
+        RegionProgram::Numerical {
+            scalar:
+                ScalarProgram::PointwiseF32(_)
+                | ScalarProgram::PointwiseBf16(_)
+                | ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                | ScalarProgram::StrictTensorContraction { .. }
+                | ScalarProgram::StrictSerialMaximum { .. },
+            ..
+        }
+        | RegionProgram::PartitionedCopy(_) => None,
     }
 }
 
@@ -4575,7 +4642,18 @@ fn verify_region_output_binding(
         // program and answers `false` for each pairing it does not carry, which
         // is what lets it bind two widths without either falling through to the
         // other.
-        (NormalizedOutputSubject::Contraction(_) | NormalizedOutputSubject::Gather(_), _) => false,
+        (
+            NormalizedOutputSubject::Contraction(_) | NormalizedOutputSubject::Gather(_),
+            ScalarProgram::PointwiseF32(_)
+            | ScalarProgram::PointwiseBf16(_)
+            | ScalarProgram::StrictAffineU4Dequantize { .. }
+            | ScalarProgram::StrictSerialSum { .. }
+            | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+            | ScalarProgram::SquaredSerialSum { .. }
+            | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+            | ScalarProgram::StrictTensorContraction { .. }
+            | ScalarProgram::StrictSerialMaximum { .. },
+        ) => false,
         // A chain binds either its epilogue region or a region of its producer's
         // partition, and the *members* are what separate the two: an epilogue's
         // region and a fold's prologue are both `PointwiseF32` regions, so the
@@ -4994,14 +5072,12 @@ fn verify_multi_pass_subject_binding(
     };
     let expected = match pass {
         tiler_ir::schedule::ReductionPass::Partial => {
-            matches!(
-                &region.index.program,
-                RegionProgram::Numerical {
-                    scalar: ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. },
-                    ..
-                } if axes == normalized.reduction_axes()
-                        && *canonical_nan_bits
+            region_strict_serial_sum(&region.index.program).is_some_and(
+                |(axes, canonical_nan_bits)| {
+                    axes == normalized.reduction_axes()
+                        && canonical_nan_bits
                             == subject.numerical_contract().canonical_arithmetic_nan_bits
+                },
             ) && semantic_members == normalized.members().reduction()
                 && region.index.id == RegionId::new(2)
                 && reduction_access_matches(
@@ -5016,13 +5092,10 @@ fn verify_multi_pass_subject_binding(
                 .is_some_and(|shape| shape == region.index.iteration_shape)
         }
         tiler_ir::schedule::ReductionPass::Final => {
-            matches!(
-                &region.index.program,
-                RegionProgram::Numerical {
-                    scalar: ScalarProgram::StrictSerialSum { canonical_nan_bits, .. },
-                    ..
-                } if *canonical_nan_bits
-                        == subject.numerical_contract().canonical_arithmetic_nan_bits
+            region_strict_serial_sum(&region.index.program).is_some_and(
+                |(_, canonical_nan_bits)| {
+                    canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+                },
             ) && semantic_members
                 == normalized
                     .members()
@@ -5066,14 +5139,11 @@ fn verify_workgroup_tree_subject_binding(
     else {
         return intrinsic("request-binding", region.index.id);
     };
-    let expected = matches!(
-        &region.index.program,
-        RegionProgram::Numerical {
-            scalar: ScalarProgram::StrictSerialSum { axes, canonical_nan_bits, .. },
-            ..
-        } if axes == normalized.reduction_axes()
-                && *canonical_nan_bits
-                    == subject.numerical_contract().canonical_arithmetic_nan_bits
+    let expected = region_strict_serial_sum(&region.index.program).is_some_and(
+        |(axes, canonical_nan_bits)| {
+            axes == normalized.reduction_axes()
+                && canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+        },
     ) && semantic_members == normalized.members().reduction()
         && region.index.id == RegionId::new(4)
         && reduction_access_matches(
@@ -5165,20 +5235,41 @@ fn verify_cooperative_contraction_subject_binding(
     let Some((binding, rounds, grid_threads)) = admitted else {
         return intrinsic("request-binding", region.index.id);
     };
-    let expected = matches!(
-        &region.index.program,
+    let carries = match &region.index.program {
         RegionProgram::Numerical {
-            scalar: ScalarProgram::StrictTensorContraction {
-                contracted_shape: scalar_contracted,
-                order,
-                canonical_nan_bits,
-            },
+            scalar:
+                ScalarProgram::StrictTensorContraction {
+                    contracted_shape: scalar_contracted,
+                    order,
+                    canonical_nan_bits,
+                },
             ..
-        } if scalar_contracted == &normalized.contracted_shape
+        } => {
+            scalar_contracted == &normalized.contracted_shape
                 && *order == ContributorOrder::OriginalAxisLexicographic
-                && *canonical_nan_bits
-                    == subject.numerical_contract().canonical_arithmetic_nan_bits
-    ) && semantic_members == normalized.members
+                && *canonical_nan_bits == subject.numerical_contract().canonical_arithmetic_nan_bits
+        }
+        // No other program is a tensor contraction. The reductions each fold one
+        // operand's contributors rather than products of two whose coordinates
+        // differ; the pointwise chains and the decode are not folds at all; and
+        // a copy region carries no scalar program. Written as a total map rather
+        // than a `matches!` so a program added later fails this build instead of
+        // reaching the implicit false arm a `matches!` carries.
+        RegionProgram::Numerical {
+            scalar:
+                ScalarProgram::PointwiseF32(_)
+                | ScalarProgram::PointwiseBf16(_)
+                | ScalarProgram::StrictAffineU4Dequantize { .. }
+                | ScalarProgram::StrictSerialSum { .. }
+                | ScalarProgram::FusedMultiplyAddSerialSum { .. }
+                | ScalarProgram::SquaredSerialSum { .. }
+                | ScalarProgram::SquaredSerialSumThenEpilogue { .. }
+                | ScalarProgram::StrictSerialMaximum { .. },
+            ..
+        }
+        | RegionProgram::PartitionedCopy(_) => false,
+    };
+    let expected = carries && semantic_members == normalized.members
         && region.index.id == COOPERATIVE_CONTRACTION_REGION
         && region.index.iteration_shape == normalized.output_shape
         && contracted_shape == &normalized.contracted_shape
