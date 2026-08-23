@@ -41,3 +41,17 @@ The first tranche pinned these, and one of its recorded lessons was wrong; the c
 ## Closes when
 
 `crates/tiler-compiler/src/request/tests.rs` is a directory whose largest member is under 1,500 lines, the before/after test lists are identical, the gates above are green, and the delivery note records the mapping rule, the per-file line counts, and any test that did not have an obvious home.
+
+## Coordinator correction — 2026-08-23: my corrected census was still incomplete; there are three citation shapes, not two
+
+Two briefs ago I corrected the split-family census command after it missed anchor-form citations, and told this lane to census **both** the line-anchored form (`path.rs:123`) and the anchor form (`path.rs "quoted text"`). **That was still incomplete.**
+
+This lane found a **third** shape my correction did not name: a plain markdown **link** with no anchor at all — `[text](path.rs)` — two of them in `docs/decisions/0107-…`, which `make citations` flagged as broken because the split turned the named file into a directory. Neither of my two greps would have found them.
+
+**Its handling of them is the part worth keeping.** The two originally-linked test names had already been renamed by a 2026-08-19 repair and match no current test, so it repointed both links at the `tests/` **directory** rather than guessing a child file — declining to invent a target it could not verify.
+
+**So the census for a module split is three shapes, and `make citations` is the authority over all of them.** That is now the third iteration of this correction in one session: line-anchored only → plus anchor form → plus link form. The durable lesson is not the specific list but that **`make citations` was catching what my hand-rolled census kept missing**, in every one of the six splits. A supplied census command is a claim; the gate is the check.
+
+**Verified by the coordinator at `97178f36`:** 87 `#[test]` at the base and 87 across the split modules; the monolith is gone; 13 modules; the merged tree gates green at 4068 workspace / 1353 release, unchanged, as a pure move must.
+
+**One finding of its own worth recording:** its by-hand usage audit missed three fixtures that `cargo check` then caught — `normalization_program`, `contraction_fed_normalization`, and `UnusedSemantics` — because sub-ranges it had mentally allocated to one child were actually carved into two others. That is the same failure mode as a hand-rolled census, in the fixture-placement direction, and it is why the mapping must be derived from a usage graph rather than by eye.
