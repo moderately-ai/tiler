@@ -1,7 +1,7 @@
 ---
 id: lower-a-recognized-gather-through-a-governed-capability
 title: Lower a recognized gather through a governed index-access capability
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [carry-the-gather-relation-through-the-compiler-vertical, thread-resolved-lowering-into-the-governed-spelling-path, decide-the-data-dependent-index-representation-public-surface, emit-the-indirect-gather-on-metal]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, gather, lowering, identity, public-boundary]
+claimed_from: todo
+assignee: worker-gathercap
+lease_expires_at: 1787468243
 ---
 ## User-visible outcome
 
@@ -55,3 +58,13 @@ This is remainder item 2 of [`carry-the-gather-relation-through-the-compiler-ver
 ## Closes when
 
 A recognized gather resolves a governed capability, refines to a single verified index region whose gather access carries a statically proved bounds resolution, `resolve_lowering` answers `Ok` for a gather program, no test asserts the absence this lane removes, every identity consequence is derived on the merged tree with pins recomputed there, each new refusal has been watched firing on a perturbed subject, and the workspace gate is green.
+
+## Coordinator pre-dispatch note — 2026-08-23 at `5b2e4414`: the accepted spelling exists, and where to find it
+
+Every Fact in this ticket reproduced for the coordinator: `gather_read` is absent from `crates/tiler-compiler/src/capability.rs` (**0** hits), `git log -S "gather_read"` against that file is **empty**, `GOVERNED_INDEX_ACCESS_CAPABILITIES` is **21** at `crates/tiler-compiler/src/governed.rs`, and `enumerate_complete_plans` states the ordering itself at the anchor `Lowering-capability resolution precedes every cover`.
+
+**The Public boundary section asks the worker to state whether the signature is Tom's or already accepted. It is already accepted, and this ticket did not name where.** [`decide-the-data-dependent-index-representation-public-surface`](decide-the-data-dependent-index-representation-public-surface.md) is `done`, and its acceptance record states that Tom accepted **option B** with *"the three exact public `gather_read` refusals for each nonliteral dimension"*, fixing the accepted surface as *"exactly the reviewed packet at `a25f4268b768f1b0391db34798676f910d4f1660`"*. That ticket spells `pub fn gather_read(` in two places. **Land it verbatim from there.** Any deviation from that spelling is a new public boundary and therefore Tom's — stop and report rather than adjusting it.
+
+**A related edge this ticket was missing, which matters for not re-deriving landed work.** The acceptance routes implementation through [`admit-the-selected-data-dependent-index-representation`](admit-the-selected-data-dependent-index-representation.md), which is **`done`** — and the IR half already landed: `pub fn gather_read(` exists at `crates/tiler-ir/src/index/builder.rs`. So this ticket is **not** a duplicate of it, and the distinction is exact: the *IR builder's* `gather_read` is landed; the *compiler's* `IndexAccessLoweringContext::gather_read` facade method is the one that was drafted and withdrawn. Read the landed IR method before writing the facade — its refusals are the accepted three and the facade must not restate them differently.
+
+**Unverified by the coordinator and left for the worker:** the refinement claim (`OccurrenceEvidence::Refined`, `single_region()`, `statically_proved()`), the two test flips, and the full identity blast radius. The identity consequence in particular is stated as reaching every request subject in the repository; derive it on the merged tree and recompute pins there, as this ticket already says.
