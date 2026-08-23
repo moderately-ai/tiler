@@ -5332,10 +5332,16 @@ fn contraction_accesses_match(accesses: &[Access], normalized: &NormalizedContra
 /// The contributor tensor one recognized fold's own region must bind.
 ///
 /// The subject projection of [`contributor_tensor`], derived from the same fact —
-/// whether the recognized program has a prologue — so a region and the builder
-/// that produced it cannot disagree about where the contributors live. A fold with
-/// a prologue reads the intermediate that prologue region materialized; one
-/// without reads the declared input directly.
+/// whether the fold *names a declared input* — so a region and the builder that
+/// produced it cannot disagree about where the contributors live. A fold that
+/// names one reads that declared buffer; a fold that names none reads an
+/// intermediate, and [`declared_contributor_tensor`] states which two regions
+/// can have written it.
+///
+/// **The fact is the named ordinal, not the presence of a prologue.** A fold
+/// whose contributors another region materializes has no prologue and still
+/// reads an intermediate, so a derivation asking after the prologue would bind
+/// that fold to a declared buffer no cover writes.
 ///
 /// The *fused* region does not ask, and resolves
 /// [`fused_contributor_tensor`] instead: it carries the prologue inside its own

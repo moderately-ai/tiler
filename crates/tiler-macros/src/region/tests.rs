@@ -1300,14 +1300,24 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
     // the sides rule refuses it under `reduction-contributor-depth`. Lifting it
     // needs the recursive producer walk to become iterative, which is what
     // keeps this population inhabited rather than empty.
-    let cases = [("a reduction of a reduction of a reduction", too_deep)];
+    //
+    // The rule is carried beside each case and asserted, not merely narrated:
+    // the rendered refusal names the check that refused, so this file can
+    // observe *which* wall it hit rather than only that some wall did. A
+    // widening that admitted this shape under a differently-named refusal would
+    // otherwise leave every assertion below green.
+    let cases = [(
+        "a reduction of a reduction of a reduction",
+        too_deep,
+        "reduction-contributor-depth",
+    )];
     assert_eq!(
         cases.len(),
         1,
         "the population is every grammar-expressible shape this build does not recognize that the \
          ticket names, counted",
     );
-    for (label, region) in cases {
+    for (label, region, rule) in cases {
         let diagnostic = deliver(&region);
         for named in [
             "strict_serial_sum(x * 2.0 + 1.0, [cols])",
@@ -1319,6 +1329,10 @@ fn an_unrecognized_region_names_what_a_consumer_would_change() {
                 "case `{label}` must name `{named}`: {diagnostic}",
             );
         }
+        assert!(
+            diagnostic.contains(&format!("the check that refused is `{rule}`")),
+            "case `{label}` must refuse under `{rule}`: {diagnostic}",
+        );
         assert!(
             !diagnostic.contains("UnsupportedCapability {"),
             "case `{label}` must not leak the raw capability refusal: {diagnostic}",
