@@ -1,7 +1,7 @@
 ---
 id: record-that-schedule-rule-8-cannot-check-the-proofs-region-identity
 title: Record that schedule rule 8 cannot check the proof's region identity
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [bind-a-scheduled-gathers-retained-proof-to-its-own-occurrence]
@@ -9,6 +9,9 @@ scopes: [implementation/ir]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, gather, layering]
+claimed_from: todo
+assignee: worker-rule8
+lease_expires_at: 1787487859
 ---
 ## User-visible outcome
 
