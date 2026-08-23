@@ -1,7 +1,7 @@
 ---
 id: restate-the-gather-standing-after-the-per-input-carrier-landed
 title: Restate the gather standing after the per-input carrier landed
-status: in-progress
+status: done
 priority: p2
 dependencies: []
 related: [route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type, restate-the-gather-standing-after-the-kernel-body-and-classifier-landed, emit-the-indirect-gather-on-metal]
@@ -9,9 +9,6 @@ scopes: [contracts/optimizer, contracts/navigation]
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, gather, contract, roadmap]
-claimed_from: todo
-assignee: worker-optrestate3
-lease_expires_at: 1787484981
 ---
 ## User-visible outcome
 
@@ -37,3 +34,13 @@ Filed 2026-08-23 by `worker-carrier` from [`route-a-program-inputs-storage-carri
 ## Non-goals
 
 `crates/`. The Metal emission itself. Re-opening the accepted data-dependent index surface. The R5 fusion-role work, which is its own ticket.
+
+## Coordinator note — 2026-08-23: my brief undercounted the roadmap defect fourfold
+
+I told this lane that `docs/roadmap.md` "names this ticket's predecessor as an open R6 prerequisite", describing **one** stale reference. There were **four**, and the lane repaired all of them rather than only the one I named: the rung cell, the Fact cell, the Q-SHAPE-007 cell, and a standalone dated-correction paragraph *above* the table that still asserted both the program-carrier wall and an integer-carrier prerequisite as live.
+
+That is the same shape as the census errors I have made repeatedly this session — I read one instance and reported it as the population. The lane's mandated full-document sweep is what found the other three, which is exactly why that instruction is in the brief rather than left to judgement.
+
+**Verified by the coordinator at `2580f76d`, so the chain's end state is on the record.** In `docs/compiler/optimizer.md` the retired test name `a_statically_proved_gather_clears_kernel_lowering_and_stops_at_the_program_carrier` still returns 1 (preserved in the dated quote) while the live name `a_statically_proved_gather_compiles_with_its_index_at_its_own_carrier` returns 1 in the doc **and** 1 in `crates/` — so the bare-identifier defect is closed and no count shrank.
+
+**Both remaining walls confirmed at source.** `crates/tiler-metal/src/emit.rs` answers `KernelType::U32 => Err(MetalEmitError::UnsupportedValueType { value_type: KernelType::U32 })`, and `tiler::gather-f32@1` is still listed in `UNPLANNED_OPERATIONS` in `crates/tiler-compiler/src/policy.rs` with no role in `crate::fusion_legality`. **The rung stays R4**, and a gather compiling is not a gather executing.
