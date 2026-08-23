@@ -1,7 +1,7 @@
 ---
 id: split-the-compiler-pipeline-test-monolith-by-orchestration-phase
 title: Split the compiler pipeline test monolith by orchestration phase
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [keep-a-module-size-and-complexity-census-with-a-split-queue, split-the-artifact-program-test-monoliths-into-focused-modules]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: []
 paths: []
 tags: [refactor, maintainability, tests]
+claimed_from: todo
+assignee: worker-splitpipe
+lease_expires_at: 1787475234
 ---
 ## User-visible outcome
 
