@@ -1,7 +1,7 @@
 ---
 id: restore-the-build-trap-the-physical-planner-wildcards-defeat
 title: Restore the build trap the physical-planner wildcards defeat
-status: todo
+status: in-progress
 priority: p3
 dependencies: []
 related: [offer-the-tiled-contraction-alternative-in-physical-planning]
@@ -9,6 +9,9 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, exhaustiveness, maintainability]
+claimed_from: todo
+assignee: worker-buildtrap
+lease_expires_at: 1787489695
 ---
 ## User-visible outcome
 
@@ -48,3 +51,21 @@ Adding `#[non_exhaustive]` to either enum — the documentation forbids it for a
 ## Closes when
 
 No wildcard in `crates/tiler-compiler/src/physical.rs` matches `RegionProgram` or `ScalarProgram`, a variant added to either is watched failing the build with its error quoted, each enum perturbed separately, and no current variant's disposition has changed.
+
+## Coordinator re-audit at `5fd9e1a5`, 2026-08-23 — the original Fact holds exactly; the fourth-site Correction is now stale
+
+`crates/tiler-compiler/src/physical.rs` was rewritten substantially by the gather chain since this ticket was filed. Re-derived here rather than relayed, with each wildcard attributed to its enclosing function **and** to the enum it actually matches on — the attribution matters, because the file carries six `_ => None` arms and only one of them is against these types.
+
+**The original Fact is verified, and the population is exactly three:**
+
+- `_ => None` at `physical.rs:1421`, inside `declared_input_for_verified_access`, matching **`RegionProgram` and `ScalarProgram`**.
+- `_ => false` at `physical.rs:4305`, inside `verify_region_output_binding`, matching **`ScalarProgram`**.
+- `_ => false` at `physical.rs:4443`, inside `verify_region_output_binding`, matching **`ScalarProgram`**.
+
+**A near-miss worth naming so the next reader does not over-repair:** `_ => None` at `physical.rs:1372` sits inside the *same* function as the first site but matches **neither** enum. A census that greps `_ => None` and attributes by enclosing function — rather than by what is being matched — would report four sites and send a worker to widen an arm that has nothing to do with this trap.
+
+**The `## Correction — 2026-08-22` above is stale and must not be acted on.** It names a fourth site, a `matches!` inside `verify_cooperative_contraction_subject_binding`. **That site no longer exists.** `grep -n "matches!" physical.rs | grep -E "RegionProgram|ScalarProgram"` returns **nothing** at this base, and the function has been rewritten to destructure `ReductionTopology::CooperativeContraction` and `ExecutionBinding::BlockedWorkgroup` through `let … else`, refusing via `intrinsic("request-binding", region.index.id)`. It matches neither enum now. The correction was true when written and is history; the retired wording is left above rather than deleted, and this note is where a reader learns it no longer applies.
+
+**Its underlying point survives and should be kept.** `matches!` carries an implicit false arm and is exhaustiveness-equivalent to `_ => false`, so any census for this trap must look for `matches!` as well as `_ =>`. That it currently finds none is a fact about this base, not a reason to drop the check from the closing condition.
+
+**Both doc anchors still resolve**, so the trap's stated intent is intact: `a wildcard that answers for a program it was never checked against` → 1, and `marking it would force a wildcard arm there` → 1, both in `crates/tiler-ir/src/schedule/model.rs`.
