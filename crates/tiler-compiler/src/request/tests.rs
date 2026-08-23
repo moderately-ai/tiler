@@ -1266,7 +1266,7 @@ fn laws_of(program: &SemanticProgram) -> FrozenIndexRealizationLawRegistry {
     .expect("a law authority over the fixture's own semantic authority coheres")
 }
 
-/// A gather stops first at exact target dispatch, then at governed lowering.
+/// A gather stops first at exact target dispatch, then at the region vocabulary.
 ///
 /// The second compile changes only the target's exact U32 dispatch fact. It
 /// keeps the semantic program byte-for-byte identical, so the advance from the
@@ -1274,25 +1274,29 @@ fn laws_of(program: &SemanticProgram) -> FrozenIndexRealizationLawRegistry {
 /// request boundary's ordered diagnostic layers without granting Gather a
 /// production target claim or a planning route.
 ///
-/// **The second expectation moved from `dtype-recognized` to
-/// `missing-capability`, and the move is this lane's landing.** The U32 index is
-/// no longer refused by whole-program arithmetic recognition: it is exempt by
-/// operand position, the gather recognizer resolves the output, and the request
-/// verifies. The next authority that has nothing to say about a gather is the
-/// governed lowering registry, which carries no gather capability row — so the
-/// program now reaches `phase: "lowering"` and stops there.
+/// **The second expectation moved from `("lowering", "missing-capability")` to
+/// `("planning", "region-vocabulary")`, and the move is this lane's landing.**
+/// The governed profile now carries a `tiler::gather-f32@1` index-access
+/// capability row, so `resolve_lowering` answers `Ok` for this program and the
+/// compile advances past the lowering stage entirely. The next authority with
+/// nothing to say about a gather is the scheduled-region vocabulary: every
+/// cover of this program declines under
+/// `RegionVocabularyWall::GatherProofUnavailable`, which `pipeline` reports as
+/// the `region-vocabulary` capability class and the trace names in full.
 ///
-/// That is still fail-closed, and deliberately so: no gather acquires a schedule,
-/// kernel, artifact, cache, or dispatch route from this lane. Two named
-/// authorities stand between this refusal and one that could — the governed row
-/// itself, and `RegionVocabularyWall::GatherProofUnavailable`, which is what
-/// physical planning answers once a row exists.
+/// That is still fail-closed, and deliberately so: no gather acquires a
+/// schedule, kernel, artifact, cache, or dispatch route from this lane. One
+/// named authority now stands between this refusal and one that could — the
+/// wall itself, which needs the `GatherIndexBoundsProof` that
+/// `a_gather_occurrence_resolves_a_governed_lowering_and_refines` shows the
+/// resolved lowering already holds, carried across a seam that does not exist
+/// yet.
 ///
 /// Watched failing under a deliberate subject perturbation: removing the
 /// U32 row from `governed_with_gather_index_dispatch_for_test` makes the
 /// second compile return the same target-local refusal as the first.
 #[test]
-fn a_governed_gather_refuses_at_dispatch_before_governed_lowering() {
+fn a_governed_gather_refuses_at_dispatch_then_at_the_region_vocabulary() {
     let program = gather_program();
     let product = crate::pipeline::compile(CompilationRequest::governed(&program))
         .expect("a target-local refusal is an ordinary compilation product");
@@ -1322,9 +1326,25 @@ fn a_governed_gather_refuses_at_dispatch_before_governed_lowering() {
     assert_eq!(
         planning_capability_rule(&advanced)
             .unwrap_or_else(|| panic!("the widened request refused with {advanced:?}")),
-        ("lowering", "missing-capability"),
-        "an exact U32 dispatch fact advances the same program past recognition to \
-governed lowering, which carries no gather capability row",
+        ("planning", "region-vocabulary"),
+        "an exact U32 dispatch fact advances the same program past recognition and \
+past governed lowering, which now carries a gather capability row, to the \
+scheduled-region vocabulary",
+    );
+    // The class the request boundary reports is deliberately coarse — every
+    // vocabulary gap shares it — so the *named* wall is read from the trace,
+    // which is where the per-region typed decline is kept. Without this the
+    // assertion above would equally pass if some unrelated vocabulary gap had
+    // become the first refusal.
+    let crate::pipeline::CompileError::Explained { explain, .. } = &advanced else {
+        panic!("a planning refusal carries its explain trace, not {advanced:?}");
+    };
+    assert!(
+        explain
+            .render()
+            .contains(crate::physical::RegionVocabularyWall::GatherProofUnavailable.reason()),
+        "the trace must name the gather wall as the cause: {}",
+        explain.render(),
     );
 }
 
@@ -6544,15 +6564,51 @@ fn transplant_gather_region(
     }
 }
 
-/// Builds the verified target request the transplant fixture's occurrence belongs to.
-fn transplant_gather_target() -> VerifiedTargetRequest {
+/// Builds the transplant fixture's program and the verified target request its
+/// occurrence belongs to.
+///
+/// The program is returned beside the request because resolving the
+/// occurrence's real lowering needs both, and re-deriving it at the call site
+/// would be a second fixture free to drift from the one the request verified.
+fn transplant_gather_target() -> (SemanticProgram, VerifiedTargetRequest) {
     let program = gather_program_over([TRANSPLANT_SOURCE_EXTENT, 2], [2], 0);
     let mut request = CompilationRequest::governed(&program);
     request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
     let planned = verify_planned_request(request).expect("the fixture admits a planned request");
-    planned
+    let target = planned
         .for_target(0)
-        .expect("the U32-capable profile admits the fixture")
+        .expect("the U32-capable profile admits the fixture");
+    (program, target)
+}
+
+/// Reads the statically proved gather bounds proof out of the region one
+/// occurrence's own resolved lowering realized.
+///
+/// **Nothing here fabricates a proof or an identity.** The proof is the one the
+/// index layer's closed deriver minted while the governed provider's region was
+/// built, so its `CanonicalIndexRegionIdentity` is by construction the realized
+/// region's — which is exactly the conjunct
+/// [`a_gather_proof_minted_for_another_region_is_refused`] shows a transplant
+/// cannot satisfy.
+fn own_gather_proof(
+    lowering: &crate::lowering::ResolvedLowering,
+) -> tiler_ir::index::GatherIndexBoundsProof {
+    use tiler_ir::index::TensorAccessView;
+
+    let [occurrence] = lowering.occurrences() else {
+        panic!("the fixture declares one gather occurrence");
+    };
+    let crate::lowering::OccurrenceEvidence::Refined(refinement) = occurrence.evidence();
+    refinement
+        .single_region()
+        .expect("a gather is realized by one region, not a chain")
+        .accesses()
+        .find_map(|access| match access.view() {
+            TensorAccessView::GatherRead(gather) => gather.bounds_resolution().statically_proved(),
+            TensorAccessView::Direct(_) => None,
+        })
+        .expect("the realized region's gather access discharges its obligation statically")
+        .clone()
 }
 
 /// A retained gather proof minted for another region is refused by the binding.
@@ -6571,26 +6627,22 @@ fn transplant_gather_target() -> VerifiedTargetRequest {
 /// **What it would take for this to say something else, and whether that case is
 /// reachable.** The refusal has two independent causes and only one of them is
 /// the transplant. `gather_accesses_match` admits a proof when the occurrence's
-/// lowering realized a single region *and* that region's identity is the proof's.
-/// At this base the first conjunct is unreachable for every gather:
-/// `IndexAccessLoweringContext` exposes no gather emission at all — the facade's
-/// `gather_read` was written and deliberately removed by the
-/// `carry-the-gather-relation-through-the-compiler-vertical` lane pending the
-/// governed capability row — so no provider can emit a region realizing a gather
-/// and `resolve_lowering` refuses before any frontier exists.
-/// [`a_gather_occurrence_resolves_no_lowering_at_this_base`] pins that, and it is
-/// why the canonical proof below is refused too rather than admitted as the
-/// positive control this test would otherwise carry.
+/// lowering realized a single region *and* that region's identity is the
+/// proof's. Both conjuncts are now reachable: the governed profile carries a
+/// `tiler::gather-f32@1` index-access capability, so `resolve_lowering` answers
+/// `Ok` for this fixture and holds a real realized region —
+/// [`a_gather_occurrence_resolves_a_governed_lowering_and_refines`] pins that —
+/// and the second half of this test is therefore the **positive control** the
+/// absence used to preclude, run against the same scheduled region, the same
+/// members, and the same target, with only the proof and the resolved lowering
+/// changed.
 ///
-/// So what this test does demonstrate is that the transplant no longer passes,
-/// and the perturbation that shows the new comparison is what refuses it is
-/// deleting the `realized == Some(proof.region())` conjunct, which was run: the
-/// transplanted region is then **admitted whole** — intrinsic verification, the
-/// request-subject binding, and hard feasibility all pass — and this assertion
-/// reddens with
+/// The perturbation that shows the new comparison is what refuses the
+/// transplant is deleting the `realized == Some(proof.region())` conjunct, which
+/// was run: the transplanted region is then **admitted whole** — intrinsic
+/// verification, the request-subject binding, and hard feasibility all pass —
+/// and the first assertion reddens with
 /// `left: None  right: Some(Intrinsic { rule: "request-binding", region: RegionId(0) })`.
-/// That admission is the finding stated as an observation rather than a claim.
-/// A positive control belongs to the lane that lands the emission route.
 #[test]
 fn a_gather_proof_minted_for_another_region_is_refused() {
     let own = mint_gather_proof(false);
@@ -6610,18 +6662,20 @@ fn a_gather_proof_minted_for_another_region_is_refused() {
          transplant is a proof swapped for an equal one and corrupts nothing",
     );
 
-    let target = transplant_gather_target();
+    let (program, target) = transplant_gather_target();
     let [output] = target.normalized().outputs() else {
         panic!("the fixture declares one output");
     };
     let members = output.members();
     assert_eq!(members.len(), 1, "a gather claims exactly one occurrence");
+    let resolved = crate::lowering::resolve_lowering(&program, &target)
+        .expect("the governed gather capability lowers this occurrence");
 
     let refusal = crate::physical::verify_schedule_with_feasibility(
         transplant_gather_region(&target, transplant),
         members.clone(),
         &target,
-        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+        &resolved,
     );
     // Projected to the error alone so an admission prints `None` rather than a
     // whole verified region; the discrimination is unchanged, because `None` is
@@ -6634,28 +6688,76 @@ fn a_gather_proof_minted_for_another_region_is_refused() {
         }),
         "a proof minted for another region must not bind this occurrence",
     );
+
+    // The positive control: the occurrence's *own* proof, read out of the very
+    // region its resolved lowering realized, admits the identical scheduled
+    // region. Without it the refusal above would be indistinguishable from a
+    // binding that refuses every gather.
+    let admitted = crate::physical::verify_schedule_with_feasibility(
+        transplant_gather_region(&target, own_gather_proof(&resolved)),
+        members.clone(),
+        &target,
+        &resolved,
+    );
+    assert_eq!(
+        admitted.as_ref().err(),
+        None,
+        "the occurrence's own realized region's proof must bind it",
+    );
+
+    // And the unresolved lowering still refuses, so a caller that never
+    // resolved one cannot obtain the admission above by omission.
+    let unresolved = crate::physical::verify_schedule_with_feasibility(
+        transplant_gather_region(&target, own_gather_proof(&resolved)),
+        members.clone(),
+        &target,
+        &crate::lowering::ResolvedLowering::unresolved_for_test(),
+    );
+    assert_eq!(
+        unresolved.as_ref().err(),
+        Some(&crate::physical::PhysicalError::Intrinsic {
+            rule: "request-binding",
+            region: tiler_ir::schedule::RegionId::new(0),
+        }),
+        "an unresolved lowering resolves no member, so it binds nothing",
+    );
 }
 
-/// No gather occurrence resolves a lowering at this base, so no gather proof
-/// can be the occurrence's own.
+/// A recognized gather resolves the governed capability and refines to a region
+/// carrying its own statically proved bounds obligation.
 ///
-/// This is the reachability fact the transplant test above rests on, pinned as a
-/// check rather than left as prose: it is what makes
-/// `gather_accesses_match`'s new conjunct refuse every gather today, and what a
-/// later lane must change before a positive control can exist.
+/// **This assertion is the inverse of the one it replaces, and the inversion is
+/// this lane's landing.** It previously required `resolve_lowering` to answer
+/// `Err` with `missing-capability`, because no installed capability lowered a
+/// gather at all. The governed profile now registers `tiler::gather-f32@1`, so
+/// the same fixture through the same call resolves, and leaving the old
+/// expectation would have left the suite asserting the opposite of the tree.
 ///
-/// **The negative control is the second half**, and it is what makes this a fact
-/// about gathers rather than about the harness: the same `resolve_lowering` call
-/// over the module's ordinary elementwise fixture answers `Ok`, so the refusal
-/// above is not "this test cannot resolve anything". Without it a broken request
-/// fixture would read as a proved absence.
+/// **Each of the four facts is read from the resolved value rather than
+/// inferred from the one before it**, because they are four different claims:
+/// that a capability resolved at all; that its emitted realization was proved
+/// to *realize the occurrence* rather than merely to verify; that the
+/// realization is one region rather than a chain, which is what makes it
+/// evaluable and what a schedule can name; and that the region's gather access
+/// carries a `GatherIndexBoundsProof` rather than an invocation-validation
+/// requirement. The last is the one the schedule layer needs and the reason
+/// this fixture gathers along an extent containing every U32 value.
 ///
-/// The reason code is compared rather than the error, because
-/// *no capability row* and *a row whose provider emitted a bad region* are two
-/// different absences that would otherwise both read as "gathers do not lower",
-/// and only the first is what makes a gather proof unobtainable.
+/// The proof's region is compared against the realized region's own canonical
+/// identity, which is exactly the conjunct
+/// [`a_gather_proof_minted_for_another_region_is_refused`] shows a transplanted
+/// proof fails.
+///
+/// **The negative control perturbs the installed authority, not the
+/// assertion.** The same fixture, the same target, and the same call against a
+/// registry carrying every governed index-access family *except* this one
+/// refuses under `missing-capability`. Without it a harness that resolved
+/// nothing would read as a landed row, and a `resolve_lowering` that could no
+/// longer say `Err` would make every refusal elsewhere in this file vacuous.
 #[test]
-fn a_gather_occurrence_resolves_no_lowering_at_this_base() {
+fn a_gather_occurrence_resolves_a_governed_lowering_and_refines() {
+    use tiler_ir::index::TensorAccessView;
+
     let gather = gather_program_over([TRANSPLANT_SOURCE_EXTENT, 2], [2], 0);
     let mut request = CompilationRequest::governed(&gather);
     request.target_profiles = vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
@@ -6663,21 +6765,58 @@ fn a_gather_occurrence_resolves_no_lowering_at_this_base() {
     let target = planned
         .for_target(0)
         .expect("the U32-capable profile admits the fixture");
-    let error = crate::lowering::resolve_lowering(&gather, &target)
-        .expect_err("no installed capability lowers a gather");
-    assert_eq!(error.reason(), "missing-capability");
-
-    // The negative control: the same call over a fixture whose occurrences the
-    // governed registry does carry resolves, so the refusal above is a fact
-    // about gathers and not about this harness.
-    let elementwise = program();
-    let planned = verify_planned_request(CompilationRequest::governed(&elementwise))
-        .expect("the elementwise fixture admits a planned request");
-    let elementwise_target = planned
-        .for_target(0)
-        .expect("the governed profile admits the elementwise fixture");
-    assert!(
-        crate::lowering::resolve_lowering(&elementwise, &elementwise_target).is_ok(),
-        "resolve_lowering must be able to answer Ok, or its Err proves nothing",
+    let lowering = crate::lowering::resolve_lowering(&gather, &target)
+        .expect("the governed gather capability lowers a recognized gather");
+    let [occurrence] = lowering.occurrences() else {
+        panic!("the fixture declares one gather occurrence");
+    };
+    let crate::lowering::OccurrenceEvidence::Refined(refinement) = occurrence.evidence();
+    let region = refinement
+        .single_region()
+        .expect("a gather is realized by one region, not a chain");
+    let proof = region
+        .accesses()
+        .find_map(|access| match access.view() {
+            TensorAccessView::GatherRead(gather) => gather.bounds_resolution().statically_proved(),
+            TensorAccessView::Direct(_) => None,
+        })
+        .expect("the realized region's gather access discharges its obligation statically");
+    assert_eq!(
+        proof.kind(),
+        tiler_ir::index::GatherIndexBoundsProofKind::U32RangeContainedBySourceExtent,
+        "the fixture must rest on the inhabited argument, not on vacuity",
     );
+    assert_eq!(
+        proof.region().as_bytes(),
+        region.canonical_identity().as_bytes(),
+        "the proof must bind the region this occurrence's lowering realized",
+    );
+
+    // The negative control, and it perturbs the installed authority rather than
+    // the assertion: `install_governed_index_access` composes the shipped rows
+    // minus the substituted family, which is the affordance an external
+    // provider replaces one family through.
+    let scalars = crate::governed::governed_scalars().expect("the governed scalars compose");
+    let mut builder = crate::capability::LoweringCapabilityRegistryBuilder::new(
+        scalars.semantic_authority().clone(),
+        scalars.clone(),
+    )
+    .expect("the governed scalar registry retains its exact semantic authority");
+    crate::capability::install_governed_index_access(
+        &mut builder,
+        &[tiler_ir::semantic::gather_f32_op()],
+    )
+    .expect("the governed rows install onto a fresh builder");
+    let mut substituted = CompilationRequest::governed(&gather);
+    substituted.target_profiles =
+        vec![TargetProfile::governed_with_gather_index_dispatch_for_test()];
+    substituted.capabilities = CompilerCapabilitySnapshot::new(builder.freeze(), scalars);
+    let planned =
+        verify_planned_request(substituted).expect("the fixture admits a planned request");
+    let target = planned
+        .for_target(0)
+        .expect("the U32-capable profile admits the fixture");
+    let error = crate::lowering::resolve_lowering(&gather, &target)
+        .expect_err("a registry without the gather row cannot lower a gather");
+    assert_eq!(error.reason(), "missing-capability");
 }
