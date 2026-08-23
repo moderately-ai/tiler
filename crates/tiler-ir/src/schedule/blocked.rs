@@ -264,17 +264,61 @@ pub fn prove_blocked_predicated_cover(
     Ok(())
 }
 
-/// Returns whether one participant space is exactly the binding's output block.
+/// Returns the leading batch axes of a cooperative-contraction output block.
+///
+/// A block is *batched* when its trailing two axes carry the participants and
+/// every leading axis has extent one, so one workgroup covers exactly one
+/// coordinate on each leading axis. `Some(0)` is the unbatched block, which is
+/// why a rank-two block reaches the same rule rather than a parallel one.
+///
+/// Returns `None` for a block of rank below two, and for one whose leading
+/// extents are not all one. The second is the load-bearing refusal: a leading
+/// extent above one would make a workgroup span several batch coordinates with
+/// no participant dimension to distinguish them, and the tile's staged operand
+/// rows would then hold elements of two different batches.
+fn blocked_batch_prefix(block: &Shape) -> Option<usize> {
+    let prefix = block.rank().checked_sub(2)?;
+    block.extents()[..prefix]
+        .iter()
+        .all(|extent| extent.get() == 1)
+        .then_some(prefix)
+}
+
+/// Returns whether one participant space covers the binding's output block.
+///
+/// The participants occupy the block's **trailing two axes**, and every leading
+/// axis of the block is a batch axis of extent one. At rank two the prefix is
+/// empty and this is the exact equality it has always been, which is why the
+/// batched rule replaces that one rather than sitting beside it: a rank-two
+/// block is the batched block with no batch axes, and two predicates would be
+/// two places to state one relation.
+///
+/// # Why this stays a bijection onto the block's positions
+///
+/// [`MAX_COOPERATIVE_PARTICIPANT_RANK`](super::MAX_COOPERATIVE_PARTICIPANT_RANK)
+/// is three, so a rank-four block can never have a participant space of its own
+/// rank; carrying the batch axes as participant dimensions is unrepresentable
+/// rather than merely unimplemented. What makes the trailing-suffix rule sound
+/// instead of a weakening is that a leading extent of one admits exactly one
+/// block-local coordinate — zero — so the map from a participant
+/// `(l_0, l_1)` to the block-local position `(0, .., 0, l_0, l_1)` is still
+/// onto every position the block contains and still injective. The participant
+/// count therefore still equals the block's element count, which is the
+/// equality [`prove_blocked_bijection`] and [`prove_blocked_predicated_cover`]
+/// compose against the launch geometry.
 #[must_use]
 pub fn participant_space_matches_block(
     participants: &super::ParticipantSpace,
     block: &Shape,
 ) -> bool {
-    participants.rank() == block.rank()
+    let Some(prefix) = blocked_batch_prefix(block) else {
+        return false;
+    };
+    participants.rank() == 2
         && participants
             .extents()
             .iter()
-            .zip(block.extents())
+            .zip(&block.extents()[prefix..])
             .all(|(participant, extent)| *participant == extent.get())
 }
 
@@ -377,4 +421,97 @@ fn shape_product(shape: &Shape) -> Option<u64> {
         .extents()
         .iter()
         .try_fold(1_u64, |total, extent| total.checked_mul(extent.get()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{blocked_batch_prefix, participant_space_matches_block};
+    use crate::schedule::ParticipantSpace;
+    use crate::shape::Shape;
+
+    fn square(block: u64) -> ParticipantSpace {
+        ParticipantSpace::new(&[block, block]).expect("rank two is representable")
+    }
+
+    /// The unbatched block is the batched block with no batch axes.
+    ///
+    /// The control for every refusal below: without it, "the batched rule
+    /// refuses a malformed block" would be consistent with a rule that refuses
+    /// everything, and the rank-two regression would not be visible here.
+    #[test]
+    fn a_rank_two_block_is_the_empty_batch_prefix() {
+        let block = Shape::from_dims([16, 16]);
+        assert_eq!(blocked_batch_prefix(&block), Some(0));
+        assert!(participant_space_matches_block(&square(16), &block));
+    }
+
+    /// A rank-four block whose batch extents are one carries two batch axes.
+    #[test]
+    fn a_batched_block_names_its_leading_axes_as_batch_axes() {
+        let block = Shape::from_dims([1, 1, 16, 16]);
+        assert_eq!(blocked_batch_prefix(&block), Some(2));
+        assert!(participant_space_matches_block(&square(16), &block));
+    }
+
+    /// A batch axis wider than one workgroup is refused.
+    ///
+    /// **The load-bearing clause.** A leading extent above one would have one
+    /// workgroup span two batch coordinates with no participant dimension
+    /// distinguishing them, so the tile's staged operand rows would hold
+    /// elements of two different batches and every participant would fold the
+    /// wrong contributor set. The rank and the trailing extents are both
+    /// well-formed here, so this refusal is the batch extent's alone.
+    #[test]
+    fn a_batch_axis_wider_than_one_workgroup_is_refused() {
+        let block = Shape::from_dims([2, 1, 16, 16]);
+        assert_eq!(blocked_batch_prefix(&block), None);
+        assert!(!participant_space_matches_block(&square(16), &block));
+    }
+
+    /// The participants must occupy exactly the block's trailing two axes.
+    ///
+    /// **The extents deliberately agree on the compared prefix.** A space whose
+    /// leading extents disagree is refused by the extent comparison whatever the
+    /// rank clause says, so a case like `[1, 16, 16]` against this block cannot
+    /// tell the two refusals apart — it was written that way first, and dropping
+    /// the rank clause left it passing. `[16, 16, 4]` zips equal against the
+    /// block's trailing `[16, 16]` and differs only in carrying a third
+    /// dimension, so it isolates the rank clause: without it the space is
+    /// accepted while contributing `16 * 16 * 4` participants to a block holding
+    /// `256` positions.
+    #[test]
+    fn a_participant_space_of_another_rank_is_refused() {
+        let block = Shape::from_dims([1, 16, 16]);
+        assert_eq!(blocked_batch_prefix(&block), Some(1));
+        let rank_three = ParticipantSpace::new(&[16, 16, 4]).expect("rank three is representable");
+        assert_eq!(
+            rank_three.participants(),
+            Some(1_024),
+            "the perturbation case must differ from the block population, or the rank clause \
+             would be provable from the extents alone",
+        );
+        assert!(
+            !participant_space_matches_block(&rank_three, &block),
+            "the batch axis carries no participant dimension, so a space of the block's own \
+             rank is not the space this tile states",
+        );
+        assert!(participant_space_matches_block(&square(16), &block));
+    }
+
+    /// Trailing extents that disagree with the participants are refused.
+    #[test]
+    fn a_trailing_extent_that_disagrees_is_refused() {
+        let block = Shape::from_dims([1, 1, 16, 8]);
+        assert!(!participant_space_matches_block(&square(16), &block));
+    }
+
+    /// A block of rank below two has no participant axes to carry the tile.
+    #[test]
+    fn a_block_below_rank_two_is_refused() {
+        assert_eq!(blocked_batch_prefix(&Shape::from_dims([16])), None);
+        assert!(!participant_space_matches_block(
+            &square(16),
+            &Shape::from_dims([16])
+        ));
+    }
 }
