@@ -1,7 +1,7 @@
 ---
 id: retire-the-gather-kernel-lowering-classification-after-the-body-landed
 title: Retire the gather kernel-lowering classification after the body landed
-status: in-progress
+status: done
 priority: p1
 dependencies: []
 related: [emit-the-indirect-gather-on-metal, lower-the-indirect-gather-read-through-the-structured-kernel-body, route-a-program-inputs-storage-carrier-from-its-own-resolved-value-type, restate-the-gather-standing-after-the-kernel-body-and-classifier-landed]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, gather, compiler]
-claimed_from: todo
-assignee: worker-retireclass
-lease_expires_at: 1787480886
 ---
 ## User-visible outcome
 
