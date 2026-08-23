@@ -1,7 +1,7 @@
 ---
 id: reach-every-spike-record-from-the-experiment-catalog
 title: Reach every spike record from the experiment catalog
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [state-the-spike-currency-convention-where-readers-look, keep-the-ungated-spikes-compiling-against-the-workspace-api]
@@ -9,9 +9,6 @@ scopes: [contracts/navigation, research/apple-targets, research/extensions, rese
 shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, spikes, navigation]
-claimed_from: todo
-assignee: worker-catalog
-lease_expires_at: 1787455299
 ---
 ## User-visible outcome
 
