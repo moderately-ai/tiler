@@ -1188,28 +1188,76 @@ fn axis_guards(data: &KernelData, schedule: &ScheduledRegion) -> AxisGuards {
     axis
 }
 
+/// What one index value of a blocked contraction body denotes.
+///
+/// The abstract domain of [`axis_guards`], whose whole job is to decide which
+/// compare results are the `row < M` and `col < N` predicates the guarded operand
+/// loads must be dominated by. It reasons about *geometry* rather than
+/// transporting it, so every rank assumption it makes has to be explicit: the
+/// workgroup roles therefore carry the **axis** they name rather than a spelling
+/// like "the M one", and a batch coordinate is separated from the row coordinate
+/// by that index rather than by being unreachable.
+///
+/// **This is the distinction that keeps a batched body honest.** On a batched
+/// binding `wg / W_n` is *not* the row workgroup — it is the linearization over
+/// every axis above N, and one more modulo is needed to reach the row. A domain
+/// that called it "the M one" would classify a batch-contaminated value as `Row`,
+/// accept `row < M` as its guard, and admit a kernel whose loads are guarded on
+/// the wrong coordinate. Since a batch coordinate stays in bounds, nothing else
+/// in the verifier would notice.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum IndexRole {
     Gid,
     Lid,
     Const(u64),
-    WgLinear,
-    WgM,
-    WgN,
+    /// The workgroup index linearized over workgroup axes `0..=axis`.
+    ///
+    /// `WgQuotient(rank - 1)` is the whole linear workgroup index. Dividing one
+    /// by the extent of the axis it names steps to the next axis down, which is
+    /// the decode the emission walks from its fastest-varying end backwards.
+    WgQuotient(usize),
+    /// The decoded workgroup coordinate on `axis`.
+    WgCoord(usize),
     LocalM,
     LocalN,
     Row,
     Col,
 }
 
+/// The blocked launch geometry [`axis_guards`] interprets a body against.
+///
+/// Rank-general: `workgroups` carries one extent per axis and the participants
+/// occupy the trailing two, so a rank-two binding is the batched binding with an
+/// empty prefix rather than a separate case.
 struct BlockedGeom {
+    /// Workgroup extents in axis order. Its length is the binding's rank, which
+    /// [`blocked_geometry`] has already proved equals the block's and the
+    /// output's.
+    workgroups: Vec<u64>,
     block_m: u64,
     block_n: u64,
-    workgroups_m: u64,
-    workgroups_n: u64,
     output_m: u64,
     output_n: u64,
     threads_per_workgroup: u64,
+}
+
+impl BlockedGeom {
+    /// The axis the participants' block rows occupy.
+    ///
+    /// Never underflows: [`blocked_geometry`] refuses a rank below two.
+    fn row_axis(&self) -> usize {
+        self.workgroups.len().saturating_sub(2)
+    }
+
+    /// The axis the participants' block columns occupy.
+    fn column_axis(&self) -> usize {
+        self.workgroups.len().saturating_sub(1)
+    }
+
+    /// The workgroup extent of one axis, or `None` when the axis is out of range.
+    fn workgroup_extent(&self, axis: usize) -> Option<u64> {
+        self.workgroups.get(axis).copied()
+    }
 }
 
 fn blocked_geometry(schedule: &ScheduledRegion) -> Option<BlockedGeom> {
@@ -1217,31 +1265,64 @@ fn blocked_geometry(schedule: &ScheduledRegion) -> Option<BlockedGeom> {
     else {
         return None;
     };
-    if block.rank() != 2 || workgroups.rank() != 2 || schedule.index.iteration_shape.rank() != 2 {
+    let output = &schedule.index.iteration_shape;
+    let rank = output.rank();
+    let row = rank.checked_sub(2)?;
+    if block.rank() != rank || workgroups.rank() != rank {
         return None;
     }
-    let block_m = block.extents()[0].get();
-    let block_n = block.extents()[1].get();
-    let workgroups_m = workgroups.extents()[0].get();
-    let workgroups_n = workgroups.extents()[1].get();
-    let output_m = schedule.index.iteration_shape.extents()[0].get();
-    let output_n = schedule.index.iteration_shape.extents()[1].get();
-    let threads_per_workgroup = block_m.checked_mul(block_n)?;
+    // Every leading block extent is one, which is what makes a workgroup cover
+    // exactly one coordinate on each batch axis. A wider one is a different
+    // geometry — one workgroup spanning several batch coordinates — and yields no
+    // interpretation here rather than being read as if it were this one.
+    if block.extents()[..row]
+        .iter()
+        .any(|extent| extent.get() != 1)
+    {
+        return None;
+    }
+    let block_m = block.extents()[row].get();
+    let block_n = block.extents()[row + 1].get();
+    // The whole block's population, which is the divisor the body uses to recover
+    // the workgroup index. Equal to `block_m * block_n` under the clause above,
+    // and derived from the product rather than from that pair so it stays the
+    // launch's own number.
+    let threads_per_workgroup = block
+        .extents()
+        .iter()
+        .try_fold(1_u64, |total, extent| total.checked_mul(extent.get()))?;
     Some(BlockedGeom {
+        workgroups: workgroups
+            .extents()
+            .iter()
+            .map(|extent| extent.get())
+            .collect(),
         block_m,
         block_n,
-        workgroups_m,
-        workgroups_n,
-        output_m,
-        output_n,
+        output_m: output.extents()[row].get(),
+        output_n: output.extents()[row + 1].get(),
         threads_per_workgroup,
     })
 }
 
-fn normalize_coord(role: IndexRole, geom: &BlockedGeom) -> IndexRole {
+/// Reads the leading axis's quotient as that axis's coordinate.
+///
+/// At axis zero the running quotient is already below the axis's extent, so the
+/// emission drops the redundant modulo — the same redundancy the linearizing
+/// offset forms drop. This is where the interpreter accounts for it, and it is
+/// what makes a rank-two `wg / W_n` the row workgroup coordinate while the same
+/// spelling on a batched binding is the *leading batch* coordinate instead.
+const fn leading_quotient_is_a_coordinate(role: IndexRole) -> IndexRole {
     match role {
-        IndexRole::LocalM if geom.workgroups_m == 1 => IndexRole::Row,
-        IndexRole::LocalN if geom.workgroups_n == 1 => IndexRole::Col,
+        IndexRole::WgQuotient(0) => IndexRole::WgCoord(0),
+        other => other,
+    }
+}
+
+fn normalize_coord(role: IndexRole, geom: &BlockedGeom) -> IndexRole {
+    match leading_quotient_is_a_coordinate(role) {
+        IndexRole::LocalM if geom.workgroup_extent(geom.row_axis()) == Some(1) => IndexRole::Row,
+        IndexRole::LocalN if geom.workgroup_extent(geom.column_axis()) == Some(1) => IndexRole::Col,
         other => other,
     }
 }
@@ -1260,10 +1341,15 @@ fn classify_binary(
             (IndexRole::Gid, IndexRole::Const(divisor))
                 if divisor == geom.threads_per_workgroup =>
             {
-                Some(IndexRole::WgLinear)
+                Some(IndexRole::WgQuotient(geom.column_axis()))
             }
-            (IndexRole::WgLinear, IndexRole::Const(divisor)) if divisor == geom.workgroups_n => {
-                Some(IndexRole::WgM)
+            // One step down the workgroup decode. Dividing out the extent of the
+            // axis this quotient names leaves the linearization over every axis
+            // above it. Refused at axis zero, which has no axis above it.
+            (IndexRole::WgQuotient(axis), IndexRole::Const(divisor))
+                if axis > 0 && geom.workgroup_extent(axis) == Some(divisor) =>
+            {
+                Some(IndexRole::WgQuotient(axis - 1))
             }
             (IndexRole::Lid, IndexRole::Const(divisor)) if divisor == geom.block_n => {
                 Some(IndexRole::LocalM)
@@ -1271,36 +1357,58 @@ fn classify_binary(
             _ => None,
         },
         BinaryOp::IndexModulo => match (left, right) {
-            (IndexRole::WgLinear, IndexRole::Const(modulus)) if modulus == geom.workgroups_n => {
-                Some(IndexRole::WgN)
+            (IndexRole::WgQuotient(axis), IndexRole::Const(modulus))
+                if geom.workgroup_extent(axis) == Some(modulus) =>
+            {
+                Some(IndexRole::WgCoord(axis))
             }
             (IndexRole::Lid, IndexRole::Const(modulus)) if modulus == geom.block_n => {
                 Some(IndexRole::LocalN)
             }
             _ => None,
         },
-        BinaryOp::IndexMultiply => match (left, right) {
-            (IndexRole::WgM, IndexRole::Const(factor))
-            | (IndexRole::Const(factor), IndexRole::WgM)
-                if factor == geom.block_m =>
-            {
-                Some(IndexRole::WgM)
+        // Scaling a workgroup coordinate by its own block extent leaves the role
+        // that coordinate, so the following add can form the global one. Only the
+        // participants' two axes have a scale to apply; a batch axis's block
+        // extent is one and the emission drops the multiply entirely.
+        BinaryOp::IndexMultiply => {
+            let (role, factor) = match (left, right) {
+                (role, IndexRole::Const(factor)) | (IndexRole::Const(factor), role) => {
+                    (leading_quotient_is_a_coordinate(role), factor)
+                }
+                _ => return None,
+            };
+            match role {
+                IndexRole::WgCoord(axis) if axis == geom.row_axis() && factor == geom.block_m => {
+                    Some(IndexRole::WgCoord(axis))
+                }
+                IndexRole::WgCoord(axis)
+                    if axis == geom.column_axis() && factor == geom.block_n =>
+                {
+                    Some(IndexRole::WgCoord(axis))
+                }
+                _ => None,
             }
-            (IndexRole::WgN, IndexRole::Const(factor))
-            | (IndexRole::Const(factor), IndexRole::WgN)
-                if factor == geom.block_n =>
-            {
-                Some(IndexRole::WgN)
-            }
-            _ => None,
-        },
+        }
+        // The global coordinate, and the one place the axis index is load-bearing:
+        // a batch coordinate added to the local row would carry `WgCoord(d)` for
+        // some `d` below the row axis and forms nothing.
         BinaryOp::IndexAdd => {
-            let pair = (left, right);
+            let pair = (
+                leading_quotient_is_a_coordinate(left),
+                leading_quotient_is_a_coordinate(right),
+            );
             match pair {
-                (IndexRole::WgM, IndexRole::LocalM) | (IndexRole::LocalM, IndexRole::WgM) => {
+                (IndexRole::WgCoord(axis), IndexRole::LocalM)
+                | (IndexRole::LocalM, IndexRole::WgCoord(axis))
+                    if axis == geom.row_axis() =>
+                {
                     Some(IndexRole::Row)
                 }
-                (IndexRole::WgN, IndexRole::LocalN) | (IndexRole::LocalN, IndexRole::WgN) => {
+                (IndexRole::WgCoord(axis), IndexRole::LocalN)
+                | (IndexRole::LocalN, IndexRole::WgCoord(axis))
+                    if axis == geom.column_axis() =>
+                {
                     Some(IndexRole::Col)
                 }
                 _ => None,
@@ -1915,4 +2023,284 @@ fn verify_contributor_loop(walk: &Walk, contributors: u64) -> Result<(), KernelD
         return Err(KernelDiagnostic::ReductionContract);
     }
     Ok(())
+}
+
+/// The blocked abstract interpreter's rank discrimination, driven directly.
+///
+/// # Why this is a unit test and not a kernel-level one
+///
+/// [`axis_guards`] decides which compare results are the `row < M` and `col < N`
+/// predicates, and the dangerous failure is **looseness**: an interpreter that
+/// classified a batch-contaminated value as `Row` would accept a body whose
+/// guarded loads are guarded on the wrong coordinate. A loose interpreter
+/// accepts strictly more, so no canonical body exercises the clause that
+/// excludes the batch coordinate — the emission never adds one to the local row,
+/// and a kernel-level test would pass with that clause deleted.
+///
+/// So the clause is driven here against the roles themselves, where the case
+/// *is* reachable. Each assertion below names what it would take to say no.
+#[cfg(test)]
+mod blocked_role_tests {
+    use super::{BlockedGeom, IndexRole, classify_binary};
+    use crate::kernel::model::BinaryOp;
+    use std::collections::BTreeMap;
+
+    /// A rank-four blocked geometry over output `[4, 3, 64, 96]`.
+    ///
+    /// The four workgroup extents are pairwise distinct, so the decode chain
+    /// cannot be followed by coincidence of extents alone.
+    fn rank_four() -> BlockedGeom {
+        BlockedGeom {
+            workgroups: vec![4, 3, 4, 6],
+            block_m: 16,
+            block_n: 16,
+            output_m: 64,
+            output_n: 96,
+            threads_per_workgroup: 256,
+        }
+    }
+
+    /// The rank-two geometry the batched one must reduce to.
+    fn rank_two() -> BlockedGeom {
+        BlockedGeom {
+            workgroups: vec![4, 6],
+            block_m: 16,
+            block_n: 16,
+            output_m: 64,
+            output_n: 96,
+            threads_per_workgroup: 256,
+        }
+    }
+
+    /// Drives one binary operation over a role environment.
+    struct Roles {
+        roles: BTreeMap<u32, IndexRole>,
+        next: u32,
+    }
+
+    impl Roles {
+        fn new() -> Self {
+            let mut roles = BTreeMap::new();
+            roles.insert(0, IndexRole::Gid);
+            roles.insert(1, IndexRole::Lid);
+            Self { roles, next: 2 }
+        }
+
+        /// The value id the global invocation index is bound to.
+        const GID: u32 = 0;
+        /// The value id the local invocation index is bound to.
+        const LID: u32 = 1;
+
+        /// Introduces an index constant, as the emission's `Constant` arm does.
+        fn constant(&mut self, value: u64) -> u32 {
+            let id = self.next;
+            self.next += 1;
+            self.roles.insert(id, IndexRole::Const(value));
+            id
+        }
+
+        /// Applies one operation and records its result's role, if it has one.
+        fn apply(&mut self, op: BinaryOp, lhs: u32, rhs: u32, geom: &BlockedGeom) -> u32 {
+            let id = self.next;
+            self.next += 1;
+            if let Some(role) = classify_binary(op, lhs, rhs, &self.roles, geom) {
+                self.roles.insert(id, role);
+            }
+            id
+        }
+
+        fn role(&self, id: u32) -> Option<IndexRole> {
+            self.roles.get(&id).copied()
+        }
+    }
+
+    /// The whole rank-four decode chain resolves each axis to its own coordinate.
+    ///
+    /// **What it would take to say no**: any step of the chain failing to
+    /// classify, or classifying to a different axis. The chain is exactly the one
+    /// `emit_cooperative_contraction` emits, walked from the fastest-varying end
+    /// backwards, so a change to either side that the other does not follow
+    /// leaves a `None` here.
+    #[test]
+    fn the_rank_four_workgroup_decode_names_every_axis() {
+        let geom = rank_four();
+        let mut roles = Roles::new();
+        let threads = roles.constant(256);
+        let wg = roles.apply(BinaryOp::IndexDivide, Roles::GID, threads, &geom);
+        assert_eq!(roles.role(wg), Some(IndexRole::WgQuotient(3)));
+
+        let columns = roles.constant(6);
+        let wg_n = roles.apply(BinaryOp::IndexModulo, wg, columns, &geom);
+        assert_eq!(roles.role(wg_n), Some(IndexRole::WgCoord(3)), "column");
+
+        let above_n = roles.apply(BinaryOp::IndexDivide, wg, columns, &geom);
+        assert_eq!(
+            roles.role(above_n),
+            Some(IndexRole::WgQuotient(2)),
+            "dividing out N leaves the linearization over axes 0..=2, not the row",
+        );
+
+        let rows = roles.constant(4);
+        let wg_m = roles.apply(BinaryOp::IndexModulo, above_n, rows, &geom);
+        assert_eq!(roles.role(wg_m), Some(IndexRole::WgCoord(2)), "row");
+
+        let above_m = roles.apply(BinaryOp::IndexDivide, above_n, rows, &geom);
+        assert_eq!(roles.role(above_m), Some(IndexRole::WgQuotient(1)));
+
+        let b1_extent = roles.constant(3);
+        let batch_one = roles.apply(BinaryOp::IndexModulo, above_m, b1_extent, &geom);
+        assert_eq!(roles.role(batch_one), Some(IndexRole::WgCoord(1)));
+
+        let batch_zero = roles.apply(BinaryOp::IndexDivide, above_m, b1_extent, &geom);
+        assert_eq!(
+            roles.role(batch_zero),
+            Some(IndexRole::WgQuotient(0)),
+            "the leading axis keeps the bare quotient, which is its coordinate",
+        );
+    }
+
+    /// The row and column guards form from the participants' own axes.
+    ///
+    /// **What it would take to say no**: the scale-then-add chain failing to
+    /// reach `Row` or `Col`. This is the positive control for the refusals below
+    /// — without it, "a batch coordinate cannot form the row" would be consistent
+    /// with an interpreter that forms nothing at all.
+    #[test]
+    fn the_participant_axes_form_the_row_and_column() {
+        let geom = rank_four();
+        let mut roles = Roles::new();
+        let block = roles.constant(16);
+
+        let wg_m = roles.next;
+        roles.next += 1;
+        roles.roles.insert(wg_m, IndexRole::WgCoord(2));
+        let local_m = roles.apply(BinaryOp::IndexDivide, Roles::LID, block, &geom);
+        assert_eq!(roles.role(local_m), Some(IndexRole::LocalM));
+        let scaled = roles.apply(BinaryOp::IndexMultiply, wg_m, block, &geom);
+        assert_eq!(roles.role(scaled), Some(IndexRole::WgCoord(2)));
+        let row = roles.apply(BinaryOp::IndexAdd, scaled, local_m, &geom);
+        assert_eq!(roles.role(row), Some(IndexRole::Row));
+
+        let wg_n = roles.next;
+        roles.next += 1;
+        roles.roles.insert(wg_n, IndexRole::WgCoord(3));
+        let local_n = roles.apply(BinaryOp::IndexModulo, Roles::LID, block, &geom);
+        assert_eq!(roles.role(local_n), Some(IndexRole::LocalN));
+        let scaled = roles.apply(BinaryOp::IndexMultiply, wg_n, block, &geom);
+        let column = roles.apply(BinaryOp::IndexAdd, scaled, local_n, &geom);
+        assert_eq!(roles.role(column), Some(IndexRole::Col));
+    }
+
+    /// **The load-bearing clause.** A batch coordinate cannot form the row.
+    ///
+    /// A body that guarded its left operand load on `batch + local_m < M` would
+    /// be guarding on a coordinate that is not the row, and every address it
+    /// computed would still land inside the operand buffer — so no bounds proof,
+    /// element count, or ownership rule could see it. The only thing that
+    /// refuses it is the axis index this domain carries.
+    ///
+    /// **What it would take to say no**: `classify_binary`'s `IndexAdd` arm
+    /// dropping its `axis == geom.row_axis()` condition. The subject here is a
+    /// well-formed `WgCoord` added to a well-formed `LocalM`, so the refusal is
+    /// the axis's alone — both operands classify, and the positive control above
+    /// shows the same shape reaching `Row` when the axis is right.
+    #[test]
+    fn a_batch_coordinate_cannot_form_the_row_or_the_column() {
+        let geom = rank_four();
+        let block = 16;
+        for batch_axis in [0_usize, 1] {
+            let mut roles = Roles::new();
+            let block_const = roles.constant(block);
+            let batch = roles.next;
+            roles.next += 1;
+            roles.roles.insert(batch, IndexRole::WgCoord(batch_axis));
+            let local_m = roles.apply(BinaryOp::IndexDivide, Roles::LID, block_const, &geom);
+            let local_n = roles.apply(BinaryOp::IndexModulo, Roles::LID, block_const, &geom);
+            assert_eq!(roles.role(local_m), Some(IndexRole::LocalM));
+            assert_eq!(roles.role(local_n), Some(IndexRole::LocalN));
+
+            let as_row = roles.apply(BinaryOp::IndexAdd, batch, local_m, &geom);
+            assert_eq!(
+                roles.role(as_row),
+                None,
+                "batch axis {batch_axis} must not form the row coordinate",
+            );
+            let as_column = roles.apply(BinaryOp::IndexAdd, batch, local_n, &geom);
+            assert_eq!(
+                roles.role(as_column),
+                None,
+                "batch axis {batch_axis} must not form the column coordinate",
+            );
+        }
+    }
+
+    /// The leading quotient of a batched decode is a batch coordinate, not the row.
+    ///
+    /// **This is the rank assumption that fails quietly if it is carried over.**
+    /// At rank two `wg / W_n` *is* the row workgroup coordinate; at rank four the
+    /// same spelling is the leading batch coordinate. An interpreter that read
+    /// the rank-two meaning at rank four would accept `wg / W_n * 16 + local_m`
+    /// as the row and admit a guard on a coordinate mixing every batch.
+    ///
+    /// **What it would take to say no**: `leading_quotient_is_a_coordinate`
+    /// yielding an axis other than zero, or the `IndexAdd` arm ignoring the axis.
+    /// The rank-two half is the control: the identical value and the identical
+    /// operations reach `Row` there, so the refusal at rank four is the *rank's*
+    /// alone rather than the chain failing to classify.
+    #[test]
+    fn the_leading_quotient_is_the_row_only_when_it_is_the_row_axis() {
+        let block = 16;
+        let mut verdicts = Vec::new();
+        for (label, geom) in [("rank two", rank_two()), ("rank four", rank_four())] {
+            let mut roles = Roles::new();
+            let threads = roles.constant(256);
+            let block_const = roles.constant(block);
+            let columns = roles.constant(6);
+            let wg = roles.apply(BinaryOp::IndexDivide, Roles::GID, threads, &geom);
+            let quotient = roles.apply(BinaryOp::IndexDivide, wg, columns, &geom);
+            let local_m = roles.apply(BinaryOp::IndexDivide, Roles::LID, block_const, &geom);
+            let scaled = roles.apply(BinaryOp::IndexMultiply, quotient, block_const, &geom);
+            let candidate = roles.apply(BinaryOp::IndexAdd, scaled, local_m, &geom);
+            verdicts.push((label, roles.role(candidate)));
+        }
+        assert_eq!(
+            verdicts,
+            vec![("rank two", Some(IndexRole::Row)), ("rank four", None),],
+            "the same spelling is the row at rank two and a batch coordinate at rank four",
+        );
+    }
+
+    /// Two axes sharing an extent stay distinct, because the chain names them.
+    ///
+    /// **What it would take to say no**: the decode keying on the extent value
+    /// rather than on the position in the chain. Here the batch axis and the row
+    /// axis both have four workgroups, so an interpreter that matched on `4`
+    /// alone could not tell the two moduli apart — and would classify the batch
+    /// coordinate as the row.
+    #[test]
+    fn axes_sharing_a_workgroup_extent_are_still_distinguished() {
+        let geom = BlockedGeom {
+            workgroups: vec![4, 4, 4, 6],
+            block_m: 16,
+            block_n: 16,
+            output_m: 64,
+            output_n: 96,
+            threads_per_workgroup: 256,
+        };
+        let mut roles = Roles::new();
+        let threads = roles.constant(256);
+        let four = roles.constant(4);
+        let six = roles.constant(6);
+        let wg = roles.apply(BinaryOp::IndexDivide, Roles::GID, threads, &geom);
+        let above_n = roles.apply(BinaryOp::IndexDivide, wg, six, &geom);
+        let wg_m = roles.apply(BinaryOp::IndexModulo, above_n, four, &geom);
+        assert_eq!(roles.role(wg_m), Some(IndexRole::WgCoord(2)), "the row");
+        let above_m = roles.apply(BinaryOp::IndexDivide, above_n, four, &geom);
+        let batch_one = roles.apply(BinaryOp::IndexModulo, above_m, four, &geom);
+        assert_eq!(
+            roles.role(batch_one),
+            Some(IndexRole::WgCoord(1)),
+            "the same modulus one step further along the chain is a different axis",
+        );
+    }
 }

@@ -207,7 +207,7 @@ const REQUIRE_TOOLCHAIN: &str = "TILER_REQUIRE_METAL_TOOLCHAIN";
 /// `every_checked_in_golden_is_compiled_by_this_module` proves this list covers
 /// the whole `goldens/` directory, so a new fixture cannot be added without
 /// being compiled.
-const GOLDENS: [(&str, &str); 13] = [
+const GOLDENS: [(&str, &str); 15] = [
     (
         "pointwise_scale_bias.metal",
         include_str!("../goldens/pointwise_scale_bias.metal"),
@@ -269,6 +269,20 @@ const GOLDENS: [(&str, &str); 13] = [
     (
         "contraction_tiled_cooperative.metal",
         include_str!("../goldens/contraction_tiled_cooperative.metal"),
+    ),
+    // The two fixtures whose blocked binding is *batched*: a rank-four output
+    // whose block carries leading extents of one, so the entry point decodes a
+    // group and a repetition out of the workgroup index on top of the row and
+    // column. Compiling them is what turns "the emitter produces this decode"
+    // into "the Metal compiler accepts the batched chain", which no rank-two
+    // fixture can say.
+    (
+        "contraction_batched_tiled_score.metal",
+        include_str!("../goldens/contraction_batched_tiled_score.metal"),
+    ),
+    (
+        "contraction_batched_tiled_value.metal",
+        include_str!("../goldens/contraction_batched_tiled_value.metal"),
     ),
     // The one fixture whose entry point declares threadgroup storage, reads a
     // local invocation coordinate, and carries a barrier. Compiling it is what

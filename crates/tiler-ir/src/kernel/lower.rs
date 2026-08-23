@@ -63,14 +63,25 @@ struct OffsetTerm {
 
 /// Which coordinate of a blocked cooperative contraction one operand axis reads.
 ///
-/// The three coordinates a blocked body already holds as separate values: the
-/// participant's output row, its output column, and the contracted index its
-/// staged tile load names. Naming the coordinate rather than a position in a
-/// linear space is the whole point of this form — it is what lets the address be
-/// a sum of `stride * coordinate` with no decode, where [`OffsetTerm`] would
-/// need a divide and a modulo to recover coordinates this body never linearized.
+/// The coordinates a blocked body already holds as separate values: the
+/// participant's output row, its output column, the contracted index its staged
+/// tile load names, and — on a batched block — one coordinate per leading output
+/// axis. Naming the coordinate rather than a position in a linear space is the
+/// whole point of this form — it is what lets the address be a sum of
+/// `stride * coordinate` with no decode, where [`OffsetTerm`] would need a divide
+/// and a modulo to recover coordinates this body never linearized.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum BlockedCoordinate {
+    /// The output coordinate one leading batch axis names.
+    ///
+    /// Carries the axis's position in the *output* shape, which on a batched
+    /// block is also its ordinal among the batch axes: the participants occupy
+    /// the trailing two axes, so every axis before them is a batch axis and the
+    /// two numberings coincide. A workgroup covers exactly one coordinate on each
+    /// such axis — the block's leading extents are all one, which is the relation
+    /// `blocked_batch_prefix` enforces — so this coordinate is the workgroup's
+    /// own position on that axis and needs no participant dimension.
+    Batch(usize),
     /// The output coordinate the participant's block row names.
     Row,
     /// The output coordinate the participant's block column names.
@@ -224,9 +235,33 @@ struct CanonicalPlan<'a> {
 /// Square tiles only: `B_m == B_n == T_k`, which is the measured 16×16
 /// `contract_tiled` composition. Other representable tiles stay
 /// [`KernelDiagnostic::CooperativeLoweringShape`].
+///
+/// # Rank
+///
+/// The *block* takes the output's rank and the participant space stays rank two,
+/// which is the only arrangement available:
+/// [`MAX_COOPERATIVE_PARTICIPANT_RANK`](crate::schedule::MAX_COOPERATIVE_PARTICIPANT_RANK)
+/// is three, so a rank-four participant space is unrepresentable rather than
+/// merely unimplemented. Every axis before the trailing pair is therefore a batch
+/// axis whose block extent is one, and `batch_workgroups` holds the workgroup
+/// count on each — which, because that block extent is one, is also the output
+/// extent on that axis.
+///
+/// A rank-two output is the batched output with no batch axes, so `batch_*` are
+/// empty and every derivation below reduces to the unbatched one it replaces.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CooperativeContractionPlan {
     block: u64,
+    /// Workgroups on each leading batch axis, in output axis order.
+    ///
+    /// One workgroup per batch coordinate, so this is the output's own extent on
+    /// that axis. Empty for a rank-two output.
+    batch_workgroups: Vec<u64>,
+    /// Element stride of each leading batch axis in the row-major output.
+    ///
+    /// Parallel to `batch_workgroups`. The suffix product of every later output
+    /// extent, so the last batch axis carries `output_m * output_n`.
+    batch_output_strides: Vec<u64>,
     workgroups_m: u64,
     workgroups_n: u64,
     output_m: u64,
@@ -522,19 +557,69 @@ fn cooperative_contraction_plan(
     else {
         return Err(shape);
     };
-    if block.rank() != 2
-        || workgroups.rank() != 2
-        || schedule.index.iteration_shape.rank() != 2
+    let output_shape = &schedule.index.iteration_shape;
+    // The participants occupy the output's trailing two axes whatever its rank,
+    // so a rank-two output is the batched output with an empty prefix and reaches
+    // this same derivation. The three ranks are required to agree because the
+    // blocked bijection is stated per axis, and `contracted_tile` stays rank one
+    // because the round loop walks a single contracted coordinate.
+    let Some(prefix) = output_shape.rank().checked_sub(2) else {
+        return Err(shape);
+    };
+    if block.rank() != output_shape.rank()
+        || workgroups.rank() != output_shape.rank()
         || contracted_shape.rank() != 1
         || contracted_tile.rank() != 1
     {
         return Err(shape);
     }
-    let block_m = block.extents()[0].get();
-    let block_n = block.extents()[1].get();
+    // **The load-bearing batch clause.** A leading block extent above one would
+    // have one workgroup span several batch coordinates with no participant
+    // dimension distinguishing them, so the tile's staged operand rows would hold
+    // elements of two different batches. It is the same relation
+    // `blocked_batch_prefix` enforces at the schedule layer, restated here because
+    // this emission derives each batch coordinate *from the workgroup index* and
+    // that derivation is sound only under it.
+    if block.extents()[..prefix]
+        .iter()
+        .any(|extent| extent.get() != 1)
+    {
+        return Err(shape);
+    }
+    let block_m = block.extents()[prefix].get();
+    let block_n = block.extents()[prefix + 1].get();
     let tile_k = contracted_tile.extents()[0].get();
     if block_m == 0 || block_n == 0 || tile_k == 0 || block_m != block_n || block_n != tile_k {
         return Err(shape);
+    }
+    // With a leading block extent of one the per-axis quotient is the output
+    // extent itself, so the two must agree. Checked rather than assumed: this
+    // emission reads the batch coordinate off the *workgroup* index and applies it
+    // to an *output* stride, and nothing else here would notice the two spaces
+    // disagreeing.
+    let batch_workgroups: Vec<u64> = workgroups.extents()[..prefix]
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    let batch_extents: Vec<u64> = output_shape.extents()[..prefix]
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    if batch_workgroups != batch_extents {
+        return Err(shape);
+    }
+    // Suffix products over the *whole* output shape, so the last batch axis
+    // carries `output_m * output_n` and the store's linear position is the
+    // row-major one its `LinearIdentity` write map states.
+    let output_extents: Vec<u64> = output_shape
+        .extents()
+        .iter()
+        .map(|extent| extent.get())
+        .collect();
+    let output_strides = suffix_products(&output_extents);
+    let batch_output_strides = output_strides[..prefix].to_vec();
+    if batch_output_strides.contains(&0) {
+        return Err(KernelDiagnostic::ElementCountOverflow);
     }
     let ([left, right], [produce, consume]) = (tile.staging.as_slice(), tile.phases.as_slice())
     else {
@@ -592,10 +677,12 @@ fn cooperative_contraction_plan(
     }
     Ok(Some(CooperativeContractionPlan {
         block: block_m,
-        workgroups_m: workgroups.extents()[0].get(),
-        workgroups_n: workgroups.extents()[1].get(),
-        output_m: schedule.index.iteration_shape.extents()[0].get(),
-        output_n: schedule.index.iteration_shape.extents()[1].get(),
+        batch_workgroups,
+        batch_output_strides,
+        workgroups_m: workgroups.extents()[prefix].get(),
+        workgroups_n: workgroups.extents()[prefix + 1].get(),
+        output_m: output_extents[prefix],
+        output_n: output_extents[prefix + 1],
         rounds: tile.rounds,
         predicated: matches!(schedule.schedule.tail, TailPolicy::Predicated),
         left_staging: left.id,
@@ -975,9 +1062,10 @@ fn linearize_contraction_operand(
 /// Builds the address terms of one blocked cooperative-contraction operand.
 ///
 /// Each operand axis contributes one `stride * coordinate` term: the coordinate
-/// is whichever of the block's three the declared source names, and the stride is
-/// the operand's own row-major stride for that axis. Nothing is decoded, because
-/// the emitted body holds all three coordinates already.
+/// is whichever of the block's the declared source names, and the stride is the
+/// operand's own row-major stride for that axis. Nothing is decoded, because the
+/// emitted body holds every one of those coordinates already — the row, the
+/// column, the contracted index, and one value per leading batch axis.
 ///
 /// **This is the function that makes `[K, M]` a different kernel from `[M, K]`.**
 /// The two declare the same coordinates in the opposite axis order, so they
@@ -995,9 +1083,9 @@ fn linearize_contraction_operand(
 /// # Errors
 ///
 /// Returns [`KernelDiagnostic::CooperativeLoweringShape`] for a declared layout
-/// this emission has no body for — an operand axis reading an output coordinate
-/// outside the participants' trailing pair, or a contracted coordinate other
-/// than the single one the round loop walks. Both are refused by *layout*, not by
+/// this emission has no body for — an operand axis reading an output position
+/// past the participants' trailing pair, or a contracted coordinate other than
+/// the single one the round loop walks. Both are refused by *layout*, not by
 /// shape: they name a coordinate no value in this body computes. The schedule
 /// layer's `verify_blocked_operand_roles` and `cooperative_contraction_plan`
 /// already exclude them, so this is the fail-closed backstop for a body derived
@@ -1038,15 +1126,23 @@ fn blocked_contraction_terms(
             crate::schedule::ContractionAxisSource::Output { .. } if position == column => {
                 BlockedCoordinate::Column
             }
-            // A batch coordinate outside the participants' pair. No value in this
-            // body names one, so the layout is refused rather than addressed by
-            // whichever coordinate sits nearest it.
+            // A leading batch coordinate. The body decodes one per axis from the
+            // workgroup index, which is sound exactly because the block's leading
+            // extents are one — one workgroup then covers one coordinate on each
+            // batch axis, so the workgroup's position on that axis *is* the output
+            // coordinate the operand reads.
+            crate::schedule::ContractionAxisSource::Output { .. } if position < row => {
+                BlockedCoordinate::Batch(position)
+            }
+            // An output coordinate past the trailing pair, which no output axis
+            // has. No value in this body names one, so the layout is refused
+            // rather than addressed by whichever coordinate sits nearest it.
             //
             // Kept a separate arm from the contracted refusal below, which shares
-            // its diagnostic: the two name different missing values — a batch
-            // coordinate no participant carries, against a second contracted
-            // induction the round loop does not have — and merging them would
-            // leave one comment standing for both.
+            // its diagnostic: the two name different missing values — an output
+            // position outside the shape, against a second contracted induction
+            // the round loop does not have — and merging them would leave one
+            // comment standing for both.
             #[expect(
                 clippy::match_same_arms,
                 reason = "distinct unaddressable coordinates that share one diagnostic"
@@ -1831,9 +1927,51 @@ fn emit_cooperative_contraction(
         let value = builder.constant(KernelConstant::Index(term.stride))?;
         strides.push((term.stride, value));
     }
+    // The workgroup index, decoded axis by axis from the fastest-varying end
+    // backwards. Each step divides the running quotient by the axis it has just
+    // consumed, so the quotient entering axis `d` is the linearization over axes
+    // `0..=d` and one modulo recovers that axis's coordinate. The *leading* axis
+    // needs no modulo, because its quotient is already below its extent — the
+    // same redundancy the linearizing forms drop.
+    //
+    // At rank two the chain is one step long and emits exactly `wg % W_n` then
+    // `wg / W_n`, in that order, which is the body this generalizes and whose
+    // canonical identity it must not disturb.
     let wg = builder.binary(BinaryOp::IndexDivide, gid, threads)?;
     let wg_n = builder.binary(BinaryOp::IndexModulo, wg, workgroups_n)?;
-    let wg_m = builder.binary(BinaryOp::IndexDivide, wg, workgroups_n)?;
+    let mut quotient = builder.binary(BinaryOp::IndexDivide, wg, workgroups_n)?;
+    // Every workgroup axis above N, in axis order: the batch axes, then M. Their
+    // coordinates come out of `quotient` from the fastest-varying end backwards,
+    // each step consuming one extent, so the value entering axis `d` is the
+    // linearization over axes `0..=d` and one modulo recovers `d`'s coordinate.
+    // The *leading* axis needs no modulo — its quotient is already below its
+    // extent — which is the same redundancy the linearizing forms drop.
+    //
+    // At rank two this list is `[workgroups_m]` alone: the loop takes its
+    // leading-axis arm immediately, emits nothing, and `wg_m` is the bare
+    // `wg / W_n` the unbatched body has always computed. That is what keeps a
+    // rank-two region's emitted body, and so its canonical identity, unchanged.
+    let above_extents: Vec<u64> = contraction
+        .batch_workgroups
+        .iter()
+        .copied()
+        .chain(std::iter::once(contraction.workgroups_m))
+        .collect();
+    // Every slot is assigned by the loop below, which covers `0..len` and ends at
+    // the leading axis; the seed only gives the vector a length.
+    let mut above = vec![quotient; above_extents.len()];
+    for axis in (0..above_extents.len()).rev() {
+        if axis == 0 {
+            above[axis] = quotient;
+            break;
+        }
+        let extent = builder.constant(KernelConstant::Index(above_extents[axis]))?;
+        above[axis] = builder.binary(BinaryOp::IndexModulo, quotient, extent)?;
+        quotient = builder.binary(BinaryOp::IndexDivide, quotient, extent)?;
+    }
+    let (batch, wg_m) = above.split_last().map(|(last, rest)| (rest, *last)).ok_or(
+        KernelLoweringError::Verification(KernelDiagnostic::CooperativeLoweringShape),
+    )?;
     let local_n = builder.binary(BinaryOp::IndexModulo, lid, block)?;
     let local_m = builder.binary(BinaryOp::IndexDivide, lid, block)?;
     let row_base = builder.binary(BinaryOp::IndexMultiply, wg_m, block)?;
@@ -1844,53 +1982,54 @@ fn emit_cooperative_contraction(
     let column_active = builder.compare(CompareOp::IndexLessThan, col, output_n)?;
     let inactive = builder.constant(KernelConstant::F32Bits(0.0_f32.to_bits()))?;
 
-    let emit_tile = |builder: &mut KernelBuilder,
-                     k0: KernelValueId|
-     -> Result<(), KernelBuildError> {
-        // Participant `(m, n)` fetches the left tile's column `n` and the
-        // right tile's column `m`. That is the tile's staging relation rather
-        // than either operand's layout, so it stays stated here while the
-        // address the coordinate feeds comes from the declared map.
-        let left_k = builder.binary(BinaryOp::IndexAdd, k0, local_n)?;
-        let right_k = builder.binary(BinaryOp::IndexAdd, k0, local_m)?;
-        // Both operands' terms are scaled before either is summed. The two
-        // addresses are independent, so the interleaving is free — and fixing
-        // it this way is what keeps a region whose operands are already
-        // `[M, K]` and `[N, K]` emitting the byte-identical body, and so the
-        // identical canonical identity, that it did before.
-        let left_scaled = scale_blocked_terms(builder, left_terms, &strides, row, col, left_k)?;
-        let right_scaled = scale_blocked_terms(builder, right_terms, &strides, row, col, right_k)?;
-        let left_off = sum_blocked_terms(builder, &left_scaled)?;
-        let right_off = sum_blocked_terms(builder, &right_scaled)?;
-        let left_val = if contraction.predicated {
-            builder.guarded_load(row_active, left_buffer, left_off, left.bounds, inactive)?
-        } else {
-            builder.load(left_buffer, left_off, left.bounds)?
+    let emit_tile =
+        |builder: &mut KernelBuilder, k0: KernelValueId| -> Result<(), KernelBuildError> {
+            // Participant `(m, n)` fetches the left tile's column `n` and the
+            // right tile's column `m`. That is the tile's staging relation rather
+            // than either operand's layout, so it stays stated here while the
+            // address the coordinate feeds comes from the declared map.
+            let left_k = builder.binary(BinaryOp::IndexAdd, k0, local_n)?;
+            let right_k = builder.binary(BinaryOp::IndexAdd, k0, local_m)?;
+            // Both operands' terms are scaled before either is summed. The two
+            // addresses are independent, so the interleaving is free — and fixing
+            // it this way is what keeps a region whose operands are already
+            // `[M, K]` and `[N, K]` emitting the byte-identical body, and so the
+            // identical canonical identity, that it did before.
+            let left_scaled =
+                scale_blocked_terms(builder, left_terms, &strides, batch, row, col, left_k)?;
+            let right_scaled =
+                scale_blocked_terms(builder, right_terms, &strides, batch, row, col, right_k)?;
+            let left_off = sum_blocked_terms(builder, &left_scaled)?;
+            let right_off = sum_blocked_terms(builder, &right_scaled)?;
+            let left_val = if contraction.predicated {
+                builder.guarded_load(row_active, left_buffer, left_off, left.bounds, inactive)?
+            } else {
+                builder.load(left_buffer, left_off, left.bounds)?
+            };
+            let right_val = if contraction.predicated {
+                builder.guarded_load(
+                    column_active,
+                    right_buffer,
+                    right_off,
+                    right.bounds,
+                    inactive,
+                )?
+            } else {
+                builder.load(right_buffer, right_off, right.bounds)?
+            };
+            let left_slot = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
+            let left_slot = builder.binary(BinaryOp::IndexAdd, left_slot, local_n)?;
+            let right_slot = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
+            let right_slot = builder.binary(BinaryOp::IndexAdd, right_slot, local_m)?;
+            builder.staged_store(left_staging, left_slot, left_val, contraction.produce_phase)?;
+            builder.staged_store(
+                right_staging,
+                right_slot,
+                right_val,
+                contraction.produce_phase,
+            )?;
+            Ok(())
         };
-        let right_val = if contraction.predicated {
-            builder.guarded_load(
-                column_active,
-                right_buffer,
-                right_off,
-                right.bounds,
-                inactive,
-            )?
-        } else {
-            builder.load(right_buffer, right_off, right.bounds)?
-        };
-        let left_slot = builder.binary(BinaryOp::IndexMultiply, local_m, block)?;
-        let left_slot = builder.binary(BinaryOp::IndexAdd, left_slot, local_n)?;
-        let right_slot = builder.binary(BinaryOp::IndexMultiply, local_n, block)?;
-        let right_slot = builder.binary(BinaryOp::IndexAdd, right_slot, local_m)?;
-        builder.staged_store(left_staging, left_slot, left_val, contraction.produce_phase)?;
-        builder.staged_store(
-            right_staging,
-            right_slot,
-            right_val,
-            contraction.produce_phase,
-        )?;
-        Ok(())
-    };
 
     // One tile's contributors, folded into the *carried* accumulator rather than
     // into a subtotal of their own. `carried` is `None` on the first round and
@@ -2002,11 +2141,27 @@ fn emit_cooperative_contraction(
             seed
         };
 
+    // The owning store's linear position in the row-major output. `row * N + col`
+    // is the trailing pair's contribution and is emitted first, so a rank-two
+    // region's body is exactly the two operations it always was; each batch axis
+    // then adds its own `coordinate * stride`. The write map is `LinearIdentity`,
+    // so this sum *is* the position that map names.
+    let emit_output_offset =
+        |builder: &mut KernelBuilder| -> Result<KernelValueId, KernelBuildError> {
+            let mut out = builder.binary(BinaryOp::IndexMultiply, row, output_n)?;
+            out = builder.binary(BinaryOp::IndexAdd, out, col)?;
+            for (coordinate, stride) in batch.iter().zip(&contraction.batch_output_strides) {
+                let stride = builder.constant(KernelConstant::Index(*stride))?;
+                let scaled = builder.binary(BinaryOp::IndexMultiply, *coordinate, stride)?;
+                out = builder.binary(BinaryOp::IndexAdd, out, scaled)?;
+            }
+            Ok(out)
+        };
+
     if contraction.predicated {
         builder.predicated(row_active, |builder| {
             builder.predicated(column_active, |builder| {
-                let out = builder.binary(BinaryOp::IndexMultiply, row, output_n)?;
-                let out = builder.binary(BinaryOp::IndexAdd, out, col)?;
+                let out = emit_output_offset(builder)?;
                 builder.store(write_buffer, out, total, plan.write_bounds, plan.ownership)
             })
         })?;
@@ -2014,8 +2169,7 @@ fn emit_cooperative_contraction(
         let extent = builder.constant(KernelConstant::Index(plan.work_items))?;
         let active = builder.compare(CompareOp::IndexLessThan, gid, extent)?;
         builder.predicated(active, |builder| {
-            let out = builder.binary(BinaryOp::IndexMultiply, row, output_n)?;
-            let out = builder.binary(BinaryOp::IndexAdd, out, col)?;
+            let out = emit_output_offset(builder)?;
             builder.store(write_buffer, out, total, plan.write_bounds, plan.ownership)
         })?;
     }
@@ -2038,6 +2192,7 @@ fn scale_blocked_terms(
     builder: &mut KernelBuilder,
     terms: &[BlockedTerm],
     strides: &[(u64, KernelValueId)],
+    batch: &[KernelValueId],
     row: KernelValueId,
     column: KernelValueId,
     contracted: KernelValueId,
@@ -2045,6 +2200,14 @@ fn scale_blocked_terms(
     let mut scaled = Vec::with_capacity(terms.len());
     for term in terms {
         let coordinate = match term.coordinate {
+            // A term naming a batch axis the decode did not produce is an
+            // invalid handle rather than a silently dropped coordinate: dropping
+            // it would address batch zero's element for every batch.
+            BlockedCoordinate::Batch(axis) => {
+                *batch.get(axis).ok_or(KernelBuildError::InvalidHandle {
+                    entity: super::error::KernelEntityKind::Value,
+                })?
+            }
             BlockedCoordinate::Row => row,
             BlockedCoordinate::Column => column,
             BlockedCoordinate::Contracted => contracted,
@@ -3223,20 +3386,85 @@ mod tests {
         );
     }
 
-    /// A batch coordinate is refused: no value in the blocked body names one.
+    /// Each leading batch axis becomes its own coordinate, at its own stride.
     ///
-    /// The refusal names the *layout* — an axis reading an output coordinate
-    /// outside the participants' trailing pair — rather than the operand's shape,
-    /// which is why a rank-four output whose operand read only the trailing pair
-    /// would not reach it.
+    /// The batch axes are numbered by their *output* position, so an operand
+    /// reading two of them yields `Batch(0)` and `Batch(1)` rather than two terms
+    /// a later lookup could not tell apart. The four extents are pairwise
+    /// distinct and so are the four strides, so a term that took the wrong axis's
+    /// stride cannot compare equal to the right one by coincidence.
+    ///
+    /// This subject was `an_output_coordinate_outside_the_participant_pair_is_refused`
+    /// before the batched block was lowered, and it asserted exactly the refusal
+    /// this now replaces — the population it named has moved from unaddressable
+    /// to addressed, so the assertion had to move with it rather than be relaxed.
     #[test]
-    fn an_output_coordinate_outside_the_participant_pair_is_refused() {
+    fn each_leading_batch_axis_becomes_its_own_coordinate() {
+        let terms = blocked_contraction_terms(
+            &Shape::from_dims([8, 2, 32, 16]),
+            &Shape::from_dims([8, 2, 32, 48]),
+            &[
+                Output { position: 0 },
+                Output { position: 1 },
+                Output { position: 2 },
+                Contracted { position: 0 },
+            ],
+        )
+        .expect("a batched operand layout is expressible");
+        assert_eq!(
+            terms,
+            vec![
+                term(BlockedCoordinate::Batch(0), 2 * 32 * 16),
+                term(BlockedCoordinate::Batch(1), 32 * 16),
+                term(BlockedCoordinate::Row, 16),
+                term(BlockedCoordinate::Contracted, 1),
+            ]
+        );
+    }
+
+    /// An operand may read some batch axes and not others.
+    ///
+    /// The unread axis contributes no term at all, which is what makes the read
+    /// invariant in it — the broadcast a shared key or value tensor needs. The
+    /// axis that *is* read keeps its own output position, so the term names
+    /// `Batch(0)` even though it is the operand's only batch term.
+    #[test]
+    fn an_unread_batch_axis_contributes_no_term() {
+        let terms = blocked_contraction_terms(
+            &Shape::from_dims([8, 32, 16]),
+            &Shape::from_dims([8, 2, 32, 48]),
+            &[
+                Output { position: 0 },
+                Output { position: 2 },
+                Contracted { position: 0 },
+            ],
+        )
+        .expect("an operand reading one batch axis is expressible");
+        assert_eq!(
+            terms,
+            vec![
+                term(BlockedCoordinate::Batch(0), 32 * 16),
+                term(BlockedCoordinate::Row, 16),
+                term(BlockedCoordinate::Contracted, 1),
+            ]
+        );
+    }
+
+    /// An output position past the trailing pair names no axis and is refused.
+    ///
+    /// **This is what still fails, and the case is reachable.** The arms above it
+    /// take `position < row`, `position == row`, and `position == column`; a
+    /// rank-four output's column is position three, so position four falls
+    /// through to the refusal. The operand shape is well formed and its source
+    /// count matches, so this refusal is the position's alone.
+    #[test]
+    fn an_output_position_past_the_trailing_pair_is_refused() {
         assert_eq!(
             blocked_contraction_terms(
                 &Shape::from_dims([8, 32, 16]),
                 &Shape::from_dims([8, 2, 32, 48]),
                 &[
-                    Output { position: 0 },
+                    Output { position: 4 },
                     Output { position: 2 },
                     Contracted { position: 0 },
                 ],
