@@ -10,8 +10,8 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [correctness, gather, identity, fail-closed]
 claimed_from: todo
-assignee: worker-occupancy
-lease_expires_at: 1787445714
+assignee: worker-occupancy2
+lease_expires_at: 1787449582
 ---
 ## User-visible outcome
 

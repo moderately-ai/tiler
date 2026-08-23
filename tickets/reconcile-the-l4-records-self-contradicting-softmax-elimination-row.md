@@ -10,7 +10,7 @@ shared_scopes: [project/tickets]
 paths: []
 tags: [documentation, doc-drift, scheduling]
 claimed_from: todo
-assignee: worker-l4row
-lease_expires_at: 1787445714
+assignee: worker-l4row2
+lease_expires_at: 1787449582
 ---
 X
