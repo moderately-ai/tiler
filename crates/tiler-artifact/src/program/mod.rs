@@ -738,13 +738,20 @@ pub use tiler_ir::numerics::{
 // accessor list without re-deriving one.
 //
 // Corrected 2026-08-08. That sentence read "already returned four of them" from
-// `002b1d63`, the commit that wrote it, and was wrong there too: at that commit
-// `DecodedNumerical` carried the same ten accessors it carries now, returning
-// those three re-exported types plus `&str` and `u32`, which are not among
-// them. No reading of it yields four. The retired wording is quoted so the
-// correction is legible, which also keeps it greppable — a later hit on
-// "returned four of them" finds this note, and proves the string is present,
-// not that the claim stands.
+// `002b1d63`, the commit that wrote it, and was wrong there too: at that
+// commit `DecodedNumerical` carried the same ten accessors it carried when
+// this note was written, returning those three re-exported types plus `&str`
+// and `u32`, which are not among them. No reading of it yields four. The
+// retired wording is quoted so the correction is legible, which also keeps it
+// greppable — a later hit on "returned four of them" finds this note, and
+// proves the string is present, not that the claim stands.
+//
+// `DecodedNumerical` gained two more accessors under
+// `expose-the-two-missing-decoded-numerical-dimensions`:
+// `reciprocal_transform` and `approximate_intrinsics`, the latter returning
+// `ApproximationEnvelope` — a fourth of these re-exported types, not only the
+// three named above. Both dates in this block describe the accessor set as it
+// stood on their own day, not as it stands after that ticket landed.
 pub use tiler_ir::schedule::{
     ApproximationEnvelope, ArithmeticType, ExceptionalValueAssumption, FlushedZeroSign,
     MaterializationRounding, NumericalPermission, SubnormalMode, ValueDomainProvenance,

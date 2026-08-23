@@ -91,7 +91,8 @@ use std::fmt;
 use tiler_ir::kernel::{AddressSpace, BufferAccess, KernelType};
 use tiler_ir::program::abi::PreparedEntryTargetRequirement;
 use tiler_ir::schedule::{
-    ExceptionalValueAssumption, NumericalPermission, ResourceRequirements, SubnormalMode,
+    ApproximationEnvelope, ExceptionalValueAssumption, NumericalPermission, ResourceRequirements,
+    SubnormalMode,
 };
 use tiler_ir::semantic::{InputKey, OutputKey};
 use tiler_ir::shape::{Shape, SourcedExtent};
@@ -972,7 +973,28 @@ impl<'a> DecodedEntry<'a> {
 /// reading build and cannot represent a key read from bytes;
 /// `own-the-numerical-realization-profile-key` records the durable fix.
 ///
+/// # Twelve accessors, ten behaviour dimensions
+///
+/// [`NumericalDimension`] names eleven governed dimensions
+/// (`tiler_ir::numerics::DIMENSION_COUNT`), but [`NumericalRealization`] —
+/// and therefore this per-entry record, which is projected from it — states
+/// only ten of them. There is deliberately no `materialization_rounding`
+/// accessor here: one kernel's own realization has nothing to say about
+/// [`MaterializationRounding`](tiler_ir::schedule::MaterializationRounding),
+/// which is a fact about an observable materialization *boundary* and not
+/// about the arithmetic inside one entry, so [`overlapping_behaviour`]
+/// resolves that dimension to `None` for exactly this record. Whether and how
+/// a program-wide, non-arithmetic-region answer to it should reach a decoded
+/// artifact is open and unresolved — tracked by
+/// `admit-an-explicit-non-arithmetic-region-and-delivery-state` — so this view
+/// exposes what the entry record states and nothing it does not yet state.
+/// The other ten dimensions are total here, matching [`EntryRealization`]'s
+/// own ten fields.
+///
 /// [`NumericalRealization`]: tiler_ir::schedule::NumericalRealization
+/// [`NumericalDimension`]: tiler_ir::numerics::NumericalDimension
+/// [`overlapping_behaviour`]: super::super::realization::overlapping_behaviour
+/// [`EntryRealization`]: super::super::realization::EntryRealization
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DecodedNumerical<'a>(&'a NumericalFacts);
 
@@ -1023,6 +1045,19 @@ impl<'a> DecodedNumerical<'a> {
     #[must_use]
     pub const fn signed_zero(self) -> NumericalPermission {
         self.0.signed_zero
+    }
+
+    /// Returns whether replacing a division by a reciprocal multiplication is
+    /// permitted.
+    #[must_use]
+    pub const fn reciprocal_transform(self) -> NumericalPermission {
+        self.0.reciprocal_transform
+    }
+
+    /// Returns the maximum accuracy envelope approximate intrinsics may consume.
+    #[must_use]
+    pub const fn approximate_intrinsics(self) -> ApproximationEnvelope {
+        self.0.approximate_intrinsics
     }
 
     /// Returns whether NaNs may be assumed absent, and on what evidence.
@@ -1443,6 +1478,128 @@ impl From<ArtifactCodecError> for ArtifactCodecFailure {
                 }
                 _ => Self::Unsupported { detail },
             },
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::program::{EntryRealization, overlapping_behaviour};
+    use tiler_ir::numerics::{CANONICAL_DIMENSIONS, DimensionBehaviour, NumericalDimension};
+    use tiler_ir::schedule::{FlushedZeroSign, NumericalRealization, ValueDomainProvenance};
+
+    /// A realization giving each dimension a value that differs from its
+    /// immediate neighbour in [`CANONICAL_DIMENSIONS`] order, so an accessor
+    /// that silently read the adjacent field instead of its own is caught by
+    /// a mismatch rather than by two equal values agreeing for the wrong
+    /// reason.
+    fn distinguishable_realization() -> NumericalRealization {
+        NumericalRealization::new(
+            "tiler.test.distinguishable",
+            0x7fc0_0000,
+            SubnormalMode::Preserve,
+            SubnormalMode::FlushToZero {
+                zero_sign: FlushedZeroSign::PreservesSign,
+            },
+            NumericalPermission::Permitted,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Permitted,
+            NumericalPermission::Forbidden,
+            NumericalPermission::Permitted,
+            ApproximationEnvelope::BackendElementary,
+            ExceptionalValueAssumption::MakeNoAssumption,
+            ExceptionalValueAssumption::AssumeAbsent {
+                provenance: ValueDomainProvenance::CompilerProven,
+            },
+        )
+    }
+
+    /// Every dimension [`overlapping_behaviour`] resolves for a per-entry
+    /// realization is readable from a [`DecodedNumerical`], and the one
+    /// dimension it does not resolve —
+    /// [`NumericalDimension::MaterializationRounding`] — has no accessor here
+    /// either, which [`DecodedNumerical`]'s own documentation states.
+    ///
+    /// The population walked comes from [`CANONICAL_DIMENSIONS`]
+    /// (`tiler_ir::numerics::DIMENSION_COUNT`) rather than a hand-written
+    /// list, and the match below is exhaustive with no wildcard arm: a
+    /// twelfth dimension added to [`NumericalDimension`] fails this match at
+    /// compile time rather than leaving this view silently narrower than the
+    /// vocabulary. Confirmed reachable by perturbation rather than assumed:
+    /// swapping the `Permutation` and `SignedZero` arms below turns the
+    /// `assert_eq!` red with a concrete "dimension Permutation disagreed"
+    /// message, proving the comparison is load-bearing rather than vacuous.
+    /// (Not every arm pair demonstrates this: [`NumericalPermission`] has
+    /// only two values, so `distinguishable_realization` can guarantee
+    /// adjacent dimensions differ but cannot make all five permission-typed
+    /// dimensions pairwise distinct at once.)
+    #[test]
+    fn every_overlapping_dimension_is_readable_from_the_decoded_view() {
+        let realization = distinguishable_realization();
+        let entry = EntryRealization::of(realization);
+        // The same field values `NumericalFacts::project` would have written,
+        // assembled directly because that projection is private to
+        // `super::model` and this is the crate-internal record it produces —
+        // not a second authority over what the wire carries.
+        let facts = NumericalFacts {
+            profile_key: realization.profile_key.to_owned(),
+            canonical_arithmetic_nan_bits: realization.canonical_arithmetic_nan_bits,
+            input_subnormals: realization.input_subnormals,
+            result_subnormals: realization.result_subnormals,
+            contraction: realization.contraction,
+            reassociation: realization.reassociation,
+            permutation: realization.permutation,
+            signed_zero: realization.signed_zero,
+            reciprocal_transform: realization.reciprocal_transform,
+            approximate_intrinsics: realization.approximate_intrinsics,
+            nan_assumptions: realization.nan_assumptions,
+            infinity_assumptions: realization.infinity_assumptions,
+        };
+        let numerical = DecodedNumerical(&facts);
+
+        for dimension in CANONICAL_DIMENSIONS {
+            let expected = overlapping_behaviour(dimension, entry);
+            let actual = match dimension {
+                NumericalDimension::InputSubnormals => {
+                    Some(DimensionBehaviour::Subnormals(numerical.input_subnormals()))
+                }
+                NumericalDimension::ResultSubnormals => Some(DimensionBehaviour::Subnormals(
+                    numerical.result_subnormals(),
+                )),
+                NumericalDimension::Contraction => {
+                    Some(DimensionBehaviour::Transform(numerical.contraction()))
+                }
+                NumericalDimension::Reassociation => {
+                    Some(DimensionBehaviour::Transform(numerical.reassociation()))
+                }
+                NumericalDimension::Permutation => {
+                    Some(DimensionBehaviour::Transform(numerical.permutation()))
+                }
+                NumericalDimension::SignedZero => {
+                    Some(DimensionBehaviour::Transform(numerical.signed_zero()))
+                }
+                NumericalDimension::ReciprocalTransform => Some(DimensionBehaviour::Transform(
+                    numerical.reciprocal_transform(),
+                )),
+                NumericalDimension::ApproximateIntrinsics => Some(
+                    DimensionBehaviour::Approximation(numerical.approximate_intrinsics()),
+                ),
+                NumericalDimension::NanAssumptions => Some(DimensionBehaviour::ExceptionalValue(
+                    numerical.nan_assumptions(),
+                )),
+                NumericalDimension::InfinityAssumptions => Some(
+                    DimensionBehaviour::ExceptionalValue(numerical.infinity_assumptions()),
+                ),
+                // The one dimension a per-entry realization never carries;
+                // see `DecodedNumerical`'s own documentation for why.
+                NumericalDimension::MaterializationRounding => None,
+            };
+            assert_eq!(
+                actual, expected,
+                "dimension {dimension:?} disagreed between the decoded view and \
+                 `overlapping_behaviour`",
+            );
         }
     }
 }
