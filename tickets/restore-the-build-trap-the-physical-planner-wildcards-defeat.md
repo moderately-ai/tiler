@@ -1,7 +1,7 @@
 ---
 id: restore-the-build-trap-the-physical-planner-wildcards-defeat
 title: Restore the build trap the physical-planner wildcards defeat
-status: in-progress
+status: done
 priority: p3
 dependencies: []
 related: [offer-the-tiled-contraction-alternative-in-physical-planning]
@@ -9,9 +9,6 @@ scopes: [implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [compiler, exhaustiveness, maintainability]
-claimed_from: todo
-assignee: worker-buildtrap
-lease_expires_at: 1787489695
 ---
 ## User-visible outcome
 
@@ -89,3 +86,21 @@ Per-Fact verdict, each re-derived at `92d9a9803721e6c5e29ce4904f5d1549853e0df3` 
 **Residual implicit-arm population, enumerated and deliberately not converted.** Eight refutable `let … else` / `if let` bindings over these enums survive, counted at the branch tip. Three are production code — `physical.rs:4384` (`RegionProgram::Numerical`, else refuse under `request-binding`), and `4666` and `4710` (`ScalarProgram::PointwiseF32`, else delegate to the producer's subject). Five are fixture setup inside the `#[cfg(test)]` module that begins at line 6019: 6630, 6654, 6693, 7032, and 7081. These carry an implicit arm exactly as `matches!` does, but they are refutable bindings rather than wildcards, so the closing condition above — "No wildcard … matches `RegionProgram` or `ScalarProgram`" — does not reach them. Named here so the next reader does not have to rediscover them, and so a decision to convert them is taken rather than assumed. Searched forms: `_ =>`, `_` in a tuple pattern position typed as either enum, bare-identifier bindings in such a position, `matches!` (walked to the balanced close, not line-matched), `if let`, `let … else`, and `is_some_and`.
 
 **No disposition changed.** Every restored arm answers exactly what its wildcard answered; the `None` still reaches `frontier.rs` as `WorkResolutionError::UnknownParameter` and both `false` answers still refuse under `request-binding`.
+
+## Coordinator correction — 2026-08-23: my re-audit was WRONG, and the `## Correction — 2026-08-22` was never stale
+
+**Retract the claim I added above.** My re-audit asserted *"That site no longer exists"* of the `matches!` in `verify_cooperative_contraction_subject_binding`, and retired the 2026-08-22 Correction on that basis. Retired wording preserved. **It was alive the whole time**, at `crates/tiler-compiler/src/physical.rs:5083`, and `worker-buildtrap` caught me.
+
+**How I got it wrong, which is the part worth keeping.** I ran `grep -n "matches!" physical.rs | grep -E "RegionProgram|ScalarProgram"` and got **0**. That grep is line-oriented, and **every one of these `matches!` invocations wraps** — the macro name and the enum name never share a line. A span-aware scan that walks each `matches!` to its balanced closing paren finds **six**, at lines `1317, 4208, 4912, 4934, 4984, 5083`. I reproduced both results before writing this: the line grep still returns 0, the span scan still returns 6.
+
+This is the *exact* hazard AGENTS.md records and that I have briefed on repeatedly this session — a matcher failing on a multi-line construct and **reading as absence**. I committed it while performing a re-audit whose whole purpose was to catch stale claims, and the failure direction was the dangerous one: I retired a true correction. **Had the worker trusted me, six live defeating sites would have survived and this ticket would have closed green over them.**
+
+**What I did get right, and it is narrow:** `verify_cooperative_contraction_subject_binding` *was* rewritten to destructure `ReductionTopology::CooperativeContraction` and `ExecutionBinding::BlockedWorkgroup` through `let … else`. That rewrite simply left the program classification a few lines below untouched. A true observation about one part of a function is not evidence about another part of it.
+
+**The durable lesson for any census over Rust source:** `grep` answers about *lines*, and `matches!`, `let … else`, wrapped `match` scrutinees, and `///` comments are all multi-line. A census whose unit is the line cannot see them, and its silence is indistinguishable from absence. Use a span-aware scan, or state that the count is line-scoped and therefore a floor.
+
+**The expanded scope is accepted.** The lane fixed the three briefed `_ =>` arms in `243c265f` and the six `matches!` plus one tuple-position `_` in `bf779a83`, deliberately separated so I could take the narrower commit. I am taking both: this ticket's Closes-when says *no* wildcard matches either enum, the 2026-08-22 Correction names `matches!` as exactly such a wildcard, and a second lane over the same functions would be pure overhead. Verified at the merge: a span-aware scan of `physical.rs` now finds **0** `matches!` spanning either enum, and `git grep BuildTrapProbe` returns nothing.
+
+**Its perturbation evidence is what a build trap should look like.** With a probe variant added to `RegionProgram`, the base tree errored **only** at `frontier.rs:916` — `physical.rs` was completely silent, which is the defect stated as a measurement. After the fix it errors at four `physical.rs` sites. For `ScalarProgram`, base gave one `physical.rs` site; now eight. It also reproduced the docs' own recorded method — marking `ScalarProgram` `#[non_exhaustive]` — and watched the same eight sites redden.
+
+**Both enum docs were overclaiming before this landed, not after.** `RegionProgram`'s doc says `physical.rs` maps the program totally; that was **false** there (zero errors). The docs described a guarantee the code had stopped providing, which is precisely what this ticket existed to restore.
