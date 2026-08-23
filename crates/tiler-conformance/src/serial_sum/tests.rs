@@ -34,6 +34,7 @@ use super::{
     unpack_f32,
 };
 use crate::applicability::{observe_host_environment, refuse_to_offer_the_declared_profile};
+use crate::measurement::ambient::require_measurement_policy;
 use crate::measurement::require_or_report;
 
 /// The degenerate partition: one contributor each, combined in ascending order.
@@ -874,9 +875,11 @@ fn this_host_is_refused_the_right_to_offer_the_declared_profile() {
         "an observation missing the device predicates must refuse on one of them",
     );
 
-    let Some((observation, refusal)) =
-        require_or_report("host applicability offer", measured_offer())
-    else {
+    let Some((observation, refusal)) = require_or_report(
+        require_measurement_policy(),
+        "host applicability offer",
+        measured_offer(),
+    ) else {
         return;
     };
     eprintln!("host applicability observation: {observation}");
@@ -933,7 +936,11 @@ fn the_direct_path_agrees_with_the_oracle_on_the_measured_row() {
         "reducing the inner axis publishes one element per row",
     );
 
-    let Some(observed) = require_or_report("serial sum direct", measured_direct()) else {
+    let Some(observed) = require_or_report(
+        require_measurement_policy(),
+        "serial sum direct",
+        measured_direct(),
+    ) else {
         return;
     };
     assert_eq!(
@@ -979,6 +986,7 @@ fn every_retained_alternative_computes_the_declared_contributor_set() {
     );
 
     let Some(runs) = require_or_report(
+        require_measurement_policy(),
         "serial sum parallel strategies",
         measured_portfolio(&PARALLEL_OPERANDS, PARALLEL_ROWS, PARALLEL_COLUMNS),
     ) else {
@@ -1085,6 +1093,7 @@ fn every_retained_alternative_rounds_the_way_its_declared_grouping_rounds() {
     );
 
     let Some(runs) = require_or_report(
+        require_measurement_policy(),
         "serial sum grouping-sensitive",
         measured_portfolio(
             &GROUPING_SENSITIVE_OPERANDS,
@@ -1211,6 +1220,7 @@ fn every_retained_alternative_computes_the_declared_contributor_set_at_the_separ
     );
 
     let Some(runs) = require_or_report(
+        require_measurement_policy(),
         "serial sum separating contributor set",
         measured_portfolio(
             &SEPARATING_EXACT_OPERANDS,
@@ -1339,6 +1349,7 @@ fn the_tree_and_the_split_round_differently_at_the_separating_count() {
     );
 
     let Some(runs) = require_or_report(
+        require_measurement_policy(),
         "serial sum tree-against-split",
         measured_portfolio(&SEPARATING_OPERANDS, SEPARATING_ROWS, SEPARATING_COLUMNS),
     ) else {

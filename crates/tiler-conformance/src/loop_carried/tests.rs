@@ -17,6 +17,7 @@ use super::{
     staging_slots,
 };
 use crate::dispatch::Launch;
+use crate::measurement::ambient::require_measurement_policy;
 use crate::measurement::require_or_report;
 
 /// Each operand set covers what the other cannot, and the populations are
@@ -229,7 +230,11 @@ fn the_multi_round_subject_emits_its_declared_launch_and_grouping() {
 
 fn assert_device_matches(label: &str, emitted: &super::EmittedCooperative, bits: &[u32]) {
     let expected = grouped_bits(bits, emitted.grouping);
-    let Some(observed) = require_or_report(label, measured_execution(emitted, bits)) else {
+    let Some(observed) = require_or_report(
+        require_measurement_policy(),
+        label,
+        measured_execution(emitted, bits),
+    ) else {
         return;
     };
     assert_eq!(

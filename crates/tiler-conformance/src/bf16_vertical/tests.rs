@@ -28,6 +28,7 @@ use super::{
     flush_moved_indices, operands, pack, preserved_expectations, realization_of, reference_bits,
     region_under, scheduled_region, semantic_program, unpack,
 };
+use crate::measurement::ambient::require_measurement_policy;
 use crate::measurement::{measured_half, require_or_report};
 
 /// Corpus positions this file names, so a reordering is a failure rather than a
@@ -576,6 +577,7 @@ fn the_bf16_vertical_agrees_with_the_oracle_on_the_measured_row() {
     );
 
     let Some(observed) = require_or_report(
+        require_measurement_policy(),
         "bf16 vertical",
         measured_half(&emitted, OperandStride::Declared),
     ) else {
@@ -653,6 +655,7 @@ fn the_composition_perturbation_is_observed_failing_on_the_measured_row() {
     let emitted = emit_vertical(elements).expect("the bf16 vertical emits");
 
     let Some(observed) = require_or_report(
+        require_measurement_policy(),
         "bf16 width perturbation",
         measured_half(&emitted, OperandStride::NeighbouringF32),
     ) else {
