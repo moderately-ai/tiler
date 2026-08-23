@@ -452,9 +452,13 @@ fn compile_program(
         .clone()
 }
 
-/// Spellings that would mean a simdgroup or fused realization had been formed.
-const SIMDGROUP_REALIZATION_MARKERS: [&str; 6] = [
-    "simdgroup",
+/// Spellings that would mean a simdgroup or fused realization had been *formed*.
+///
+/// Each names emitted code or a realization the plan carries, so none may appear
+/// anywhere on either surface. The bare word `simdgroup` is deliberately not
+/// among them any more, and [`SIMDGROUP_DECLINE_MARKERS`] states what replaced
+/// it.
+const SIMDGROUP_REALIZATION_MARKERS: [&str; 5] = [
     "multiply_accumulate",
     "fma(",
     "metal::fma",
@@ -462,13 +466,41 @@ const SIMDGROUP_REALIZATION_MARKERS: [&str; 6] = [
     "mad(",
 ];
 
-/// `simdgroup_multiply_accumulate` is never a candidate of `@1`.
+/// What the one explain line permitted to spell `simdgroup` must say.
+///
+/// **This is the half of the check that changed, and the reason it is a
+/// narrowing rather than a relaxation.** A banned substring could not tell a
+/// *formed* candidate from a *withheld* one, so it read the strategy's name as
+/// evidence the realization had been enumerated. It has not been:
+/// `record-typed-refusals-for-uncovered-contraction-realizations` made the
+/// governed provider record the matrix realization as a strategy it considered
+/// and declined, and `StrategyDeclineCause` documents a decline as a fact about
+/// the request decided "before any region is constructed" — no body, no
+/// proposal, no cost, and nothing in any identity. Silence there was the weaker
+/// outcome: it left a caller asking why the fold was chosen with an absence.
+///
+/// So the word may occur on the render exactly once, in a decline record, under
+/// the *algebraic* cause — the operation's own maximum, which no contract can
+/// lift. The retained-plan and capability surfaces below still refuse it
+/// outright, because those *are* the formed plan.
+const SIMDGROUP_DECLINE_MARKERS: [&str; 3] = [
+    "frontier.strategy-decline.v1",
+    "strategy:identity=tiler.contraction.simdgroup-matrix",
+    "algebraic-capability-unsupported",
+];
+
+/// `simdgroup_multiply_accumulate` is never a candidate of `@1`, and the one
+/// place its name may appear says so.
 ///
 /// The owning classification is structural: the compiler enumerates only the
 /// appendable `direct` first-product separately-rounded lowering. Inventing a
 /// simdgroup alternative merely to reject it would be a fake executable
-/// candidate. The explain and retained-plan surfaces therefore stay silent
-/// about that construct, which is the honest visibility this check owns.
+/// candidate, so no construct spelling reaches the explain, no retained
+/// alternative is identified by one, and no selected capability is named by one.
+/// What the explain does carry is the typed *decline*, which is the honest
+/// visibility this check now owns: the realization was considered, and the fact
+/// that withheld it is the operation's declared ADR 0015 maximum rather than
+/// anything a caller could widen.
 #[test]
 fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
     let compilation = compile_program(&projection(2, 2, 3), NumericalContract::STRICT_F32);
@@ -484,6 +516,24 @@ fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
              that realization:\n{rendered}"
         );
     }
+    let spelling_simdgroup: Vec<_> = rendered
+        .lines()
+        .filter(|line| line.contains("simdgroup"))
+        .collect();
+    let [decline] = spelling_simdgroup.as_slice() else {
+        panic!(
+            "the matrix realization must be named on exactly one explain line, its decline; \
+             found {}:\n{rendered}",
+            spelling_simdgroup.len()
+        );
+    };
+    for marker in SIMDGROUP_DECLINE_MARKERS {
+        assert!(
+            decline.contains(marker),
+            "the one line naming simdgroup is not a decline under the algebraic cause — \
+             it is missing {marker}:\n{decline}"
+        );
+    }
 
     let alternatives: Vec<_> = compilation.alternatives().collect();
     assert!(
@@ -492,7 +542,10 @@ fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
     );
     for alternative in &alternatives {
         let identity = alternative.stable_id();
-        for marker in SIMDGROUP_REALIZATION_MARKERS {
+        for marker in SIMDGROUP_REALIZATION_MARKERS
+            .into_iter()
+            .chain(["simdgroup"])
+        {
             assert!(
                 !identity.contains(marker),
                 "{marker} must not name a retained alternative: {identity}"
@@ -500,7 +553,10 @@ fn the_direct_contraction_plan_never_enumerates_a_simdgroup_realization() {
         }
         for capability in alternative.selected_capabilities() {
             let subject = capability.subject();
-            for marker in SIMDGROUP_REALIZATION_MARKERS {
+            for marker in SIMDGROUP_REALIZATION_MARKERS
+                .into_iter()
+                .chain(["simdgroup"])
+            {
                 assert!(
                     !subject.operation().namespace().contains(marker)
                         && !subject.operation().name().contains(marker),

@@ -182,6 +182,7 @@ const ADMITTED_NON_DOMAIN_PREFIXES: &[&[u8]] = &[
     b"tiler.algebraic",
     b"tiler.capability.",
     b"tiler.contract.",
+    b"tiler.contraction.",
     b"tiler.cost.",
     b"tiler.feasibility.",
     b"tiler.governed-",
