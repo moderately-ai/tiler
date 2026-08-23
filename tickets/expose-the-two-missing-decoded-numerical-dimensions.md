@@ -1,7 +1,7 @@
 ---
 id: expose-the-two-missing-decoded-numerical-dimensions
 title: Expose the two missing decoded numerical dimensions
-status: todo
+status: in-progress
 priority: p2
 dependencies: []
 related: [admit-an-explicit-non-arithmetic-region-and-delivery-state]
@@ -9,6 +9,9 @@ scopes: [implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, artifacts, numerics, public-boundary]
+claimed_from: todo
+assignee: worker-decoded
+lease_expires_at: 1787471800
 ---
 ## Outcome
 
