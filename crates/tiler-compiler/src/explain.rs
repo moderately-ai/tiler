@@ -6356,4 +6356,321 @@ mod tests {
             Err(ExplainError::InvalidQuantityRelation)
         );
     }
+
+    /// Pushes one detail event through the real writer path, discarding the
+    /// admitted record id.
+    ///
+    /// A plain function rather than a closure over `writer`, so callers keep an
+    /// unencumbered `&mut ExplainWriter` between calls and can still move the
+    /// writer into a terminal finisher afterward.
+    fn push_census_detail(writer: &mut ExplainWriter, key: &str, event: ExplainEvent) {
+        let subject = writer.subject(SubjectKind::Candidate, key).unwrap();
+        writer
+            .push_detail(
+                RuleRef::builtin("test.reachability-census").unwrap(),
+                vec![subject],
+                event,
+                Vec::new(),
+            )
+            .unwrap();
+    }
+
+    /// Fewest [`ExplainDisposition`] variants a legal event may reach.
+    ///
+    /// Set to the type's own current population: every arm
+    /// [`every_disposition_variant_is_reached_by_a_legal_event`] builds is a
+    /// shape [`ExplainWriter::push_detail`], [`ExplainWriter::note_selection`],
+    /// or [`ExplainWriter::finish_failure`] already admits today, so today's
+    /// reachable population is the full type. The comparison below stays `>=`
+    /// rather than `==` precisely so a later variant may be added and left
+    /// reserved — declared but not yet wired to a legal event — without
+    /// failing this floor; only a variant this file once reached and stopped
+    /// reaching fails it.
+    const MINIMUM_REACHED_DISPOSITIONS: usize = 16;
+
+    /// Which [`ExplainDisposition`] variants a compilation can actually reach
+    /// is a counted, typed population that fails when it shrinks, rather than
+    /// the maturity claim in this file's crate-level `#[allow(dead_code)]`
+    /// reason.
+    ///
+    /// One concrete [`ExplainEvent`] (or terminal ledger action) per target
+    /// disposition, each admitted through the same writer path production code
+    /// uses: [`ExplainWriter::push_detail`] for the thirteen non-terminal
+    /// dispositions and `Selected` sealed alongside them by
+    /// [`finish_test_trace`]; [`ExplainWriter::note_selection`] plus
+    /// [`ExplainWriter::finish_success`] for `NotSelectedTradeoff`, which needs
+    /// a second losing alternative in the same ledger a winner is chosen from;
+    /// and [`ExplainWriter::finish_failure`] for `CompilerFailure`, the one
+    /// terminal outcome `finish_success` cannot produce. A disposition counted
+    /// "reached" here is therefore one `push`, `validate`, and `seal` already
+    /// admit, not a shape invented for this census, and no rendered explain
+    /// string is read as a parse target anywhere in it.
+    ///
+    /// **What it would take for this to say *no*, and that the case is
+    /// reachable.** Deleting any one `push_census_detail` call below drops
+    /// `reached.len()` by one and reddens the floor assertion with that exact
+    /// disposition named in `reserved`; verified during review by removing the
+    /// `RejectedIntrinsic` call, which produced `only 15 of 16 ... reserved
+    /// [RejectedIntrinsic]`. Widening [`ExplainDisposition`] by one variant does
+    /// not fail this floor — the comparison is `>=` — but fails to *compile*
+    /// at `disposition_name` and `disposition_tag` above, whose matches carry
+    /// no wildcard arm; verified during review by adding a seventeenth variant,
+    /// which produced `error[E0004]: non-exhaustive patterns` naming both
+    /// functions.
+    #[test]
+    fn every_disposition_variant_is_reached_by_a_legal_event() {
+        // Every named disposition, so the assertion below can name exactly
+        // which ones stayed reserved. `disposition_name` and `disposition_tag`
+        // are the exhaustive matches that force a widened `ExplainDisposition`
+        // to be edited at compile time; this array's own drift from the type is
+        // instead caught by the length assertion immediately below.
+        const ALL: [ExplainDisposition; 16] = [
+            ExplainDisposition::Admitted,
+            ExplainDisposition::DeferredAdmitted,
+            ExplainDisposition::RejectedIntrinsic,
+            ExplainDisposition::RejectedNumerical,
+            ExplainDisposition::RejectedTarget,
+            ExplainDisposition::DeferredUnsupported,
+            ExplainDisposition::BudgetStopped,
+            ExplainDisposition::Reported,
+            ExplainDisposition::Retained,
+            ExplainDisposition::DominancePruned,
+            ExplainDisposition::HigherCost,
+            ExplainDisposition::PreferencePruned,
+            ExplainDisposition::NotSelectedTradeoff,
+            ExplainDisposition::Selected,
+            ExplainDisposition::CompilerFailure,
+            ExplainDisposition::NotApplicable,
+        ];
+        let total = std::mem::variant_count::<ExplainDisposition>();
+        assert_eq!(
+            ALL.len(),
+            total,
+            "this census names {} ExplainDisposition variants but the type now has \
+             {total}; a variant was added to or removed from ExplainDisposition \
+             without updating ALL in this test",
+            ALL.len(),
+        );
+
+        let request = request(2.0);
+
+        // Thirteen non-terminal dispositions, one real `push_detail` each, plus
+        // `Selected` sealed onto the same writer by `finish_test_trace`.
+        let mut writer = ExplainWriter::new(&request).unwrap();
+        push_census_detail(
+            &mut writer,
+            "candidate:admitted",
+            ExplainEvent::Feasibility {
+                predicate: PredicateKey::new("target.reachability-census-admitted").unwrap(),
+                outcome: FeasibilityOutcome::Admitted,
+                required: Quantity::Threads(1),
+                available: Quantity::Threads(2),
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:deferred-admitted",
+            deferred_target_requirement_event(DeferredTargetRequirementFixture {
+                entry: 0,
+                predicate: "threads-per-workgroup",
+                required: Quantity::Threads(1),
+                property: "tiler.target.prepared-entry.max-threads-per-workgroup.v1",
+                relation: TargetPropertyRequirementRelation::ObservedAtLeastRequired,
+                provider_namespace: "tiler",
+                provider_name: "prepared-entry-properties",
+                provider_revision: 1,
+            }),
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:rejected-intrinsic",
+            ExplainEvent::Check {
+                stage: ExplainStage::RegionFormation,
+                assessment: PredicateAssessment::disproved(
+                    "region.reachability-census",
+                    ReasonCode::new("intrinsic-invalid-census").unwrap(),
+                    EvidenceBasis::CheckedInvariant,
+                )
+                .unwrap(),
+                rejection: RejectionClass::IntrinsicInvalid,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:rejected-numerical",
+            ExplainEvent::Check {
+                stage: ExplainStage::NumericalLegality,
+                assessment: PredicateAssessment::disproved(
+                    "numerical.reachability-census",
+                    ReasonCode::new("numerical-illegal-census").unwrap(),
+                    EvidenceBasis::CheckedInvariant,
+                )
+                .unwrap(),
+                rejection: RejectionClass::NumericalIllegal,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:rejected-target",
+            ExplainEvent::Feasibility {
+                predicate: PredicateKey::new("target.reachability-census-rejected").unwrap(),
+                outcome: FeasibilityOutcome::Rejected(
+                    ReasonCode::new("target-rejected-census").unwrap(),
+                ),
+                required: Quantity::Threads(2),
+                available: Quantity::Threads(1),
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:deferred-unsupported",
+            ExplainEvent::DeferredCapability {
+                predicate: PredicateKey::new("target.reachability-census-capability").unwrap(),
+                reason: ReasonCode::new("capability-unsupported-census").unwrap(),
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:budget-stopped",
+            ExplainEvent::BudgetStop {
+                stage: ExplainStage::RegionFormation,
+                resource: ResourceKey::new("region-members-census").unwrap(),
+                limit: 10,
+                actual: 11,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:reported",
+            ExplainEvent::CostAssessment {
+                model: CostModelKey::new("cost.reachability-census-reported").unwrap(),
+                basis: EvidenceBasis::Assumption,
+                terms: vec![
+                    CostTerm::new("compile-time-census", Quantity::Nanoseconds(1)).unwrap(),
+                ],
+                disposition: CostDisposition::Reported,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:retained",
+            ExplainEvent::CostAssessment {
+                model: CostModelKey::new("cost.reachability-census-retained").unwrap(),
+                basis: EvidenceBasis::CheckedInvariant,
+                terms: vec![
+                    CostTerm::new("work-span-census-retained", Quantity::Operations(1)).unwrap(),
+                ],
+                disposition: CostDisposition::Retained,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:dominance-pruned",
+            ExplainEvent::CostAssessment {
+                model: CostModelKey::new("cost.reachability-census-dominated").unwrap(),
+                basis: EvidenceBasis::CheckedInvariant,
+                terms: vec![
+                    CostTerm::new("work-span-census-dominated", Quantity::Operations(1)).unwrap(),
+                ],
+                disposition: CostDisposition::Dominated,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:higher-cost",
+            ExplainEvent::CostAssessment {
+                model: CostModelKey::new("cost.reachability-census-higher").unwrap(),
+                basis: EvidenceBasis::CheckedInvariant,
+                terms: vec![
+                    CostTerm::new("work-span-census-higher", Quantity::Operations(1)).unwrap(),
+                ],
+                disposition: CostDisposition::HigherCost,
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:preference-pruned",
+            ExplainEvent::PreferencePruned {
+                preferred_contract: ReasonCode::new("contract.preferred-census").unwrap(),
+                candidate_contract: ReasonCode::new("contract.pruned-census").unwrap(),
+            },
+        );
+        push_census_detail(
+            &mut writer,
+            "candidate:not-applicable",
+            ExplainEvent::Check {
+                stage: ExplainStage::CandidateEnumeration,
+                assessment: PredicateAssessment::disproved(
+                    "opaque-call.applicable-census",
+                    ReasonCode::new("opaque-call.not-applicable-census").unwrap(),
+                    EvidenceBasis::CheckedInvariant,
+                )
+                .unwrap(),
+                rejection: RejectionClass::NotApplicable,
+            },
+        );
+        let detail_trace = finish_test_trace(writer);
+
+        // `NotSelectedTradeoff` needs a second, losing alternative beside a
+        // selected one in the same terminal ledger, so it gets its own writer.
+        let mut tradeoff_writer = ExplainWriter::new(&request).unwrap();
+        let selected = tradeoff_writer
+            .subject(SubjectKind::Alternative, "alternative:census-selected")
+            .unwrap();
+        tradeoff_writer
+            .note_selection(selected, SelectionOutcome::Selected, None)
+            .unwrap();
+        let tradeoff = tradeoff_writer
+            .subject(SubjectKind::Alternative, "alternative:census-tradeoff")
+            .unwrap();
+        tradeoff_writer
+            .note_selection(tradeoff, SelectionOutcome::NotSelectedTradeoff, None)
+            .unwrap();
+        let selection_trace = tradeoff_writer
+            .finish_success(
+                &["alternative:census-selected", "alternative:census-tradeoff"],
+                "alternative:census-selected",
+            )
+            .unwrap();
+
+        // `CompilerFailure` is the one terminal outcome `finish_success` cannot
+        // produce, so it gets its own writer sealed by `finish_failure`.
+        let failure_writer = ExplainWriter::new(&request).unwrap();
+        let failure_trace = failure_writer
+            .finish_failure(
+                FailureDescriptor::new(
+                    ExplainStage::ProgramVerification,
+                    "compiler.reachability-census",
+                    SubjectKind::ArtifactPlan,
+                    "artifact:census",
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let reached = detail_trace
+            .records()
+            .iter()
+            .chain(selection_trace.records())
+            .chain(failure_trace.records())
+            .map(|record| record.event().disposition())
+            .collect::<BTreeSet<_>>();
+        let reserved = ALL
+            .into_iter()
+            .filter(|disposition| !reached.contains(disposition))
+            .collect::<Vec<_>>();
+        println!(
+            "explain disposition reachability: reached {}/{total} {reached:?}; reserved \
+             {reserved:?}",
+            reached.len(),
+        );
+        assert!(
+            reached.len() >= MINIMUM_REACHED_DISPOSITIONS,
+            "only {} of {total} ExplainDisposition variants were reached by a legal \
+             event, fewer than the floor of {MINIMUM_REACHED_DISPOSITIONS}; reached \
+             {reached:?}, reserved {reserved:?}",
+            reached.len(),
+        );
+    }
 }
