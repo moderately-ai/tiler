@@ -1,7 +1,7 @@
 ---
 id: decide-how-owner-private-conformance-inventories-cross-crate-boundaries
 title: Decide how owner-private conformance inventories cross crate boundaries
-status: awaiting-decision
+status: done
 priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner, define-the-conformance-obligation-and-evidence-requirement-algebra]
 related: [spike-a-red-yellow-first-full-conformance-suite]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets, research/verification, contracts/navigation]
 paths: []
 tags: [research, decision, conformance-progress, architecture]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1787617074
 ---
 # Decide how owner-private conformance inventories cross crate boundaries
 
@@ -104,3 +101,9 @@ Tom must accept or reject the proposed new dependency-bottom protocol crate and 
 The protocol ticket now depends on the accepted P+K+M+T authority decision, and the canonical receipt/freshness ticket must depend on the concrete protocol result. Because the protected-review and threshold-signing designs already depend on that receipt ticket, the `P`, `K`, and transitive `M`/`T` graph will consume one owner-root/closure design rather than advancing a parallel canonical manifest.
 
 No implementation, new crate, accessor, feature, serialization format, or public API was added by this ticket.
+
+### Decision — accepted 2026-08-24
+
+Tom accepted the federated owner-declaration direction and the dependency-bottom, authority-neutral protocol crate in principle, directly in the Codex conversation on 2026-08-24. The accepted boundary keeps subject meaning and obligations with their real owners, keeps receipts as evidence rather than denominator authority, uses owner-local reporters for repository-governed private populations, and permits immutable declaration snapshots only where a configured public extension environment is a real conformance consumer.
+
+This acceptance does **not** approve a crate name, dependency edge, field set, encoding or identity domain, public accessor, provider trait method, reporter command, verifier mechanism, required configuration matrix, owner migration, or Metal-AOT exception. Each remains governed by the bounded follow-up ticket that owns it. Tom's subsequent requirement that conformance describe the comprehensive intended Tiler system rather than only the current source revision also remains a separate target-architecture-catalogue prerequisite; this ticket does not make an implementation manifest authoritative for that future target universe.
