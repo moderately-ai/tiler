@@ -34,7 +34,7 @@ Apply the Pareto-complete decision gate and obtain Tom's decision. A feature nam
 
 ## Closing checks and negative controls
 
-- Produce an exact new-row encoding and run it through the unmodified old reader. Record the first typed refusal and prove it precedes variant parsing and dispatch. Then remove only the proposed fence while retaining the new row; record the distinct result. If that control can misparse or reach routing, the design must take the major step.
+- Pin reader commit `6e713e12`, the exact new artifact bytes supplied to that reader, the reproducing command, and the first typed refusal; prove it precedes variant interpretation and dispatch. Then remove only the proposed fence while retaining the new row and pin the distinct first result. At implementation time repeat both controls against the immediate pre-change parent reader, pin that reader commit and the exact bytes it receives, and record its first failure. If either reader can misparse or reach routing, the design must take the major step.
 - Independently perturb every obligation field, field order, row tag, run tag/count, conditional-program identity and occurrence/binding coordinate; each must move artifact identity or be refused by a named check.
 - Drop the obligation while retaining conditional program coverage, and retain an obligation on a proof-only program, independently. Artifact construction or decoding must reject each contradiction; zero rows is legal only when the packaged program proves it owes zero.
 - Duplicate, reorder, truncate, over-limit and unknown-tag rows separately; pin canonical ordering, complete type-derived censuses, parser budgets and exact diagnostics.
@@ -47,4 +47,4 @@ Runtime validation, receipt creation or consumption, storage ownership, public f
 
 ## Closes when
 
-Tom has accepted one exact artifact obligation and compatibility stance; every field, tag, version, identity/cache effect, parser bound and typed error is assigned; both old-reader fence perturbations have reproduced failure text; and the runtime ticket consumes the exact decoded view rather than inventing one.
+Tom has accepted one exact artifact obligation and compatibility stance; every field, tag, version, identity/cache effect, parser bound and typed error is assigned; both fence perturbations have reproduced pinned first-failure text against the exact `6e713e12` reader/bytes and are specified for repetition against the implementation's immediate pre-change reader/bytes; and the runtime ticket consumes the exact decoded view rather than inventing one.
