@@ -235,20 +235,32 @@ pub struct IndexRefinementSubject {
     pub(super) semantic_authority: SemanticCapabilityAuthority,
     pub(super) realization_law_row: Option<Box<[u8]>>,
     pub(super) identity: Box<[u8]>,
-    environment: SubjectEnvironment,
+    pub(super) environment: SubjectEnvironment,
 }
 
-/// The program environment a subject may carry, compared by identity only.
+/// The optional program environment object behind one total identity subject.
+///
+/// The object stays optional because a literal program needs no environment to
+/// realize its refinement. Identity does not inherit that representation:
+/// [`crate::shape::empty_environment_identity`] establishes that "declares no
+/// symbols" and "carries an explicitly empty environment" are one fact, so
+/// equality and the subject encoder both read [`Self::identity`].
 #[derive(Clone, Debug)]
-struct SubjectEnvironment(Option<std::sync::Arc<crate::shape::ShapeEnv>>);
+pub(super) struct SubjectEnvironment(Option<std::sync::Arc<crate::shape::ShapeEnv>>);
+
+impl SubjectEnvironment {
+    /// Returns the total identity of this fixed subject slot.
+    pub(super) fn identity(&self) -> &crate::shape::ShapeEnvIdentity {
+        match &self.0 {
+            Some(environment) => environment.identity(),
+            None => crate::shape::empty_environment_identity(),
+        }
+    }
+}
 
 impl PartialEq for SubjectEnvironment {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (None, None) => true,
-            (Some(left), Some(right)) => left.identity() == right.identity(),
-            _ => false,
-        }
+        self.identity() == other.identity()
     }
 }
 

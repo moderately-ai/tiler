@@ -204,58 +204,100 @@ pub(super) fn encode_receipt_identity(
 }
 
 pub(super) fn encode_subject_identity(subject: &IndexRefinementSubject) -> Vec<u8> {
-    encode_subject_identity_with(subject, SUBJECT_IDENTITY_TAG, subject.occurrence)
+    let (mut bytes, environment) =
+        encode_subject_identity_with(subject, SUBJECT_IDENTITY_TAG, subject.occurrence);
+    // A refinement subject is a projection of one semantic program, whose
+    // environment is a fixed, total subject slot. It therefore writes one
+    // framed identity without a presence tag: absence of a runtime environment
+    // object and an explicitly empty environment are the same semantic fact.
+    push_slice(&mut bytes, environment.as_bytes());
+    bytes
 }
 
-pub(super) fn encode_subject_identity_with(
+/// Reconstructs the pre-environment subject grammar for supersession tests.
+///
+/// Both `v1` and `v2` ended after the realization-law row. Keeping that exact
+/// grammar reachable makes their collision and the `v2` to `v3` movement
+/// executable evidence without admitting another production encoder.
+#[cfg(test)]
+pub(super) fn encode_superseded_subject_identity_with(
     subject: &IndexRefinementSubject,
     domain: &[u8],
     occurrence: SemanticOccurrence,
 ) -> Vec<u8> {
+    encode_subject_identity_with(subject, domain, occurrence).0
+}
+
+/// Encodes every subject field that `v1` and `v2` carried and returns the total
+/// environment identity `v3` appends.
+///
+/// The exhaustive destructure is the field-completeness guard. Adding a field
+/// to [`IndexRefinementSubject`] is a build error here until its identity policy
+/// is made explicit; `identity` is the sole self-derived field and `occurrence`
+/// is supplied separately only so the `v1` storage-ordinal collision remains
+/// reproducible.
+fn encode_subject_identity_with<'a>(
+    subject: &'a IndexRefinementSubject,
+    domain: &[u8],
+    occurrence: SemanticOccurrence,
+) -> (Vec<u8>, &'a crate::shape::ShapeEnvIdentity) {
+    let IndexRefinementSubject {
+        graph,
+        occurrence: _,
+        operation,
+        inputs,
+        operands,
+        results,
+        signature,
+        attributes,
+        effect,
+        numerical_contract,
+        semantic_authority,
+        realization_law_row,
+        identity: _,
+        environment,
+    } = subject;
     let mut bytes = domain.to_vec();
-    push_slice(&mut bytes, subject.graph.as_bytes());
+    push_slice(&mut bytes, graph.as_bytes());
     bytes.extend_from_slice(&occurrence.get().to_be_bytes());
-    encode_op_key(&mut bytes, &subject.operation);
-    encode_signature(&mut bytes, &subject.signature);
-    push_len(&mut bytes, subject.inputs.len());
-    for input in &subject.inputs {
+    encode_op_key(&mut bytes, operation);
+    encode_signature(&mut bytes, signature);
+    push_len(&mut bytes, inputs.len());
+    for input in inputs {
         push_slice(&mut bytes, input.value_type.canonical_encoding().as_bytes());
         encode_boundary_shape(&mut bytes, input);
     }
-    push_len(&mut bytes, subject.operands.len());
-    for input in &subject.operands {
+    push_len(&mut bytes, operands.len());
+    for input in operands {
         bytes.extend_from_slice(&(*input as u64).to_be_bytes());
     }
-    push_len(&mut bytes, subject.results.len());
-    for result in &subject.results {
+    push_len(&mut bytes, results.len());
+    for result in results {
         push_slice(
             &mut bytes,
             result.value_type.canonical_encoding().as_bytes(),
         );
         encode_boundary_shape(&mut bytes, result);
     }
-    bytes.push(match subject.effect {
+    bytes.push(match effect {
         OperationEffect::Pure => 1,
     });
+    push_slice(&mut bytes, attributes.canonical_encoding().as_bytes());
+    push_slice(&mut bytes, numerical_contract.as_bytes());
     push_slice(
         &mut bytes,
-        subject.attributes.canonical_encoding().as_bytes(),
-    );
-    push_slice(&mut bytes, subject.numerical_contract.as_bytes());
-    push_slice(
-        &mut bytes,
-        subject.semantic_authority.reached_definitions().as_bytes(),
+        semantic_authority.reached_definitions().as_bytes(),
     );
     push_slice(
         &mut bytes,
-        subject.semantic_authority.admission_provenance().as_bytes(),
+        semantic_authority.admission_provenance().as_bytes(),
     );
     push_slice(
         &mut bytes,
-        subject.semantic_authority.registry_snapshot().as_bytes(),
+        semantic_authority.registry_snapshot().as_bytes(),
     );
-    encode_optional_law_row(&mut bytes, subject.realization_law_row.as_deref());
-    bytes
+    encode_optional_law_row(&mut bytes, realization_law_row.as_deref());
+    (bytes, environment.identity())
 }
 
 pub(super) fn encode_authority_identity(

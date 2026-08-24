@@ -2029,7 +2029,7 @@ fn equivalent_authoring_orders_retain_directional_canonical_occurrences() {
 }
 
 #[test]
-fn v2_subject_domain_separates_the_v1_storage_ordinal_collision() {
+fn the_v2_subject_domain_separates_the_v1_storage_ordinal_collision() {
     let build = |reverse: bool| {
         let mut program = SemanticProgramBuilder::try_standard().unwrap();
         let first = F32Constant::apply(&mut program, 1.0_f32.to_bits()).unwrap();
@@ -2072,20 +2072,280 @@ fn v2_subject_domain_separates_the_v1_storage_ordinal_collision() {
     );
 
     let storage_zero = SemanticOccurrence::new(0);
-    let old_forward =
-        encode_subject_identity_with(&forward_subject, LEGACY_SUBJECT_IDENTITY_TAG, storage_zero);
-    let old_reversed =
-        encode_subject_identity_with(&reversed_subject, LEGACY_SUBJECT_IDENTITY_TAG, storage_zero);
+    assert_eq!(SUPERSEDED_SUBJECT_IDENTITY_TAGS.len(), 2);
+    let v1 = SUPERSEDED_SUBJECT_IDENTITY_TAGS[0];
+    let v2 = SUPERSEDED_SUBJECT_IDENTITY_TAGS[1];
+    let old_forward = encode_superseded_subject_identity_with(&forward_subject, v1, storage_zero);
+    let old_reversed = encode_superseded_subject_identity_with(&reversed_subject, v1, storage_zero);
     assert_eq!(
         old_forward, old_reversed,
         "v1 gave storage occurrence zero one byte spelling for two canonical occurrences"
     );
+    let v2_forward =
+        encode_superseded_subject_identity_with(&forward_subject, v2, forward_subject.occurrence());
+    let v2_reversed = encode_superseded_subject_identity_with(
+        &reversed_subject,
+        v2,
+        reversed_subject.occurrence(),
+    );
+    assert_ne!(
+        v2_forward, v2_reversed,
+        "v2 must retain the canonical occurrence that repaired the v1 collision"
+    );
     assert_ne!(forward_subject.identity, reversed_subject.identity);
     assert!(forward_subject.identity.starts_with(SUBJECT_IDENTITY_TAG));
     assert!(
-        !forward_subject
-            .identity
-            .starts_with(LEGACY_SUBJECT_IDENTITY_TAG)
+        SUPERSEDED_SUBJECT_IDENTITY_TAGS
+            .iter()
+            .all(|domain| !forward_subject.identity.starts_with(domain)),
+        "the live subject was encoded under a superseded domain"
+    );
+}
+
+fn environment_identity_probe(
+    axis: u32,
+    relations: &[ExtentRelation],
+) -> Arc<crate::shape::ShapeEnv> {
+    let symbol = ShapeSymbol::new(SymbolScope::new("probe/0").unwrap(), "n").unwrap();
+    let mut draft = ShapeEnvBuilder::new();
+    draft.declare(symbol.clone()).unwrap();
+    draft
+        .bind(
+            &symbol,
+            RootBinding::new(
+                BindingSource::InputDimension {
+                    input: InputKey::new("rows").unwrap(),
+                    axis: crate::shape::Axis::new(axis),
+                },
+                EXTENT_PHASE_CEILING,
+                FactProvenance::RuntimeValidated,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    for relation in relations {
+        draft
+            .require(SemanticInputConstraint::new(
+                relation.clone(),
+                FactProvenance::FrontendRequired,
+            ))
+            .unwrap();
+    }
+    Arc::new(draft.build().unwrap())
+}
+
+fn environment_identity_subject(
+    environment: Arc<crate::shape::ShapeEnv>,
+) -> IndexRefinementSubject {
+    let symbol = ShapeSymbol::new(SymbolScope::new("probe/0").unwrap(), "n").unwrap();
+    let mut program =
+        SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap();
+    let input = program
+        .input_sourced::<F32>(
+            InputKey::new("rows").unwrap(),
+            vec![SourcedExtent::Symbol(symbol)],
+        )
+        .unwrap();
+    let result = F32Multiply::apply(&mut program, input, input).unwrap();
+    program
+        .output(OutputKey::new("output").unwrap(), result)
+        .unwrap();
+    let program = program.build().unwrap();
+    IndexRefinementSubject::derive(
+        &program,
+        program.operations().next().unwrap().id(),
+        test_contract(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn environment_only_changes_separate_subjects_resolutions_and_receipts() {
+    let first = environment_identity_subject(environment_identity_probe(0, &[]));
+    let by_axis = environment_identity_subject(environment_identity_probe(1, &[]));
+    let symbol = ShapeSymbol::new(SymbolScope::new("probe/0").unwrap(), "n").unwrap();
+    let constrained = environment_identity_subject(environment_identity_probe(
+        0,
+        &[ExtentRelation::interval(ExtentTerm::Symbol(symbol), 1, 8).unwrap()],
+    ));
+
+    let scalars = FrozenScalarRegistry::standard().unwrap();
+    let semantic = FrozenSemanticRegistry::standard().unwrap();
+    let laws = FrozenIndexRealizationLawRegistry::from_semantic(semantic.clone(), scalars.clone())
+        .unwrap();
+    let authority = IndexRealizationAuthority::admit(
+        &semantic,
+        &scalars,
+        first.operation().clone(),
+        first.signature().clone(),
+        &[super::super::multiply_f32_scalar_op()],
+    )
+    .unwrap();
+
+    for (label, other) in [("binding axis", &by_axis), ("constraint", &constrained)] {
+        assert_ne!(
+            first.shape_environment().unwrap().identity(),
+            other.shape_environment().unwrap().identity(),
+            "{label}: the environment perturbation did not move its own identity"
+        );
+        assert_eq!(
+            first.graph(),
+            other.graph(),
+            "{label}: the environment must remain separate from graph identity"
+        );
+        assert_ne!(
+            first.identity, other.identity,
+            "{label}: environment-only subjects minted equal identity bytes"
+        );
+        assert_ne!(
+            first, *other,
+            "{label}: subject equality omitted the total environment identity"
+        );
+
+        let first_resolution = laws.resolve(&first).unwrap();
+        let other_resolution = laws.resolve(other).unwrap();
+        assert_ne!(
+            first_resolution.identity, other_resolution.identity,
+            "{label}: environment-only resolutions minted equal identity bytes"
+        );
+        assert_ne!(
+            first_resolution, other_resolution,
+            "{label}: resolution equality omitted the stepped subject identity"
+        );
+
+        let first_region = super::super::IndexRealizationLaw::multiply_f32()
+            .realize(&first, &scalars)
+            .unwrap();
+        let other_region = super::super::IndexRealizationLaw::multiply_f32()
+            .realize(other, &scalars)
+            .unwrap();
+        assert_ne!(
+            first_region.canonical_identity(),
+            other_region.canonical_identity(),
+            "{label}: the realization perturbation stopped reaching the region"
+        );
+        assert!(matches!(
+            first_resolution.verify(&authority, &other_region),
+            Err(IndexRefinementVerificationError::SemanticRealizationMismatch { .. })
+        ));
+        let IndexRefinementVerificationOutcome::Verified(first_receipt) =
+            first_resolution.verify(&authority, &first_region).unwrap()
+        else {
+            panic!("{label}: the first realization retained an unexpected residual")
+        };
+        let IndexRefinementVerificationOutcome::Verified(other_receipt) =
+            other_resolution.verify(&authority, &other_region).unwrap()
+        else {
+            panic!("{label}: the perturbed realization retained an unexpected residual")
+        };
+        assert_ne!(
+            first_receipt.identity(),
+            other_receipt.identity(),
+            "{label}: environment-only receipts minted equal identity bytes"
+        );
+    }
+}
+
+fn literal_environment_subject(
+    environment: Option<Arc<crate::shape::ShapeEnv>>,
+) -> IndexRefinementSubject {
+    let mut program = match environment {
+        Some(environment) => {
+            SemanticProgramBuilder::try_standard_with_shape_environment(environment).unwrap()
+        }
+        None => SemanticProgramBuilder::try_standard().unwrap(),
+    };
+    let input = program
+        .input::<F32>(InputKey::new("input").unwrap(), Shape::from_dims([1]))
+        .unwrap();
+    let result = F32Multiply::apply(&mut program, input, input).unwrap();
+    program
+        .output(OutputKey::new("output").unwrap(), result)
+        .unwrap();
+    let program = program.build().unwrap();
+    IndexRefinementSubject::derive(
+        &program,
+        program.operations().next().unwrap().id(),
+        test_contract(),
+    )
+    .unwrap()
+}
+
+#[test]
+fn absence_and_an_explicitly_empty_environment_are_one_subject_fact() {
+    let absent = literal_environment_subject(None);
+    let empty_environment = Arc::new(ShapeEnvBuilder::new().build().unwrap());
+    let explicit = literal_environment_subject(Some(empty_environment.clone()));
+
+    assert!(absent.shape_environment().is_none());
+    assert_eq!(
+        explicit.shape_environment().unwrap().identity(),
+        crate::shape::empty_environment_identity()
+    );
+    assert_eq!(
+        empty_environment.identity(),
+        crate::shape::empty_environment_identity()
+    );
+    assert_eq!(absent.graph(), explicit.graph());
+    assert_eq!(absent.identity, explicit.identity);
+    assert_eq!(absent, explicit);
+
+    let laws = FrozenIndexRealizationLawRegistry::from_semantic(
+        FrozenSemanticRegistry::standard().unwrap(),
+        FrozenScalarRegistry::standard().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        laws.resolve(&absent).unwrap(),
+        laws.resolve(&explicit).unwrap()
+    );
+}
+
+#[test]
+fn the_v3_subject_step_moves_receipts_but_not_executable_coverage() {
+    let (subject, resolution, realization, receipt) = reached_semantic_fixture(1);
+    let mut v2_subject = subject.clone();
+    v2_subject.identity = encode_superseded_subject_identity_with(
+        &subject,
+        SUPERSEDED_SUBJECT_IDENTITY_TAGS[1],
+        subject.occurrence(),
+    )
+    .into_boxed_slice();
+    let v2_resolution = resolution.registry.resolve(&v2_subject).unwrap();
+    let v2_receipt = mint_receipt(
+        &v2_subject,
+        &v2_resolution,
+        &realization,
+        receipt.scalar_authorities(),
+        receipt.operand_bindings().to_vec(),
+        receipt.result_bindings().to_vec(),
+        receipt.index_domain_proofs().to_vec(),
+    );
+
+    assert_ne!(subject.identity, v2_subject.identity);
+    assert_ne!(resolution.identity, v2_resolution.identity);
+    assert_ne!(receipt.identity(), v2_receipt.identity());
+    assert!(
+        receipt
+            .identity()
+            .as_bytes()
+            .starts_with(RECEIPT_IDENTITY_TAG)
+    );
+    assert!(
+        v2_receipt
+            .identity()
+            .as_bytes()
+            .starts_with(RECEIPT_IDENTITY_TAG)
+    );
+    assert_eq!(
+        receipt.executable_coverage_identity(),
+        v2_receipt.executable_coverage_identity(),
+        "the subject step leaked into the reached-only executable projection"
+    );
+    assert_eq!(
+        crate::program::CoveredOccurrence::from_receipt(&receipt),
+        crate::program::CoveredOccurrence::from_receipt(&v2_receipt),
+        "the subject step moved the exact record kernel-program identity folds"
     );
 }
 
