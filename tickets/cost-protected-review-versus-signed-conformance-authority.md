@@ -1,7 +1,7 @@
 ---
 id: cost-protected-review-versus-signed-conformance-authority
 title: Cost protected review versus signed conformance authority
-status: todo
+status: in-progress
 priority: p1
 dependencies: []
 related: [spike-a-red-yellow-first-full-conformance-suite]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets, research/verification]
 paths: []
 tags: [research, decision, conformance-progress, security]
+claimed_from: todo
+assignee: conformance-authority-sol
+lease_expires_at: 1787601327
 ---
 # Cost protected review versus signed conformance authority
 
