@@ -1,7 +1,7 @@
 ---
 id: admit-an-invocation-scoped-gather-index-validation-receipt
 title: Admit an invocation-scoped gather-index validation receipt
-status: in-progress
+status: blocked
 priority: p1
 dependencies: [decide-the-host-gather-snapshot-receipt-and-preflight-surface]
 related: [accept-the-invocation-scoped-gather-validation-public-surface, emit-the-indirect-gather-on-metal, validate-device-resident-gather-indices-before-dispatch, admit-a-zero-copy-exclusive-lease-for-validated-gather-indices, generalize-invocation-bound-index-validation-beyond-gather]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/artifact, implementation/compiler, im
 shared_scopes: [project/tickets]
 paths: []
 tags: [implementation, runtime, gather, validation, fail-closed, public-boundary, identity]
-claimed_from: todo
-assignee: worker-gatherreceipt
-lease_expires_at: 1787593115
 ---
 ## Exact-base Fact audit — 2026-08-24, `b415dac1` / base `6e713e12`
 

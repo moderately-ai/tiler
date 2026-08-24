@@ -2,7 +2,7 @@
 id: step-the-refinement-subject-identity-to-carry-its-shape-environment
 title: Step the refinement subject identity to carry its shape environment
 status: todo
-priority: p1
+priority: p0
 dependencies: []
 related: [decide-whether-the-refinement-subject-identity-should-carry-its-environment]
 scopes: [implementation/ir, implementation/compiler]
