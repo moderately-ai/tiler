@@ -11,7 +11,7 @@ paths: []
 tags: [research, spike, conformance, testing, conformance-progress]
 claimed_from: todo
 assignee: codex
-lease_expires_at: 1787599695
+lease_expires_at: 1787602393
 ---
 # Spike a red-yellow-first full conformance suite
 
