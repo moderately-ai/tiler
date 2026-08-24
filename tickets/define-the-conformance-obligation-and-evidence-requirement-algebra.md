@@ -52,3 +52,24 @@ Stop and split the disputed family when one schema cannot represent its authorit
 - [`derive-the-conformance-evidence-ledger-cells-from-executed-runs`](derive-the-conformance-evidence-ledger-cells-from-executed-runs.md)
 - [`docs/correctness-and-testing.md`](../docs/correctness-and-testing.md)
 - [`inventory-the-closed-world-conformance-claim-universe-by-owner`](inventory-the-closed-world-conformance-claim-universe-by-owner.md)
+
+## Outcome
+
+**Research complete at `6b6787f0f26b9775769e3cee9e1c5779c9eb431e`; schema remains private and unimplemented.** [The retained design packet](../docs/research/verification/conformance-obligation-evidence-algebra.md) selects family-owned obligation declarations compiled into a small canonical `Atom`/`All`/`Any` predicate algebra over immutable evidence atoms. It rejects a total maturity order, scalar authority, wildcard context, generic negation, and a universal family schema.
+
+### Fact audit
+
+- **Verified:** accepted documentation evidence classes are categories, not a total strength order.
+- **Verified:** accuracy, index proof, feasibility, measurement, applicability, and run-result vocabularies answer different owner questions; their differences are not aliases to reconcile away.
+- **Verified:** `Measured::{Ran, Unavailable, Failed}` establishes the raw machine-outcome split needed by the design, while the deferred ledger ticket establishes that a run cannot mint maturity or normative authority.
+- **Verified:** the owner-universe report keeps subjects separate from tests and receipts and retains unknown populations as positive blockers.
+
+### Selected design
+
+The common layer separates subject, case, obligation, observation, evidence atom, evaluated verdict, and derived color. Verdicts are `Passed`, `Failed`, `NotObserved`, and authority-backed `NotApplicable`; green/red/yellow/gray are derived only after receipt, context, freshness, applicability, and authority validation. Evidence kinds remain an unordered tagged set, and family-owned predicates state exact conjunctions or acceptable alternatives. A correct expected refusal passes; unavailable current evidence stays yellow; reached-stage failure is red; stale evidence remains historical but cannot qualify the current profile.
+
+Six worked cells cover semantic/reference agreement, optimizer preservation, compile-only availability, real execution, normative ownership, and bounded performance measurement. Eight negative controls cover wrong authority, wrong context, stale evidence, missing evidence kind, false ordering, wrong refusal, receipt tampering, and denominator omission. Identity consequences and downstream requirements are explicit.
+
+### Boundary
+
+No Rust API, public boundary, first goal profile, receipt serialization, owner visibility mechanism, authority provider, or family obligation manifest is decided here. A family that cannot map without defaults, lossy coercion, opaque callbacks, or a new public contract must split and stop rather than widening the common schema by convenience.
