@@ -1,7 +1,7 @@
 ---
 id: define-the-conformance-obligation-and-evidence-requirement-algebra
 title: Define the conformance obligation and evidence-requirement algebra
-status: todo
+status: in-progress
 priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner]
 related: [spike-a-red-yellow-first-full-conformance-suite]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets, research/verification]
 paths: []
 tags: [research, design, conformance-progress, verification]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1787609714
 ---
 # Define the conformance obligation and evidence-requirement algebra
 
