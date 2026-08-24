@@ -1,7 +1,7 @@
 ---
 id: step-the-refinement-subject-identity-to-carry-its-shape-environment
 title: Step the refinement subject identity to carry its shape environment
-status: todo
+status: in-progress
 priority: p0
 dependencies: []
 related: [decide-whether-the-refinement-subject-identity-should-carry-its-environment]
@@ -9,6 +9,9 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, indexing]
+claimed_from: todo
+assignee: worker-refinement-env
+lease_expires_at: 1787607158
 ---
 ## User-visible outcome
 
