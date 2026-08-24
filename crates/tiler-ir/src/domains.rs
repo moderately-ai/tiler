@@ -111,10 +111,10 @@ use std::path::{Path, PathBuf};
 /// the same reason the live ones are: `v6` through `v12` of
 /// `tiler.kernel-program` sit beside the live `v13` because `program::tests`
 /// names them to prove the eight stay distinct, and
-/// `tiler.ir.index-refinement-subject.v1` sits beside `v2` because
-/// `LEGACY_SUBJECT_IDENTITY_TAG` — itself `#[cfg(test)]` — is what
-/// `index::refinement`'s test re-encodes under to show the step separated two
-/// occurrences that `v1` collapsed.
+/// `tiler.ir.index-refinement-subject.v1` and `v2` sit beside live `v3` because
+/// `SUPERSEDED_SUBJECT_IDENTITY_TAGS` — itself `#[cfg(test)]` — is what
+/// `index::refinement`'s tests re-encode under to show both superseded grammars:
+/// `v1` collapsed two storage ordinals and `v2` omitted the environment subject.
 const PINNED_IDENTITY_DOMAINS: &[&[u8]] = &[
     b"tiler.accuracy-contract.v1\0",
     b"tiler.accuracy-domain.v1\0",
@@ -149,6 +149,7 @@ const PINNED_IDENTITY_DOMAINS: &[&[u8]] = &[
     b"tiler.ir.index-refinement-staged-receipt.v1\0",
     b"tiler.ir.index-refinement-subject.v1\0",
     b"tiler.ir.index-refinement-subject.v2\0",
+    b"tiler.ir.index-refinement-subject.v3\0",
     b"tiler.ir.index-region-sequence.v1\0",
     b"tiler.kernel-program.abi-arena.v1\0",
     b"tiler.kernel-program.allocation.v1\0",

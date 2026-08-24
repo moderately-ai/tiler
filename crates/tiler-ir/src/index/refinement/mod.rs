@@ -125,7 +125,8 @@ use finite::{
 };
 #[cfg(test)]
 use identity::{
-    encode_executable_coverage_identity, encode_proof_identity, encode_subject_identity_with,
+    encode_executable_coverage_identity, encode_proof_identity,
+    encode_superseded_subject_identity_with,
 };
 #[cfg(test)]
 use receipt::mint_receipt;
@@ -200,9 +201,12 @@ const STAGED_EXECUTABLE_COVERAGE_IDENTITY_TAG: &[u8] =
 /// it greppable**, so a later hit on `tiler.artifact-` in this file is evidence
 /// that the string is present, not that the claim stands.
 const COVERAGE_GRAPH_DIGEST_DOMAIN: &[u8] = b"tiler.ir.index-refinement-coverage-graph.v1\0";
-const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v2\0";
+const SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v3\0";
 #[cfg(test)]
-const LEGACY_SUBJECT_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-subject.v1\0";
+const SUPERSEDED_SUBJECT_IDENTITY_TAGS: &[&[u8]] = &[
+    b"tiler.ir.index-refinement-subject.v1\0",
+    b"tiler.ir.index-refinement-subject.v2\0",
+];
 const AUTHORITY_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-authority.v1\0";
 const RESOLUTION_IDENTITY_TAG: &[u8] = b"tiler.ir.index-realization-resolution.v1\0";
 const PROOF_IDENTITY_TAG: &[u8] = b"tiler.ir.index-refinement-domain-proof.v1\0";
