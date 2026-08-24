@@ -11,7 +11,7 @@ paths: []
 tags: [research, decision, conformance-progress, security]
 claimed_from: todo
 assignee: conformance-authority-sol
-lease_expires_at: 1787601327
+lease_expires_at: 1787603398
 ---
 # Cost protected review versus signed conformance authority
 
@@ -47,43 +47,47 @@ Stop for Tom when every sound option requires authority outside ordinary reposit
 
 ## Outcome
 
-Research content commit: `ac99577facf54528f674eb3011c1d644c5ee6140`.
+Initial research content commit: `ac99577facf54528f674eb3011c1d644c5ee6140`. Independent-review repair commit: `cdb9adc381a855dc3d7d3f01653f703d04e04902`.
 
 The retained [conformance authority threat model and decision packet](../spikes/verification/conformance-authority-threat-model/README.md) covers denominator, exception/profile, verifier, oracle, and evidence-baseline manipulation. The [research record](../docs/research/verification/conformance-authority-threat-model.md) supplies the governed traceability edge, and both hand-maintained catalogs carry the new records.
 
 ### Exact-base Fact audit
 
-- **False:** the current repository/local report already has an enforcement boundary. At `37a8107e9999b29b51a5c7458b5fd0bc0a408e3a` there was no tracked workflow, `CODEOWNERS`, active hook, or signing policy; GitHub reported no protection on `main` and no ruleset.
+- **False:** the current repository/local report already has an enforcement boundary. A full-tree exact-name census at `37a8107e9999b29b51a5c7458b5fd0bc0a408e3a` found no tracked workflow, `CODEOWNERS` at any path (including `docs/CODEOWNERS`), hook, or security policy; GitHub reported no protection on `main` and no ruleset.
 - **Verified but imprecise as enforcement:** `AGENTS.md` and ADR 0075 require human review and gates, but those prose rules are not a server-side prevention mechanism.
 - **Verified as a proposal, not accepted policy:** the root spike says an implementation change cannot change its own profile, oracle, exception ledger, and baseline in the same work item. The downstream authority ticket still owns adoption.
+- **False:** protected owner review and separate policy/implementation work items are distinct enforced authorities under the current GitHub primitives. Native protected review and `CODEOWNERS` can require an owner for matched paths, but do not reject a mixed authority-plus-implementation diff. A distinct split requires a trusted external mixed-diff classifier and required check, or it remains reviewer judgment.
 - **Verified:** owner-derived universe, profile/exception policy, verifier, independent oracle, and evidence-baseline lineage are distinct authority classes.
 - **False/materially incomplete:** signing only the profile/exception root covers this ticket's threat. A writer can weaken the denominator enumerator, verifier, oracle authority, or baseline lineage without invalidating such a signature. A surviving signed manifest must bind all five classes.
 - **False by the actor's defined power:** repository-local checks can restrain an actor authorized to rewrite all repository authorities together.
 - **False:** cryptography supplies review quality, protects a compromised signing threshold, or makes a logged leaf legitimate.
 - **False on the bounded current row:** existing Git signatures provide a reusable conformance authority. HEAD and the latest 20 commits were unsigned, and there was no configured signing rule; commit signing would still need role, threshold, root, recovery, and protected-object design.
 
-### Frontier and recommendation
+### Independent-review correction, frontier, and recommendation
 
-The packet eliminates local status quo, protected review without a split, an unprotected prose split, a profile/exception-only signature, signature without independent review, and a log without review/signature. Three conditional frontier placements remain:
+Independent review found that the initial packet credited its protected split with an enforcement property it had not defined or costed. The repaired packet does not work around that error: it distinguishes protected combined review (`P`) from a trusted external mixed-diff exclusion (`M`) and rebuilds the frontier around four orthogonal properties.
 
-1. `R`: protected review plus externally enforced, distinct policy/implementation approval lanes — smallest and recommended for the first profile if protected policy maintainer and host-admin compromise are explicitly out of scope.
-2. `K`: `R` plus an independently signed, versioned manifest binding all five authority classes — smallest survivor when an actor able to rewrite and merge every repository authority is in scope.
-3. `T`: `K` plus an independently witnessed append-only record and monitoring — survivor only when non-equivocation, durable public audit, or post-compromise last-good recovery is required.
+- `P`: protected combined human-owner review — the smallest current recommendation for the first profile while the protected policy owner and rules/bypass administrator are trusted. It permits combined authority/implementation diffs and relies on owner judgment.
+- `P+M`: `P` plus a trusted external required check whose classifier, configuration, and enforcement are outside ordinary repository-writer authority. It rejects mixed authority-plus-implementation/evidence work items, but adds a complete path taxonomy, service availability, and recovery burden and does not stop a dishonest protected owner who splits the changes.
+- `P+K`: `P` plus an independently signed, versioned manifest binding all five authority classes — the smallest threat-coverage family when an actor able to rewrite and merge every repository authority is in scope. `P+M+K` adds the separate mixed-diff property.
+- `P+K+T`: `P+K` plus independently witnessed append-only publication and monitoring when non-equivocation, durable audit, or last-good recovery is required. `P+M+K+T` carries all four properties and all associated trust and availability costs.
 
-The packet prepares exactly one Tom decision for the downstream authority ticket: **is an actor who can rewrite and merge every repository authority an in-scope adversary for `GoalProfileV1`?** “No” selects `R` and records the stronger-authority trigger; “yes” requires `K` before an accepted `qualify` claim. `T` has a later evidence trigger and is not part of this first decision.
+The packet eliminates the local status quo, an unenforced prose split, a profile/exception-only signature, signature without independent review, and a log without review/signature. It prepares two ordered Tom decisions for the downstream authority ticket, asked one at a time: first, **is an actor who can rewrite and merge every repository authority in scope for `GoalProfileV1`?** “No” selects the `P` family; “yes” requires the `P+K` family. Second, within that family, **must every mixed authority-plus-implementation/evidence work item be mechanically rejected?** The current recommendation is “no” absent evidence that `M`'s extra strictness justifies its external classifier, path-taxonomy, availability, and recovery cost.
+
+External-store compromise is analyzed as four different powers rather than one undifferentiated actor. A signed manifest rejects corrupted/substituted bytes and rollback older than a client-retained monotone version, but freeze detection needs an accepted freshness boundary and trusted time; signatures do not make a withholding store available; and two signer-authorized histories require independent witnessed checkpoints/monitoring for equivocation detection.
 
 No descendant was created. The existing conformance-progress graph already owns the universe inventory, authority decision, command contracts, subject perturbations, first profile, and report projection. Duplicating those tickets would create competing authorities. Immediate research may continue; protection/signing/transparency implementation, accepted profile assembly, and authority-bound qualification remain Tom/decision/evidence blocked.
 
-Unsupported after `R`: malicious/compromised protected policy reviewer, host rules administrator/bypass, repository-host history rewrite, and offline verification after that rewrite. Unsupported after `K`: compromised signer threshold or client root distribution, canonical resolver bugs, and two valid signed histories without a checkpoint. Unsupported after `T`: coalition compromise of signer threshold plus every required witness/checkpoint path, malicious but validly reviewed/signed/logged semantics, and denial of service.
+Unsupported after `P`: malicious/compromised protected policy reviewer, host rules administrator/bypass, repository-host history rewrite, mixed-diff confusion, and offline verification after that rewrite. Unsupported after `P+M`: every `P` threat except the mixed-work-item form; a malicious owner can split the weakening across work items, and classifier/path-taxonomy compromise can suppress the check. Unsupported after `P+K`: compromised signer threshold or client root distribution, canonical resolver bugs, and two valid signed histories without a checkpoint. Unsupported after `P+K+T`: coalition compromise of signer threshold plus every required witness/checkpoint path, malicious but validly reviewed/signed/logged semantics, and denial of service.
 
 ### Checks
 
 Run against the coherent research tree and repeated after the Outcome/review transition:
 
 - `tkt lint` — `ok: no problems found`.
-- `make citations` — exit 0; every checked local link and pinned citation resolved. On the research commit the census reported 1,330 pinned citations, 7,660 resolved local links, and 69 live spike records.
+- `make citations` — exit 0; every checked local link and pinned citation resolved. On the repaired research commit the census reported 1,330 pinned citations, 7,662 resolved local links, and 69 live spike records.
 - `git diff --check` — exit 0.
-- `tkt guard tkt/cost-protected-review-versus-signed-conformance-authority --base 37a8107e9999b29b51a5c7458b5fd0bc0a408e3a --format json` — the committed research diff affects exactly declared `contracts/navigation`, `project/tickets`, and `research/verification`; `under_declared` is empty, `conflict` is false, and `warnings` is empty. Severity is `warn` because the two additive shared scopes intersect the repository's existing shared-scope population; no exclusive collision or scope violation was reported.
+- `tkt guard tkt/cost-protected-review-versus-signed-conformance-authority --base 37a8107e9999b29b51a5c7458b5fd0bc0a408e3a --format json` — the committed research diff affects exactly the three declared shared scopes `contracts/navigation`, `project/tickets`, and `research/verification`; `under_declared` is empty, `conflict` is false, and `warnings` is empty. Severity is `warn` because these additive shared scopes intersect the repository's existing shared-scope population; no exclusive collision or scope violation was reported.
 
 ## Refs
 
