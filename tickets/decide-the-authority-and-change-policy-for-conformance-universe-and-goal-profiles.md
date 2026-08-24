@@ -1,7 +1,7 @@
 ---
 id: decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles
 title: Decide the authority and change policy for conformance universes and goal profiles
-status: review
+status: done
 priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner, cost-protected-review-versus-signed-conformance-authority]
 related: [spike-a-red-yellow-first-full-conformance-suite]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets, research/verification]
 paths: []
 tags: [research, decision, conformance-progress, conformance-authority, verification]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1787606631
 ---
 # Decide the authority and change policy for conformance universes and goal profiles
 
