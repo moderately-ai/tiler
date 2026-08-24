@@ -3,7 +3,7 @@ id: assemble-the-first-versioned-conformance-goal-profile
 title: Assemble the first versioned conformance goal profile
 status: todo
 priority: p1
-dependencies: [decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, define-the-canonical-conformance-receipt-join-and-freshness-model, derive-the-optimizer-and-planner-capability-obligation-manifest, derive-the-five-family-structural-conformance-manifest, classify-machine-compilation-and-execution-outcomes-by-stage, design-the-conformance-audit-regress-and-qualify-command-contracts, derive-artifact-proof-and-publication-conformance-obligations, derive-runtime-route-completion-and-cache-obligations, define-retained-performance-claim-authority-and-identity]
+dependencies: [decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, define-the-canonical-conformance-receipt-join-and-freshness-model, derive-the-optimizer-and-planner-capability-obligation-manifest, derive-the-five-family-structural-conformance-manifest, classify-machine-compilation-and-execution-outcomes-by-stage, design-the-conformance-audit-regress-and-qualify-command-contracts, derive-artifact-proof-and-publication-conformance-obligations, derive-runtime-route-completion-and-cache-obligations, define-retained-performance-claim-authority-and-identity, migrate-retained-performance-evidence-to-owner-claim-identities]
 related: [spike-a-red-yellow-first-full-conformance-suite]
 scopes: []
 shared_scopes: [project/tickets, research/verification]
