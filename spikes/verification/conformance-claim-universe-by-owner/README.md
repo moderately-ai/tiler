@@ -26,6 +26,7 @@ Every row was re-read at `37a8107e9999b29b51a5c7458b5fd0bc0a408e3a` through its 
 - the independently serialized artifact stage domain is `tiler.artifact-program.stage.v4`, while the kernel-program domain is `tiler.kernel-program.v13`;
 - semantic type definitions are keyed by `ValueTypeDefinitionKey`; the catalog owns 34 standard definitions, while quantization separately owns strict-affine;
 - four production rewrite identities are source-known, not three, but no compiler-wide rewrite owner exists; and
+- physical-provider provenance reuses `tiler_ir::semantic::ProviderIdentity`—namespace, name, and a nonzero output-affecting revision; two revisions are distinct installable identities; and
 - six governed physical strategies use constants ending in `_STRATEGY`; extensible providers keep the system-wide population unknown.
 
 ## Executed evidence-envelope commands
@@ -89,7 +90,7 @@ cut -f1 spikes/verification/conformance-claim-universe-by-owner/inventory.tsv | 
 shasum -a 256 spikes/verification/conformance-claim-universe-by-owner/inventory.tsv
 ```
 
-Executed results: `37` lines including the header; no duplicate family-id output; raw-file SHA-256 `e443e5803b654275ab930f6ae10c1009284011dcc26740a325e2762994cf6e5e`. The digest is a raw-file checksum only. A canonical projection cannot be supplied without deciding which owner fields are normative, how unknowns are encoded, and what revision rule applies. [The authority/change-policy ticket](../../../tickets/decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles.md) owns that decision.
+Executed results: `37` lines including the header; no duplicate family-id output; raw-file SHA-256 `a752343b44fe98e74de127c25141bd38528cbf813341318715d8c5fa53aa9670`. The digest is a raw-file checksum only. A canonical projection cannot be supplied without deciding which owner fields are normative, how unknowns are encoded, and what revision rule applies. [The authority/change-policy ticket](../../../tickets/decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles.md) owns that decision.
 
 ## Unsupported cases
 

@@ -60,12 +60,13 @@ The cache phase row is a test vocabulary providing crash evidence; it is not a c
 
 ## Bounded snapshots and unknown populations
 
-The audit corrected five ownership/identity errors that would otherwise poison later identity work:
+The audit corrected six ownership/identity errors that would otherwise poison later identity work:
 
 - the semantic catalog owns 34 definitions keyed by `ValueTypeDefinitionKey`; strict-affine is a separate quantization-owned definition, not a 35th catalog row;
 - `tiler-cache`, admitted by [ADR 0082](../../../docs/decisions/0082-admit-tiler-cache-as-the-expansion-cache-owner.md), owns cache identity/publication;
 - `TargetProfile` is in `tiler-compiler`, and `tiler.target-profile.declaration.v11` is distinct from `tiler.target-profile.descriptor.v11`;
 - `tiler.artifact-program.stage.v4` is the artifact stage identity, separate from `tiler.kernel-program.v13`; and
+- physical-provider provenance uses `tiler_ir::semantic::ProviderIdentity` with namespace, name, and nonzero output-affecting revision; changing provider output steps that revision, and two revisions are distinct installable identities; and
 - rewrite identities number four in the bounded production source search, while physical strategy constants number six with the `_STRATEGY` suffix. Neither search closes its system family.
 
 Current owner snapshots remain useful but are not complete censuses: 19 semantic operations; 34 catalog definitions; one quantization definition; 19 algebraic declaration fields with two positive ordered-associativity declarations; 17 index laws; 28 reference capabilities; seven reference validators; 22 governed lowering capabilities; four feasibility outcomes; 14 deterministic budget fields; and four budget-refusal variants. Each row names its construction, identity, refusal, and missing owner-manifest check.
