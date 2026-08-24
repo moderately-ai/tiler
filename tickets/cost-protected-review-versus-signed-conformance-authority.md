@@ -6,7 +6,7 @@ priority: p1
 dependencies: []
 related: [spike-a-red-yellow-first-full-conformance-suite]
 scopes: []
-shared_scopes: [project/tickets, research/verification]
+shared_scopes: [project/tickets, research/verification, contracts/navigation]
 paths: []
 tags: [research, decision, conformance-progress, security]
 claimed_from: todo
