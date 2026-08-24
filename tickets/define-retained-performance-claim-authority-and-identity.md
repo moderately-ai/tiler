@@ -1,7 +1,7 @@
 ---
 id: define-retained-performance-claim-authority-and-identity
 title: Define retained performance-claim authority and identity
-status: todo
+status: in-progress
 priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner]
 related: [spike-a-red-yellow-first-full-conformance-suite, derive-the-optimizer-and-planner-capability-obligation-manifest]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [research/verification, project/tickets]
 paths: []
 tags: [research, design, conformance-progress, verification, performance]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1787610669
 ---
 # Define retained performance-claim authority and identity
 
