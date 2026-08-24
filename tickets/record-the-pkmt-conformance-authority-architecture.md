@@ -1,7 +1,7 @@
 ---
 id: record-the-pkmt-conformance-authority-architecture
 title: Record the P+K+M+T conformance authority architecture
-status: todo
+status: in-progress
 priority: p1
 dependencies: [decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles]
 related: [spike-a-red-yellow-first-full-conformance-suite, decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets, contracts/decisions, contracts/navigation, contracts/numerics]
 paths: []
 tags: [decision, architecture, conformance-progress, conformance-authority, verification]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1787610285
 ---
 # Record the P+K+M+T conformance authority architecture
 
