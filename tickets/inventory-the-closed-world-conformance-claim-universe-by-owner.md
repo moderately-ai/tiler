@@ -96,6 +96,6 @@ Existing optimizer/planner, structural, stage, private-boundary, authority, evid
 - `tkt lint` — passed.
 - `make citations` — passed; every pinned citation and local markdown link resolves.
 - `git diff --check` — passed.
-- `tkt guard tkt/inventory-the-closed-world-conformance-claim-universe-by-owner --base 37a8107e9999b29b51a5c7458b5fd0bc0a408e3a --format json` — passed after staging, with declared shared scopes `contracts/navigation`, `project/tickets`, and `research/verification`, no collisions, and no under-declaration.
+- `tkt guard tkt/inventory-the-closed-world-conformance-claim-universe-by-owner --base 37a8107e9999b29b51a5c7458b5fd0bc0a408e3a --format json` — completed after commit with declared shared scopes `contracts/navigation`, `project/tickets`, and `research/verification`; it reported shared-scope overlap warnings, but `conflict: false` and no under-declaration.
 
 Research-only change: no code gate was required or run.
