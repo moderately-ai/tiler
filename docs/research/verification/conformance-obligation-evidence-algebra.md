@@ -20,7 +20,7 @@ ticket: "define-the-conformance-obligation-and-evidence-requirement-algebra"
 
 ## Result
 
-**Proposal.** Use family-owned obligation declarations compiled into a small canonical predicate algebra over immutable evidence atoms. Do not use a maturity ladder, a scalar score, or one universal family schema. The common layer owns only composition, exact matching, validity, and derived reporting; each subject owner retains the meaning of its obligation and each evidence producer retains the authority it can actually mint.
+**Proposal.** Use family-owned obligation declarations compiled into a small canonical predicate algebra over immutable evidence atoms. Do not use a maturity ladder, a scalar score, or one universal family schema. The common layer owns only composition, exact matching, canonical join validation, and derived reporting; each subject owner retains the meaning and semantic validation of its obligation and each evidence producer retains the authority it can actually mint.
 
 This hybrid is the only nondominated candidate from the decision packet below. A predicate without family-owned constructors invites meaningless combinations; family-only schemas cannot support common audit, regression, qualification, or receipt validation. The combination provides common machine semantics without pretending that proof, execution, normative authority, and measurement are ordered versions of one thing.
 
@@ -125,7 +125,7 @@ Raw observations are a tagged product rather than the eventual four-way verdict:
 The evaluator emits exactly the accepted four semantic outcomes:
 
 - `Passed`: the observation matcher passed and the complete evidence predicate is satisfied;
-- `Failed`: the required route ran and produced a wrong value, wrong or missing refusal, disproved invariant, reached-stage failure, or invalid result;
+- `Failed`: the required route ran and produced a wrong value, wrong or missing refusal, disproved invariant, reached-stage failure, or a result that violated the obligation; an invalid receipt is instead an audit failure with no trusted verdict;
 - `NotObserved`: no valid current evidence set can evaluate the proposition, including absent, unavailable, expired, or below-requirement evidence; and
 - `NotApplicable`: an accepted applicability authority explicitly excludes this subject/case from this profile.
 
@@ -143,7 +143,7 @@ Evidence kind is an unordered tagged set. One receipt may contribute several ato
 - `ExhaustiveFinite` — every member of an explicitly identified finite universe was checked, with cardinality and enumerator identity;
 - `Proof` — a theorem under explicit assumptions and proof/checker identity;
 - `NormativeAuthority` — a statement supplied by the governing owner within an exact scope; and
-- owner-specific evidence references whose family supplies a validator and canonical identity.
+- owner-specific evidence references admitted only through a versioned typed atom schema with a declared matcher, validator, and canonical identity; opaque payloads and callbacks cannot satisfy a requirement.
 
 These tags do not imply one another globally. A `Measured` atom normally cites an `Executed` receipt, but it cannot substitute for `Proof`; `Compiled` cannot substitute for `Executed`; `NormativeAuthority` is not stronger or weaker than a device run—it answers a different question. Where a family has a sound implication, such as accuracy's accepted discharge rule, the family-owned obligation constructor encodes that explicit alternative.
 
@@ -161,7 +161,7 @@ Requirement :=
 An atomic predicate may require:
 
 - an exact evidence kind and producer role;
-- an exact producer authority or an authority set supplied by the obligation owner;
+- an exact producer authority or an exact versioned authority-set identity supplied by the obligation owner;
 - exact subject, case, oracle, numerical contract, target, toolchain, plan, artifact, runtime route, device/environment, or proof-assumption identities;
 - an exact outcome matcher, including a typed refusal code and stage;
 - freshness under a named owner policy; and
@@ -170,6 +170,8 @@ An atomic predicate may require:
 There is no generic `Not`, numeric minimum maturity, wildcard authority, wildcard context, or implicit coercion. Negation makes absence satisfy requirements; ranks make incomparable evidence substitute; wildcards make a receipt silently generalize. A family needing a negative proposition declares a positive exact matcher such as `Refused(validation, shape.rank-mismatch)`.
 
 `All` and `Any` are canonical unordered sets: duplicate members are invalid, empty sets are invalid, and encodings sort by child identity. This prevents construction order from changing an obligation while keeping alternative evidence routes explicit. A family may refuse `Any` entirely when its authority permits no alternatives.
+
+The recursive representation is governed before allocation: schema version, maximum depth, maximum node count, maximum atom/context bytes, and maximum acceptable-alternative count are explicit inputs to validation and participate in the evaluator identity. Cycles, over-budget values, and size arithmetic overflow fail audit before canonical sorting or evaluation. Evaluation is lazy over the explicit profile population and indexed by subject/case/atom kind; the design never materializes a universal feature-by-case-by-target product.
 
 ### Applicability
 
@@ -283,13 +285,15 @@ These counterexamples independently require exact typed atoms, conjunction, expl
 
 The selected design's strongest counterargument is maintenance cost: each family must own declarations and an adapter into the common atoms, while a generic rank would be cheaper. That cost is real and intentional because the cheaper design moves family semantics into implicit conversions. Evidence that would reverse the selection is a proof that all current and anticipated obligations share one sound substitution order and one authority/context model; the audited counterexamples—empirical versus normative accuracy, compilation versus execution, expected refusal versus failure, and applicability versus artifact equality—already falsify that premise.
 
+On the required comparison dimensions, the hybrid is the sole surviving complete candidate. It is fail-closed because no evidence coercion, context wildcard, or applicability default exists; maintainable because family meaning stays with its owner and the common evaluator stays small; compatible because new typed atom/predicate versions can be added without reinterpreting old receipts; and host-bounded because populations are lazy and exact while expression depth/count/bytes are governed before allocation. Its cost is additional family adapters, indexed joins, and retained historical atoms. That cost is preferable to a cheap global enum whose silent false substitutions corrupt correctness. Kernel performance is unaffected because no runtime or kernel fast path consumes the algebra.
+
 The common algebra remains deliberately less expressive than arbitrary Boolean logic. A future obligation requiring negation, quorum, temporal sequencing, probabilistic confidence, or quantified ranges must first demonstrate why a new typed node is sound and canonical. It must not encode the feature through an opaque callback or generic expression escape hatch.
 
 ## Identity and versioning consequences
 
 - `SubjectRef` is owner-minted and independent of tests, profiles, and evidence. A subject revision changes only under its owner rule; removal creates a tombstone rather than erasing history.
 - `CaseRef` is manifest-minted. Shared inputs do not imply shared obligation or oracle identity.
-- `obligation_id` is stable across editorial changes; `declaration_revision` or a canonical declaration-content identity changes when matcher, evidence predicate, applicability, or family semantics change.
+- `obligation_id` is stable across editorial changes; `declaration_revision` changes when matcher, evidence predicate, applicability, or family semantics change, and the canonical declaration-content identity commits to that revision and content.
 - An evidence atom identity commits to its observation, producer authority/role, complete context, subject/case references, source revision, and referenced payload digests. Validity is established by the owning validator and audit rather than asserted by a self-declared field. A green bit and presentation color never enter it.
 - An evidence-set identity is a canonical set root over validated atom identities. Removing or substituting an atom changes it.
 - An evaluated-cell identity commits to obligation revision, evidence-set identity, and evaluator/verifier identity. Re-evaluation never rewrites the source receipts.
