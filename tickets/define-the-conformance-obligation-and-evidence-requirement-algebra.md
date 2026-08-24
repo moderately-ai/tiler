@@ -6,7 +6,7 @@ priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner]
 related: [spike-a-red-yellow-first-full-conformance-suite]
 scopes: []
-shared_scopes: [project/tickets, research/verification]
+shared_scopes: [project/tickets, research/verification, contracts/navigation]
 paths: []
 tags: [research, design, conformance-progress, verification]
 claimed_from: todo
