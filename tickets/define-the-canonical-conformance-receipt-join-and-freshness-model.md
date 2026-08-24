@@ -3,7 +3,7 @@ id: define-the-canonical-conformance-receipt-join-and-freshness-model
 title: Define the canonical conformance receipt join and freshness model
 status: todo
 priority: p1
-dependencies: [define-the-conformance-obligation-and-evidence-requirement-algebra, decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, decide-how-owner-private-conformance-inventories-cross-crate-boundaries]
+dependencies: [define-the-conformance-obligation-and-evidence-requirement-algebra, decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, decide-how-owner-private-conformance-inventories-cross-crate-boundaries, specify-the-canonical-owner-conformance-manifest-protocol]
 related: [spike-a-red-yellow-first-full-conformance-suite]
 scopes: []
 shared_scopes: [project/tickets, research/verification]
@@ -49,3 +49,4 @@ Stop and split the missing owner when any join field would need a guessed identi
 - [`spike-a-red-yellow-first-full-conformance-suite`](spike-a-red-yellow-first-full-conformance-suite.md)
 - [`define-the-conformance-obligation-and-evidence-requirement-algebra`](define-the-conformance-obligation-and-evidence-requirement-algebra.md)
 - [`decide-how-owner-private-conformance-inventories-cross-crate-boundaries`](decide-how-owner-private-conformance-inventories-cross-crate-boundaries.md)
+- [`specify-the-canonical-owner-conformance-manifest-protocol`](specify-the-canonical-owner-conformance-manifest-protocol.md)

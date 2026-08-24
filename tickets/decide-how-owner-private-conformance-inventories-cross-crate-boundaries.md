@@ -1,7 +1,7 @@
 ---
 id: decide-how-owner-private-conformance-inventories-cross-crate-boundaries
 title: Decide how owner-private conformance inventories cross crate boundaries
-status: in-progress
+status: awaiting-decision
 priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner, define-the-conformance-obligation-and-evidence-requirement-algebra]
 related: [spike-a-red-yellow-first-full-conformance-suite]
@@ -51,3 +51,56 @@ Stop for Tom if the dominant solution changes a consequential public crate/modul
 - [`survey-what-belongs-in-the-conformance-crate`](survey-what-belongs-in-the-conformance-crate.md)
 - [`decide-the-backend-provider-conformance-harness-public-surface`](decide-the-backend-provider-conformance-harness-public-surface.md)
 - [`inventory-the-closed-world-conformance-claim-universe-by-owner`](inventory-the-closed-world-conformance-claim-universe-by-owner.md)
+
+## Outcome
+
+Research completed on 2026-08-24 at `36534fc0595a6f838f39bbb2ea070a86426af274`. The full decision packet is [Owner-private conformance inventory boundary](../docs/research/verification/owner-private-conformance-inventory-boundary.md); its Rust visibility negative control is retained in the [owner-private boundary fixture](../spikes/verification/owner-private-conformance-boundary/README.md).
+
+### Fact verdicts
+
+- **Verified per instance, imprecise as the system denominator:** the frozen semantic registry has public exact operation/type projections, but its index-law map is private and no independent construction rule proves every system subject must enter that registry.
+- **Verified:** reference capabilities and validators are exact ordered private maps folded into registry identity, with no public enumeration.
+- **False:** public lowering-registry identity, count, providers, and occurrence resolution do not reconstruct exact capability rows.
+- **False:** one `RuleRegistry::rules()` result is not the compiler-wide rewrite universe. Canonical CSE and conditional algebraic exploration construct separate registries.
+- **Verified narrowly:** `InstalledPhysicalProviders` and `Compilation` can name the exact offered provider identities for one compilation, but the provider trait does not require a complete strategy/obligation declaration.
+- **Verified as evidence, false as denominator:** public compilation, plan, schedule, kernel, program, artifact, and runtime identities name reached products; they cannot name unreached subjects.
+- **False:** verifier diagnostic enums are not invariant manifests. Multiple independent checks intentionally collapse to the same diagnostic, including many kernel reduction checks returning `KernelDiagnostic::ReductionContract`.
+- **False:** tagging every surviving verifier failure with an obligation ID closes invocation coverage. Deleting the entire `verify_reduction` call can leave all remaining failures tagged and the declaration manifest unchanged while malformed reductions become accepted.
+- **False:** `#[cfg(test)]` and `pub(crate)` items cannot be consumed directly across a crate boundary. The fixture obtains `E0425` and `E0603` respectively.
+- **False:** a Cargo feature creates private test support. The fixture succeeds only by making the item conditionally `pub`, and feature unification makes that an ordinary consumer-visible surface.
+- **False:** the test-only emitter alone is the design. It proves private transport only; without declaration-backed construction and a canonical exact owner-set join it can export an honestly incomplete table.
+- **False:** source revision and toolchain alone bind a reporter population. The fixture emits two default rows and three feature-enabled rows after gating the subject, declaration, and implementation together; configuration/applicability must be authoritative too.
+- **False:** `tiler-ir` is a neutral common-schema owner. It would acquire cross-layer evidence responsibility and contaminate dependency direction, including the AOT driver's accepted empty closure.
+
+### Nondominated design
+
+Use a federated declaration-first spine:
+
+1. Every admitted feature/invariant/claim is constructed or verified through an owner declaration carrying stable subject identity and family-owned obligations. Verifiers additionally need a declaration-driven checker graph or typestate chain; stable semantic obligations are distinct from checker/site witnesses so deleting a checker is loud without making refactoring change obligation identity.
+2. Repository-governed private populations use owner-local reporters writing bounded canonical files to an explicit path. The orchestrator never parses test names or stdout.
+3. Arbitrary frozen registries and dynamically installed providers use immutable declaration snapshots bound to the exact configuration/compilation identity. These surfaces are added only where arbitrary configured-environment qualification is a real consumer.
+4. Existing verified products and receipts remain the evidence plane and are joined by identity; they do not become feature rows.
+5. One proposed dependency-bottom protocol crate owns bounded canonical syntax and validation only. It owns no subject meaning, profile, status, evidence authority, I/O, or orchestration.
+6. Unknown owner populations remain explicit audit blockers until migrated. Goal-profile edits and owner-universe changes are reported separately from evidence movement.
+7. Declarations are target-independent with applicability as data where possible. A genuinely configuration-scoped manifest binds target triple, Cargo features, effective rustc cfg, toolchain, and build-produced configuration, and the accepted universe names the complete required configuration matrix.
+
+`tiler-metal-aot` is a genuine unresolved exception, not a free adapter. ADR 0077 forbids even a development dependency, while `CompileStage::ALL` does not owner-mint conformance subject/obligation identity or meaning. Its child decision must choose an owner-native zero-dependency projection, an explicit amendment admitting a protocol edge, or an honest unknown result.
+
+The design is intentionally not one universal accessor. Static private owners and dynamic public extension environments have different observation requirements; forcing either route onto the other either publishes internals or makes arbitrary configured universes unqualifiable.
+
+### Decision requested
+
+Tom must accept or reject the proposed new dependency-bottom protocol crate and the federated boundary direction. Acceptance does not approve a concrete crate name, field set, encoding tag, accessor, provider trait method, reporter command, AOT exception route, verifier mechanism, configuration matrix, or owner migration. Those remain bounded children after unlike pilots.
+
+### Follow-up family
+
+- [`specify-the-canonical-owner-conformance-manifest-protocol`](specify-the-canonical-owner-conformance-manifest-protocol.md) defines the authority-neutral envelope and exact owner-set completion after this decision.
+- [`pilot-a-declaration-backed-private-registry-manifest`](pilot-a-declaration-backed-private-registry-manifest.md) proves one private frozen registry uses one source for construction, identity, and manifest.
+- [`pilot-id-bearing-private-verifier-obligations`](pilot-id-bearing-private-verifier-obligations.md) separates semantic obligations from checker/site witnesses and compares failure tagging against declaration-driven executor/table and typestate designs that make deletion of a whole checker invocation loud.
+- [`decide-the-installed-provider-conformance-declaration-surface`](decide-the-installed-provider-conformance-declaration-surface.md) owns the consequential public boundary for arbitrary configured provider environments and reconciles it with the no-public-harness recommendation.
+- [`decide-the-zero-dependency-metal-aot-conformance-declaration-route`](decide-the-zero-dependency-metal-aot-conformance-declaration-route.md) owns the AOT empty-closure/public-projection conflict; no adapter may invent its obligations in conformance.
+- [`measure-the-federated-conformance-manifest-lane`](measure-the-federated-conformance-manifest-lane.md) measures configuration-matrix cost and crash/partial-publication behavior only after the structural paths are concrete.
+
+The protocol ticket now depends on the accepted P+K+M+T authority decision, and the canonical receipt/freshness ticket must depend on the concrete protocol result. Because the protected-review and threshold-signing designs already depend on that receipt ticket, the `P`, `K`, and transitive `M`/`T` graph will consume one owner-root/closure design rather than advancing a parallel canonical manifest.
+
+No implementation, new crate, accessor, feature, serialization format, or public API was added by this ticket.

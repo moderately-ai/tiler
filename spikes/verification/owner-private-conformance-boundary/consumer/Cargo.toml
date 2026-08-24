@@ -1,0 +1,13 @@
+[package]
+name = "consumer"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[features]
+probe-test-only = []
+probe-private = []
+probe-feature = ["owner/conformance-internal"]
+
+[dependencies]
+owner = { path = "../owner" }
