@@ -1,9 +1,9 @@
 ---
 id: replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges
 title: Replace zero live-bounds sentinels with ABI-derived accessible ranges
-status: blocked
+status: todo
 priority: p0
-dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes, package-the-admitted-live-schedule-into-a-symbolic-kernel-program, decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary]
+dependencies: [associate-live-extent-operands-with-symbolic-semantic-interface-axes, package-the-admitted-live-schedule-into-a-symbolic-kernel-program, decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary, prove-the-symbolic-accessible-range-agreement-at-program-assembly]
 related: [bind-repeated-invocations-over-caller-retained-tensors, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n]
 scopes: [implementation/ir, implementation/artifact, implementation/runtime, implementation/build, contracts/artifacts]
 shared_scopes: [project/tickets]
@@ -13,6 +13,12 @@ tags: [implementation, artifact, runtime, abi, correctness]
 ## User-visible outcome
 
 A backend receives the routed accessible span derived from the live ABI fact. It neither receives a zero sentinel nor reconstructs reach from private row/column state, so a longer allocation cannot silently change the payload's address meaning.
+
+## Readiness correction — 2026-08-24, after symbolic artifact delivery
+
+The 2026-08-19 block below was correct at its own base and is now stale. All three prerequisites it named have landed, the symbolic interface and artifact-delivery population now exist, and the old branch carries no implementation diff. This ticket returns to `todo`, but it is not yet dispatchable: it now depends on [`prove-the-symbolic-accessible-range-agreement-at-program-assembly`](prove-the-symbolic-accessible-range-agreement-at-program-assembly.md). That repair must make the published expression semantically authoritative before this ticket removes zero sentinels and routes it to backend memory sizing; otherwise this lane would turn an unchecked expression into the sole live allocation authority.
+
+Re-audit the construction, decode, runtime, and backend sites after that dependency lands. Do not reuse the withdrawn zero-sentinel fixture or infer readiness from this status correction alone.
 
 ## Exact gap and per-Fact audit at `f3e1efd3b3b4f896976b326e6a3d993147206cd3`
 

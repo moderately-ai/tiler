@@ -2,13 +2,13 @@
 id: prove-the-symbolic-accessible-range-agreement-at-program-assembly
 title: Prove the symbolic accessible-range agreement at program assembly
 status: todo
-priority: p2
+priority: p0
 dependencies: []
 related: [decide-how-a-dynamic-bounds-witness-enters-the-schedule-vocabulary, replace-zero-live-bounds-sentinels-with-abi-derived-accessible-ranges, prove-one-live-extent-artifact-payload-and-pipeline-at-two-n, package-the-admitted-live-schedule-into-a-symbolic-kernel-program]
-scopes: [implementation/ir, implementation/compiler, contracts/foundation]
+scopes: [implementation/ir, implementation/compiler, contracts/foundation, implementation/artifact, contracts/artifacts]
 shared_scopes: [project/tickets]
 paths: []
-tags: [research, correctness, fail-closed, abi, shapes]
+tags: [correctness, fail-closed, abi, shapes, implementation]
 ---
 ## User-visible outcome
 
@@ -30,20 +30,27 @@ Filed by `worker-witness` while re-deriving [`decide-how-a-dynamic-bounds-witnes
 
 **Every Fact above must be re-audited at the worker's own base before any edit**, per `AGENTS.md`. The anchors were each run with `grep -cF` against the file the citation names on 2026-08-23.
 
-## Required work — research first, then the narrowest change
+## Exact-current Fact audit and selected repair — 2026-08-24, `6e713e12`
 
-Answer, with source read in full, which of these the repository wants, and take it or escalate one concrete question:
+- **Verified, and stronger than the original priority claim.** IR program construction, compiler entry verification, and artifact construction all evaluate the producer-supplied expression over the same zero-narrowed symbolic facts they compare with a zero window. Artifact decode checks expression type, phase, and target names but never proves that the expression denotes the target's sourced boundary.
+- **False — the population is no longer empty in the sense that determines correctness priority.** Symbolic artifact delivery is production-reachable, artifact identity authenticates the supplied expression rather than proving its meaning, and runtime `place_bindings` evaluates it over live facts. A forged undersized input expression can admit short caller storage; a forged output/internal expression can allocate short storage while the kernel receives the correct live extent and iterates farther. Backend execution evidence is still downstream, but this unchecked authority gates that P0 path and is therefore P0 itself.
+- **Verified — no public, identity, or schema decision is required for the admitted slice.** The valid kernel/artifact bytes can remain unchanged. The IR can privately retain sourced interface extents for proof while keeping the existing zero `Shape` for static storage bookkeeping, and artifact validation can independently rederive the same contract from the already-carried interface, environment, target, component, carrier, encoding, and expression data.
 
-- **Structural agreement.** Require the `accessible_bytes` expression of a symbolic boundary to be structurally the canonical chain derived from the view's value's own sourced extents and carrier. Needs the kernel-program builder to hold the *sourced* boundary rather than the zeroed `Shape` it holds today — establish whether that is a builder input change or a subject change.
-- **Symbolic window length.** Make `ByteWindow::length` ABI-expression-valued so the existing comparison becomes real rather than vacuous. This is a `tiler.kernel-program` grammar and identity question; if it survives the readiness gate it goes to Tom with its exact domain step.
-- **Decode-side re-proof.** Re-derive the agreement at load from the decoded interface and the decoded expression arena, so a forged envelope fails closed independently of the producer.
-- **Typed refusal.** Refuse a symbolic boundary whose `accessible_bytes` this layer cannot check, and record the population as unsupported until one of the above lands.
+One repair dominates. Retain each interface axis's `SourcedExtent` privately in the IR semantic subject. After output/component association is known, require each unpacked whole-interface symbolic binding's accessible range to be the exact canonical tree: its scalar width multiplied by the left-associated product of every axis, with static axes written as exact literals, input symbols naming that input's exact `(InputKey, Axis)`, output symbols resolved through the retained shape environment to the exact rooted input axis, and zero offset. Re-derive that contract independently in artifact construction/decode; do not call the compiler expression producer. Refuse symbolic internal storage, partial live windows, encoded components, bit-packed carriers, inconsistent output aliases, static targets depending on `InputExtent`, and unknown future source forms by typed cause until their authority is represented.
 
-Do not present a spelling until the population, the forged-input threat model, and the identity consequence of each are established. If the answer is a `tiler.kernel-program` step, it is Tom's.
+Artifact-only validation is dominated because it leaves a falsely verified kernel program available to other consumers. Making `ByteWindow` expression-valued is a larger public grammar and identity change with no correctness benefit for this slice. Blanket refusal needlessly withdraws the whole-interface population whose proof inputs are already present. Further research is not needed; implementation must stop only if its source audit finds a required public boundary or identity step that this audit did not.
+
+## Required work
+
+- Preserve the sourced semantic interface privately through IR program validation and prove the canonical whole-interface expression structurally rather than by evaluating sample or zero facts.
+- Add an independently derived artifact validator shared by artifact construction/envelope/decode, while keeping the IR derivation separate so a producer bug cannot validate itself.
+- Add typed disagreement and unsupported-population diagnostics without changing valid program/artifact bytes, kernel-program v13, artifact-program v22, or manifest 22.0.
+- Correct the IR comment that treats runtime rebinding as a substitute for compile-time proof and narrow the codec's blanket claim that the agreement cannot be reproved.
+- Use an exhaustive private proof disposition for every access/binding: static with no live root, canonical symbolic interface, or typed unsupported. Exhaustively match binding target, storage encoding, storage scalar, and sourced-extent forms so a widened vocabulary is a build error rather than a silent skip.
 
 ## Required evidence
 
-Perturb the subject rather than the assertion, and quote the failure text for each independently: name the wrong `InputExtent` root; drop one axis from the chain; scale by the wrong carrier width; and substitute a literal for the symbolic factor. Each must fail with an unchanged assertion under whatever check lands, and each must be shown to **pass** today, which is the demonstration that the gap is real. Add the negative control that a wholly static boundary keeps its existing check and its existing bytes.
+Perturb the subject rather than the assertion, and quote the failure text for each independently: name a sibling input's root; substitute the wrong axis; drop one axis from the chain; scale by the wrong carrier width; and substitute a nonzero literal for one symbolic factor while another keeps the old zero comparison green. Each must be shown to pass before the repair and fail under the unchanged post-repair assertion. At least one undersized mutation must target an output to demonstrate allocation/write exposure. Start codec controls from a valid symbolic artifact, mutate only the expression, and reseal its digest and canonical identity; decode must still refuse it. Independently remove the IR validation call and the artifact validation call so each guard proves it reaches its subject. Preserve positive controls for correct symbolic input/output, static exact-byte bindings, and computed accessible bytes, plus typed refusals for internal, encoded-component, and bit-packed cases.
 
 ## Non-goals
 
