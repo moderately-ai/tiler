@@ -1,7 +1,7 @@
 ---
 id: decide-how-owner-private-conformance-inventories-cross-crate-boundaries
 title: Decide how owner-private conformance inventories cross crate boundaries
-status: todo
+status: in-progress
 priority: p1
 dependencies: [inventory-the-closed-world-conformance-claim-universe-by-owner, define-the-conformance-obligation-and-evidence-requirement-algebra]
 related: [spike-a-red-yellow-first-full-conformance-suite]
@@ -9,6 +9,9 @@ scopes: []
 shared_scopes: [project/tickets, research/verification]
 paths: []
 tags: [research, decision, conformance-progress, architecture]
+claimed_from: todo
+assignee: codex
+lease_expires_at: 1787617074
 ---
 # Decide how owner-private conformance inventories cross crate boundaries
 
