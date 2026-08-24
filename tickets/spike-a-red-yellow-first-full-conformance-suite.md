@@ -1,7 +1,7 @@
 ---
 id: spike-a-red-yellow-first-full-conformance-suite
 title: Spike a red-yellow-first full conformance suite
-status: in-progress
+status: todo
 priority: p1
 dependencies: []
 related: [shape-the-conformance-corpus-for-target-multiplication, survey-what-belongs-in-the-conformance-crate, derive-the-conformance-evidence-ledger-cells-from-executed-runs, replace-host-kir-simulator-claims-with-authoritative-evidence, delete-the-two-host-kir-simulators, inventory-the-closed-world-conformance-claim-universe-by-owner, cost-protected-review-versus-signed-conformance-authority, define-the-conformance-obligation-and-evidence-requirement-algebra, decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, decide-how-owner-private-conformance-inventories-cross-crate-boundaries, define-the-canonical-conformance-receipt-join-and-freshness-model, derive-the-optimizer-and-planner-capability-obligation-manifest, derive-the-five-family-structural-conformance-manifest, classify-machine-compilation-and-execution-outcomes-by-stage, design-the-conformance-audit-regress-and-qualify-command-contracts, spike-the-serial-sum-canonical-receipt-spine, assemble-the-first-versioned-conformance-goal-profile, design-the-machine-readable-and-explorable-conformance-report, design-the-conformance-denominator-and-receipt-perturbation-suite, produce-the-conformance-duplicate-equivalence-ledger]
@@ -9,9 +9,6 @@ scopes: []
 shared_scopes: [project/tickets, research/verification]
 paths: []
 tags: [research, spike, conformance, testing, conformance-progress]
-claimed_from: todo
-assignee: codex
-lease_expires_at: 1787605265
 ---
 # Spike a red-yellow-first full conformance suite
 
