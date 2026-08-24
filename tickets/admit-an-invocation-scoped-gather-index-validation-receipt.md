@@ -11,7 +11,7 @@ paths: []
 tags: [implementation, runtime, gather, validation, fail-closed, public-boundary, identity]
 claimed_from: todo
 assignee: worker-gatherreceipt
-lease_expires_at: 1787495155
+lease_expires_at: 1787593115
 ---
 ## User-visible outcome
 
