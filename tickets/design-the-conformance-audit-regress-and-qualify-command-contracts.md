@@ -3,7 +3,7 @@ id: design-the-conformance-audit-regress-and-qualify-command-contracts
 title: Design the conformance audit regress and qualify command contracts
 status: todo
 priority: p1
-dependencies: [define-the-conformance-obligation-and-evidence-requirement-algebra, decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, define-the-canonical-conformance-receipt-join-and-freshness-model]
+dependencies: [define-the-conformance-obligation-and-evidence-requirement-algebra, decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles, define-the-canonical-conformance-receipt-join-and-freshness-model, design-witnessed-conformance-authority-history-and-recovery]
 related: [spike-a-red-yellow-first-full-conformance-suite]
 scopes: []
 shared_scopes: [project/tickets, research/verification]
