@@ -45,6 +45,24 @@ Stop if the carrier conflicts with an accepted ADR, if a proposed sentence expan
 - Change, tombstone, lineage, unavailability, terminal-trust, and reversal semantics match the carrier.
 - `tkt lint`, `make citations`, and the ticket scope guard pass.
 
+## Exact-base Fact audit
+
+**Measurement — 2026-08-24.** Re-audited on clean claimed branch base `344e25003a2b20cee7d9ea743598bc691f708adc`, with `main` and `origin/main` at `0 0` immediately before claim creation. The accepted carrier and every governing source used below were read on that base.
+
+| premise | verdict | exact-base evidence and consequence |
+| --- | --- | --- |
+| ADR 0114 is the next live decision identity. | **Verified.** | `docs/decisions/README.md` ends at ADR 0113, `rg 'ADR[- ]0114|0114-' tickets docs` found no competing allocation before this edit, and `rg --files docs/decisions` found no `0114` path. |
+| Recording `P+K+M+T` would conflict with the conformance crate's accepted authority boundary. | **False.** | [ADR 0106](../docs/decisions/0106-admit-tiler-conformance-as-the-cross-layer-evidence-member.md), anchors `Not a second semantic authority` and `No support-matrix authority`, already makes the crate an evidence consumer. ADR 0114 reinforces that boundary by keeping all five authorities with their real owners. |
+| The accepted carrier chooses concrete providers, schemas, thresholds, key holders, classifier infrastructure, witness topology, or retention services. | **False.** | The carrier's anchor `Concrete provider, threshold, key custody` explicitly leaves those as bounded design and operations work. The ADR preserves that stop boundary and introduces no public API. |
+| Another live design/status entry point describes protected review or signing as an optional final state. | **False.** | Searches for `protected review`, `signed profile`, `P+K+M+T`, and optional-signing spellings across `docs/status.md`, `docs/design-map.md`, `docs/open-questions.md`, `docs/correctness-and-testing.md`, and `docs/decisions/` found no competing live statement. The correctness contract was the only governing entry point missing the accepted architecture, so it is aligned here without speculative status edits. |
+
+## Outcome
+
+- Added accepted [ADR 0114](../docs/decisions/0114-require-protected-signed-separated-and-witnessed-conformance-authority.md) and both hand-maintained catalog entries.
+- Preserved all four selected properties, all five singular authority classes, the exact-source `P+K` join, `M` and `T` bindings, tombstone and lineage policy, fail-closed unavailability, provisional bootstrap boundary, rollout order, terminal-trust requirement, and reversal evidence.
+- Linked every selected design/establishment pair and kept the Tom-only movement gate explicit. No mechanism ticket's provider or schema question was resolved here.
+- Aligned [Correctness and testing](../docs/correctness-and-testing.md) so partial deployments can report honest audits but cannot claim authoritative progress or qualification, and so runtime and kernel paths never consume governance authority.
+
 ## Refs
 
 - [`decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles`](decide-the-authority-and-change-policy-for-conformance-universe-and-goal-profiles.md)

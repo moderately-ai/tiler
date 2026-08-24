@@ -149,6 +149,7 @@ Both indexes on this page are **maintained by hand**; the renderer that once pro
 
 ### Documentation governance
 
+- [0114: Require protected, signed, separated, and witnessed conformance authority](0114-require-protected-signed-separated-and-witnessed-conformance-authority.md) — accepted; contracts: [Correctness and testing](../correctness-and-testing.md); evidence: [Conformance authority threat model](../research/verification/conformance-authority-threat-model.md), [Conformance claim universe by owner](../research/verification/conformance-claim-universe-by-owner.md)
 - [0075: Scope public-boundary approval by change category](0075-scope-public-boundary-approval-by-change-category.md) — accepted; contracts: [System architecture](../architecture.md); evidence: [Prototype crate layout and Rust MSRV](../research/workspace/prototype-crate-layout-and-msrv.md), [Operation-extension surface research](../research/extensions/operation-extension-surface.md)
 - [0054: Use typed documentation metadata and derived backlinks](0054-use-typed-documentation-metadata.md) — accepted; contracts: [Documentation metadata and traceability](../document-metadata.md); evidence: [Information architecture and provenance audit](../research/documentation/information-architecture-audit.md)
 <!-- END ADR TOPICS -->
@@ -269,6 +270,7 @@ Both indexes on this page are **maintained by hand**; the renderer that once pro
 - [0111: Separate externally specified raw hashes from governed Tiler digests](0111-separate-externally-specified-raw-hashes-from-governed-tiler-digests.md) — accepted
 - [0112: Replace the strict contraction key with a permission-indexed successor](0112-replace-the-strict-contraction-key-with-a-permission-indexed-successor.md) — accepted
 - [0113: Key profiles by claim scope and carry host evidence as per-row provenance](0113-key-profiles-by-claim-scope-and-carry-host-evidence-as-per-row-provenance.md) — accepted
+- [0114: Require protected, signed, separated, and witnessed conformance authority](0114-require-protected-signed-separated-and-witnessed-conformance-authority.md) — accepted
 <!-- END ADR CHRONOLOGY -->
 
 ## Template

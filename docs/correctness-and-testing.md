@@ -26,6 +26,25 @@ Its numerical evidence includes the [operation conformance matrix](research/nume
 [region-accuracy contract](research/numerics/region-accuracy-contract.md), and
 [bounded sound-analyzer spike](research/numerics/sound-region-analyzer-spike.md).
 
+## Conformance authority
+
+Authoritative conformance qualification requires the complete `P+K+M+T`
+architecture accepted in [ADR 0114](decisions/0114-require-protected-signed-separated-and-witnessed-conformance-authority.md): fresh protected human approval, a threshold signature over the canonical authority closure, externally governed exact-diff separation, and witnessed append-only publication with independently retained recovery content. These are four independently required properties, not optional long-term controls.
+
+The closure keeps five authorities distinct: the owner-minted system universe;
+goal policy and applicability; verifier rules, schema, and executable identity;
+normative oracle identity and comparison contract; and accepted evidence-baseline
+lineage. The conformance harness joins and checks them. It cannot mint, copy, or
+silently default any of them.
+
+Any deployment missing `K`, `M`, or `T`, including a `P`-only bootstrap, is
+provisional and non-authoritative. It may discover populations and produce an
+honest mixed red/yellow/green audit, but it cannot establish an accepted
+baseline, authoritative progress, or a successful authoritative qualification.
+Authority unavailability stays visible and qualification fails closed. A
+runtime or kernel fast path never consumes this governance authority; it
+controls verification, reporting, and qualification only.
+
 
 ## Semantic authority
 
