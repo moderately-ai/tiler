@@ -1,7 +1,7 @@
 ---
 id: step-the-refinement-subject-identity-to-carry-its-shape-environment
 title: Step the refinement subject identity to carry its shape environment
-status: in-progress
+status: done
 priority: p0
 dependencies: []
 related: [decide-whether-the-refinement-subject-identity-should-carry-its-environment]
@@ -9,9 +9,6 @@ scopes: [implementation/ir, implementation/compiler]
 shared_scopes: [project/tickets]
 paths: []
 tags: [identity, indexing]
-claimed_from: todo
-assignee: worker-refinement-env
-lease_expires_at: 1787607158
 ---
 ## User-visible outcome
 
@@ -211,6 +208,24 @@ Its output at `9b61b563` is recorded in the decision ticket. The two lines that 
 ## Non-goals
 
 Changing `encode_region`'s treatment of environment, which is settled and reasoned. Folding the environment into `SemanticGraphIdentity`, which `crates/tiler-ir/src/semantic/identity.rs` rejects with a recorded reason under the anchor `A separate subject rather than part of`. Widening the environment-aware operation population. Any public surface change beyond the identity bytes themselves.
+
+## Outcome
+
+Implemented at `d45f8f36d41cc6326798d783558d2b1265fd4948` and integrated without rewriting that reviewed commit at `c454eccc`. The live subject domain is `tiler.ir.index-refinement-subject.v3`; v1 and v2 remain reconstructible test grammars and remain pinned in the IR domain ledger.
+
+The encoder appends one framed total `ShapeEnvIdentity`. It deliberately gives an absent environment object and an explicitly empty environment the same identity, matching the semantic layer's existing authority and `SubjectEnvironment::PartialEq`. An exhaustive destructure names every subject field except the self-derived identity, so adding a future field is a compile error at the encoder until its identity policy is explicit.
+
+The merged tests confirm that binding-axis and constraint-only environment changes move subject, resolution, receipt, and compiler refinement values, while executable coverage, `CoveredOccurrence`, kernel-program identity, and artifact identity do not move. No public API, artifact schema, or downstream domain required a step.
+
+The subject perturbation was rerun in the detached review worktree by removing the environment fold and executing:
+
+```sh
+cargo nextest run -p tiler-ir environment_only_changes_separate_subjects_resolutions_and_receipts
+```
+
+It failed at the intended subject with `binding axis: environment-only subjects minted equal identity bytes`. Restoring the fold returned the reviewed worktree to a clean `d45f8f36`.
+
+The independent review found no defects and reran the complete `tiler-ir` package tests, selected identity tests, doctests, Clippy with warnings denied, rustdoc with warnings denied, ticket lint, exact-base guard, and `git diff --check`. On the merged tree, `make full` passed: 4,083 workspace tests, 1,354 release tests, formatting, workspace checks, Clippy, doctests, public and private rustdoc with warnings denied, citations, ticket lint, and shellcheck.
 
 ## Closes when
 
